@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import './InspectorDashboard.css';
 import PPEDetectionTab from './PPEDetectionTab';
 import {
@@ -39,40 +39,55 @@ export default function InspectorDashboard({ setCurrentPage }) {
   const [stationWorkers,  setStationWorkers]  = useState({});
   const [workersLoading,  setWorkersLoading]  = useState({});
 
-  const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
+  const storedUser = useMemo(() => JSON.parse(localStorage.getItem('user') || '{}'), []);
+
+  // ── Auto-logout on 401 (e.g. password changed on another device) ──
+  const handleUnauthorized = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    setCurrentPage('landing');
+  };
+
+  const authFetch = async (url, options = {}) => {
+    const res = await fetch(url, { ...options, headers: { ...getAuthHeaders(), ...(options.headers || {}) } });
+    if (res.status === 401) {
+      handleUnauthorized();
+      throw new Error('Session expired');
+    }
+    return res;
+  };
 
   useEffect(() => { fetchProfile(); fetchDetections(); fetchStations(); }, []);
 
   const fetchDetections = async () => {
     setDetLoading(true);
     try {
-      const headers = getAuthHeaders();
       const [detRes, statsRes] = await Promise.all([
-        fetch(`${API}/inspector/detections`,       { headers }),
-        fetch(`${API}/inspector/detections/stats`, { headers }),
+        authFetch(`${API}/inspector/detections`),
+        authFetch(`${API}/inspector/detections/stats`),
       ]);
       if (detRes.ok)   setDetections(await detRes.json());
       if (statsRes.ok) setDetStats(await statsRes.json());
-    } catch (err) { console.error('Failed to load detections:', err); }
+    } catch (err) { if (err.message !== 'Session expired') console.error('Failed to load detections:', err); }
     finally { setDetLoading(false); }
   };
 
   const fetchProfile = async () => {
     setProfileLoad(true);
     try {
-      const res  = await fetch(`${API}/inspector/profile`, { headers: getAuthHeaders() });
+      const res  = await authFetch(`${API}/inspector/profile`);
       const data = await res.json();
       if (res.ok) { setProfile(data); setFullName(data.full_name); }
-    } catch (err) { console.error(err); }
+    } catch (err) { if (err.message !== 'Session expired') console.error(err); }
     finally { setProfileLoad(false); }
   };
 
   const fetchStations = async () => {
     setStationsLoading(true);
     try {
-      const res = await fetch(`${API}/inspector/stations`, { headers: getAuthHeaders() });
+      const res = await authFetch(`${API}/inspector/stations`);
       if (res.ok) setStations(await res.json());
-    } catch (err) { console.error('Failed to load stations:', err); }
+    } catch (err) { if (err.message !== 'Session expired') console.error('Failed to load stations:', err); }
     finally { setStationsLoading(false); }
   };
 
@@ -80,10 +95,10 @@ export default function InspectorDashboard({ setCurrentPage }) {
     if (stationWorkers[stationId]) return;
     setWorkersLoading(prev => ({ ...prev, [stationId]: true }));
     try {
-      const res  = await fetch(`${API}/inspector/stations/${stationId}/workers`, { headers: getAuthHeaders() });
+      const res  = await authFetch(`${API}/inspector/stations/${stationId}/workers`);
       const data = await res.json();
       if (res.ok) setStationWorkers(prev => ({ ...prev, [stationId]: data }));
-    } catch (err) { console.error('Failed to load workers:', err); }
+    } catch (err) { if (err.message !== 'Session expired') console.error('Failed to load workers:', err); }
     finally { setWorkersLoading(prev => ({ ...prev, [stationId]: false })); }
   };
 
@@ -115,15 +130,20 @@ export default function InspectorDashboard({ setCurrentPage }) {
       if (profile && fullName.trim() !== profile.full_name) body.full_name = fullName.trim();
       if (newPass) { body.current_password = currPass; body.new_password = newPass; }
       if (!Object.keys(body).length) { setProfileMsg({ type: 'error', text: 'No changes to save.' }); setProfileSaving(false); return; }
-      const res  = await fetch(`${API}/inspector/profile`, { method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify(body) });
+      const res  = await authFetch(`${API}/inspector/profile`, { method: 'PATCH', body: JSON.stringify(body) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       localStorage.setItem('user', JSON.stringify({ ...storedUser, full_name: data.user.full_name }));
-      setProfile(data.user); setFullName(data.user.full_name);
+      setProfile(data.user);
+      setFullName(data.user.full_name);
       setCurrPass(''); setNewPass(''); setConfirmPass('');
       setFieldErrors({});
       setProfileMsg({ type: 'success', text: 'Profile updated successfully!' });
-    } catch (err) { setProfileMsg({ type: 'error', text: err.message }); }
+      await fetchProfile();
+    } catch (err) {
+      if (err.message !== 'Session expired')
+        setProfileMsg({ type: 'error', text: err.message });
+    }
     finally { setProfileSaving(false); }
   };
 
@@ -479,18 +499,15 @@ export default function InspectorDashboard({ setCurrentPage }) {
           {/* ── PROFILE ── */}
           {activeTab === 'profile' && (
             <div>
-              {/* ── Banner ── */}
               <div style={{
                 borderRadius: 18, overflow: 'hidden', marginBottom: '1.5rem',
                 background: 'linear-gradient(135deg, #0f766e 0%, #0d9488 50%, #14b8a6 100%)',
                 position: 'relative',
               }}>
-                {/* subtle pattern overlay */}
                 <div style={{ position: 'absolute', inset: 0, opacity: 0.06,
                   backgroundImage: 'repeating-linear-gradient(45deg,#fff 0,#fff 1px,transparent 0,transparent 50%)',
                   backgroundSize: '8px 8px' }} />
                 <div style={{ position: 'relative', padding: '2rem 2.5rem', display: 'flex', alignItems: 'center', gap: '2rem' }}>
-                  {/* Avatar */}
                   <div style={{
                     width: 80, height: 80, borderRadius: '50%', flexShrink: 0,
                     background: 'rgba(255,255,255,0.2)', border: '3px solid rgba(255,255,255,0.4)',
@@ -500,7 +517,6 @@ export default function InspectorDashboard({ setCurrentPage }) {
                   }}>
                     {initials(displayName)}
                   </div>
-                  {/* Info */}
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'white', marginBottom: '0.2rem', letterSpacing: '-0.3px' }}>
                       {profileLoad ? '...' : profile?.full_name}
@@ -522,17 +538,13 @@ export default function InspectorDashboard({ setCurrentPage }) {
                 </div>
               </div>
 
-              {/* ── Two-column cards ── */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-
-                {/* Account Details */}
                 <div className="ins-panel" style={{ marginBottom: 0 }}>
                   <div style={{ fontSize: '0.92rem', fontWeight: 800, color: '#1a1a1a', marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <User size={15} color="#0f766e" /> Account Details
                   </div>
                   <div style={{ fontSize: '0.78rem', color: '#aaa', marginBottom: '1.25rem' }}>Your current account information</div>
                   <div style={{ height: 1, background: '#f0f0f5', marginBottom: '1.25rem' }} />
-
                   {profileLoad ? <div className="ins-empty">Loading…</div> : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                       {[
@@ -555,14 +567,12 @@ export default function InspectorDashboard({ setCurrentPage }) {
                   )}
                 </div>
 
-                {/* Edit Form */}
                 <div className="ins-panel" style={{ marginBottom: 0 }}>
                   <div style={{ fontSize: '0.92rem', fontWeight: 800, color: '#1a1a1a', marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <KeyRound size={15} color="#0f766e" /> Edit Profile
                   </div>
                   <div style={{ fontSize: '0.78rem', color: '#aaa', marginBottom: '1.25rem' }}>Update your name or change your password</div>
                   <div style={{ height: 1, background: '#f0f0f5', marginBottom: '1.25rem' }} />
-
                   {profileLoad ? <div className="ins-empty">Loading…</div> : (
                     <form className="ins-form" onSubmit={handleSaveProfile}>
                       {profileMsg.text && (
@@ -617,7 +627,6 @@ export default function InspectorDashboard({ setCurrentPage }) {
                     </form>
                   )}
                 </div>
-
               </div>
             </div>
           )}

@@ -81,8 +81,20 @@ app.post('/api/auth/login', async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 //  GET /api/auth/me
 // ══════════════════════════════════════════════════════════════
-app.get('/api/auth/me', requireAuth, (req, res) => {
-  res.json({ user: req.user });
+app.get('/api/auth/me', requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT u.id, u.full_name, u.email, r.name AS role, u.is_active
+       FROM users u
+       JOIN roles r ON u.role_id = r.id
+       WHERE u.id = $1`,
+      [req.user.id]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'User not found.' });
+    res.json({ user: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error.' });
+  }
 });
 
 // ══════════════════════════════════════════════════════════════
