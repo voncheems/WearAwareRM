@@ -1,0 +1,952 @@
+import React, { useState, useEffect } from 'react';
+import './AdminDashboard.css';
+import ComplianceLineGraph from './ComplianceLineGraph';
+import {
+  LayoutDashboard, Users, HardHat, MapPin, ScanLine, Clock,
+  ClipboardList, AlertTriangle, RefreshCw
+} from 'lucide-react';
+import WearAwareLogo from './Wearawarelogo';
+
+const API = 'http://localhost:5000/api';
+
+function getAuthHeaders() {
+  const token = localStorage.getItem('token');
+  return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+}
+
+export default function AdminDashboard({ setCurrentPage }) {
+  const [activeTab,     setActiveTab]     = useState('overview');
+  const [users,         setUsers]         = useState([]);
+  const [loadingUsers,  setLoadingUsers]  = useState(false);
+  const [detections,    setDetections]    = useState([]);
+  const [detStats,      setDetStats]      = useState({ total: 0, violations: 0, compliant: 0, compliance_rate: 100 });
+  const [detLoading,    setDetLoading]    = useState(true);
+  const [activity,      setActivity]      = useState([]);
+  const [actLoading,    setActLoading]    = useState(false);
+  const [showModal,     setShowModal]     = useState(false);
+  const [formMsg,       setFormMsg]       = useState({ type: '', text: '' });
+  const [fieldErrors,   setFieldErrors]   = useState({});
+  const [submitting,    setSubmitting]    = useState(false);
+  const [newUser,       setNewUser]       = useState({ full_name: '', email: '', password: '', role: 'inspector' });
+  const [filterStation,   setFilterStation]   = useState('All Stations');
+  const [filterInspector, setFilterInspector] = useState('All Inspectors');
+  const [filterDate,      setFilterDate]      = useState('');
+  const [filterViolation, setFilterViolation] = useState('All Types');
+
+  /* ── Worker state ── */
+  const [workers,         setWorkers]         = useState([]);
+  const [loadingWorkers,  setLoadingWorkers]  = useState(false);
+  const [devices,         setDevices]         = useState([]);
+  const [showWorkerModal, setShowWorkerModal] = useState(false);
+  const [workerFormMsg,   setWorkerFormMsg]   = useState({ type: '', text: '' });
+  const [workerErrors,    setWorkerErrors]    = useState({});
+  const [workerSubmitting, setWorkerSubmitting] = useState(false);
+  const [editingWorker,   setEditingWorker]   = useState(null);
+  const [newWorker,       setNewWorker]       = useState({ full_name: '', position: '', device_id: '', contact_number: '', status: 'active' });
+  const [workerFilterStation, setWorkerFilterStation] = useState('All Stations');
+  const [workerFilterStatus,  setWorkerFilterStatus]  = useState('All Statuses');
+
+  /* ── Station state ── */
+  const [showStationModal,    setShowStationModal]    = useState(false);
+  const [stationFormMsg,      setStationFormMsg]      = useState({ type: '', text: '' });
+  const [stationErrors,       setStationErrors]       = useState({});
+  const [stationSubmitting,   setStationSubmitting]   = useState(false);
+  const [editingStation,      setEditingStation]      = useState(null);
+  const [newStation,          setNewStation]          = useState({ label: '', location: '', required_ppe: 'helmet,vest', inspector_id: '', is_active: true });
+
+  const user = JSON.parse(localStorage.getItem('user') || '{}');
+
+  useEffect(() => { fetchUsers(); fetchDetections(); fetchActivity(); fetchWorkers(); fetchDevices(); }, []);
+
+  const fetchUsers = async () => {
+    setLoadingUsers(true);
+    try {
+      const res = await fetch(`${API}/users`, { headers: getAuthHeaders() });
+      const data = await res.json();
+      if (res.ok) setUsers(data);
+    } catch (err) { console.error(err); }
+    finally { setLoadingUsers(false); }
+  };
+
+  const fetchDetections = async () => {
+    setDetLoading(true);
+    try {
+      const [detRes, statsRes] = await Promise.all([
+        fetch(`${API}/admin/detections`, { headers: getAuthHeaders() }),
+        fetch(`${API}/admin/stats`,      { headers: getAuthHeaders() }),
+      ]);
+      if (detRes.ok)   setDetections(await detRes.json());
+      if (statsRes.ok) setDetStats(await statsRes.json());
+    } catch (err) { console.error('Failed to load detections:', err); }
+    finally { setDetLoading(false); }
+  };
+
+  const fetchActivity = async () => {
+    setActLoading(true);
+    try {
+      const res = await fetch(`${API}/admin/activity`, { headers: getAuthHeaders() });
+      if (res.ok) setActivity(await res.json());
+    } catch (err) { console.error('Failed to load activity:', err); }
+    finally { setActLoading(false); }
+  };
+
+  /* ── Worker helpers ── */
+  const fetchWorkers = async () => {
+    setLoadingWorkers(true);
+    try {
+      const res = await fetch(`${API}/workers`, { headers: getAuthHeaders() });
+      if (res.ok) setWorkers(await res.json());
+    } catch (err) { console.error('Failed to load workers:', err); }
+    finally { setLoadingWorkers(false); }
+  };
+
+  const fetchDevices = async () => {
+    try {
+      const res = await fetch(`${API}/devices`, { headers: getAuthHeaders() });
+      if (res.ok) setDevices(await res.json());
+    } catch (err) { console.error('Failed to load devices:', err); }
+  };
+
+  const validateWorker = () => {
+    const errs = {};
+    if (!newWorker.full_name.trim())   errs.full_name = 'Full name is required.';
+    else if (newWorker.full_name.trim().length < 2) errs.full_name = 'Must be at least 2 characters.';
+    else if (!/^[A-Za-zÀ-ÖØ-öø-ÿÑñ\s'.\-]+$/.test(newWorker.full_name.trim()))
+      errs.full_name = 'Name can only contain letters, spaces, hyphens, and apostrophes.';
+    if (newWorker.contact_number && !/^[0-9+\-\s()]+$/.test(newWorker.contact_number))
+      errs.contact_number = 'Enter a valid contact number.';
+    return errs;
+  };
+
+  const openWorkerModal = (worker = null) => {
+    if (worker) {
+      setEditingWorker(worker);
+      setNewWorker({
+        full_name: worker.full_name,
+        position: worker.position || '',
+        device_id: worker.device_id || '',
+        contact_number: worker.contact_number || '',
+        status: worker.status || 'active',
+      });
+    } else {
+      setEditingWorker(null);
+      setNewWorker({ full_name: '', position: '', device_id: '', contact_number: '', status: 'active' });
+    }
+    setWorkerFormMsg({ type: '', text: '' });
+    setWorkerErrors({});
+    setShowWorkerModal(true);
+  };
+
+  const handleSaveWorker = async (e) => {
+    e.preventDefault();
+    setWorkerFormMsg({ type: '', text: '' });
+    const errs = validateWorker();
+    setWorkerErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+    setWorkerSubmitting(true);
+    try {
+      const payload = { ...newWorker, device_id: newWorker.device_id || null };
+      const url = editingWorker ? `${API}/workers/${editingWorker.id}` : `${API}/workers`;
+      const method = editingWorker ? 'PUT' : 'POST';
+      const res  = await fetch(url, { method, headers: getAuthHeaders(), body: JSON.stringify(payload) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setWorkerFormMsg({ type: 'success', text: editingWorker ? 'Worker updated successfully!' : `Worker "${newWorker.full_name}" added successfully!` });
+      setNewWorker({ full_name: '', position: '', device_id: '', contact_number: '', status: 'active' });
+      setEditingWorker(null);
+      setWorkerErrors({});
+      fetchWorkers();
+    } catch (err) { setWorkerFormMsg({ type: 'error', text: err.message }); }
+    finally { setWorkerSubmitting(false); }
+  };
+
+  const handleDeleteWorker = async (id, name) => {
+    if (!window.confirm(`Permanently delete worker "${name}"? This cannot be undone.`)) return;
+    try {
+      const res  = await fetch(`${API}/workers/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      fetchWorkers();
+    } catch (err) { alert(err.message); }
+  };
+
+  const handleAssignInspector = async (deviceId, inspectorId) => {
+    try {
+      const res = await fetch(`${API}/devices/${deviceId}/assign`, {
+        method: 'PATCH',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ inspector_id: inspectorId || null }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      fetchDevices();
+    } catch (err) { alert(err.message); }
+  };
+
+  const openStationModal = (station = null) => {
+    if (station) {
+      setEditingStation(station);
+      setNewStation({
+        label: station.label,
+        location: station.location || '',
+        required_ppe: (station.required_ppe || []).join(','),
+        inspector_id: station.inspector_id || '',
+        is_active: station.is_active ?? true,
+      });
+    } else {
+      setEditingStation(null);
+      setNewStation({ label: '', location: '', required_ppe: 'helmet,vest', inspector_id: '', is_active: true });
+    }
+    setStationFormMsg({ type: '', text: '' });
+    setStationErrors({});
+    setShowStationModal(true);
+  };
+
+  const validateStation = () => {
+    const errs = {};
+    if (!newStation.label.trim()) errs.label = 'Station name is required.';
+    return errs;
+  };
+
+  const handleSaveStation = async (e) => {
+    e.preventDefault();
+    setStationFormMsg({ type: '', text: '' });
+    const errs = validateStation();
+    setStationErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+    setStationSubmitting(true);
+    try {
+      const ppeArray = newStation.required_ppe.split(',').map(p => p.trim()).filter(Boolean);
+      const payload = {
+        label: newStation.label,
+        location: newStation.location,
+        required_ppe: ppeArray,
+        inspector_id: newStation.inspector_id || null,
+        is_active: newStation.is_active,
+      };
+      const url = editingStation ? `${API}/devices/${editingStation.id}` : `${API}/devices`;
+      const method = editingStation ? 'PUT' : 'POST';
+      const res = await fetch(url, { method, headers: getAuthHeaders(), body: JSON.stringify(payload) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setStationFormMsg({ type: 'success', text: editingStation ? 'Station updated!' : `Station "${newStation.label}" created!` });
+      if (!editingStation) setNewStation({ label: '', location: '', required_ppe: 'helmet,vest', inspector_id: '', is_active: true });
+      setEditingStation(null);
+      setStationErrors({});
+      fetchDevices();
+    } catch (err) { setStationFormMsg({ type: 'error', text: err.message }); }
+    finally { setStationSubmitting(false); }
+  };
+
+  const handleDeleteStation = async (id, name) => {
+    if (!window.confirm(`Delete station "${name}"? If it has detection records, it will be blocked — deactivate it instead.`)) return;
+    try {
+      const res = await fetch(`${API}/devices/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      fetchDevices();
+    } catch (err) { alert(err.message); }
+  };
+
+  const validateUser = () => {
+    const errs = {};
+    if (!newUser.full_name.trim())           errs.full_name = 'Full name is required.';
+    else if (newUser.full_name.trim().length < 2) errs.full_name = 'Must be at least 2 characters.';
+    else if (!/^[A-Za-zÀ-ÖØ-öø-ÿÑñ\s'.\-]+$/.test(newUser.full_name.trim()))
+      errs.full_name = 'Name can only contain letters, spaces, hyphens, and apostrophes.';
+    if (!newUser.email.trim())               errs.email = 'Email is required.';
+    else if (!/^[^\s@]+@wearaware\.ph$/.test(newUser.email.trim())) errs.email = 'Only @wearaware.ph email addresses are allowed.';
+    if (!newUser.password)                   errs.password = 'Password is required.';
+    else if (newUser.password.length < 8)    errs.password = 'Password must be at least 8 characters.';
+    else if (!/[A-Za-z]/.test(newUser.password) || !/[0-9]/.test(newUser.password))
+      errs.password = 'Must contain both letters and numbers.';
+    return errs;
+  };
+
+  const handleAddUser = async (e) => {
+    e.preventDefault();
+    setFormMsg({ type: '', text: '' });
+    const errs = validateUser();
+    setFieldErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+    setSubmitting(true);
+    try {
+      const res  = await fetch(`${API}/users`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(newUser) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setFormMsg({ type: 'success', text: `User "${newUser.full_name}" created successfully!` });
+      setNewUser({ full_name: '', email: '', password: '', role: 'inspector' });
+      setFieldErrors({});
+      fetchUsers();
+    } catch (err) { setFormMsg({ type: 'error', text: err.message }); }
+    finally { setSubmitting(false); }
+  };
+
+  const handleDeactivate = async (id, name) => {
+    if (!window.confirm(`Deactivate ${name}?`)) return;
+    await fetch(`${API}/users/${id}/deactivate`, { method: 'PATCH', headers: getAuthHeaders() });
+    fetchUsers();
+  };
+
+  const handleReactivate = async (id, name) => {
+    if (!window.confirm(`Reactivate ${name}?`)) return;
+    await fetch(`${API}/users/${id}/reactivate`, { method: 'PATCH', headers: getAuthHeaders() });
+    fetchUsers();
+  };
+
+  const handleDelete = async (id, name) => {
+    if (!window.confirm(`Permanently delete ${name}? This cannot be undone.`)) return;
+    try {
+      const res  = await fetch(`${API}/users/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      fetchUsers();
+    } catch (err) { alert(err.message); }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    setCurrentPage('landing');
+  };
+
+  const resetFilters = () => {
+    setFilterStation('All Stations'); setFilterInspector('All Inspectors');
+    setFilterDate(''); setFilterViolation('All Types');
+  };
+
+  const stationOptions   = ['All Stations',   ...new Set(detections.map(d => d.station).filter(Boolean))];
+  const inspectorOptions = ['All Inspectors', ...new Set(detections.map(d => d.inspector).filter(Boolean))];
+
+  const filteredDetections = detections.filter(d => {
+    if (filterStation   !== 'All Stations'   && d.station   !== filterStation)   return false;
+    if (filterInspector !== 'All Inspectors' && d.inspector !== filterInspector) return false;
+    if (filterDate && d.date !== filterDate)                                      return false;
+    if (filterViolation === 'Violation' && d.result !== 'violation')             return false;
+    if (filterViolation === 'Compliant' && d.result !== 'compliant')             return false;
+    return true;
+  });
+
+  const initials = (name) => name ? name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'A';
+
+  const navItems = [
+    { id: 'overview',   icon: <LayoutDashboard size={18} />, label: 'Overview'        },
+    { id: 'users',      icon: <Users size={18} />,           label: 'User Management'  },
+    { id: 'workers',    icon: <HardHat size={18} />,         label: 'Worker Registry'   },
+    { id: 'stations',   icon: <MapPin size={18} />,          label: 'Stations'          },
+    { id: 'detections', icon: <ScanLine size={18} />,        label: 'Detection Log'    },
+    { id: 'activity',   icon: <Clock size={18} />,           label: 'Activity Log'     },
+  ];
+
+  const getDeviceLabel = (deviceId) => {
+    const d = devices.find(dev => dev.id === deviceId);
+    return d ? `${d.label} — ${d.location || 'No location'}` : 'Unassigned';
+  };
+
+  const inspectors = users.filter(u => u.role === 'inspector' && u.is_active);
+
+  const workerStationOptions = ['All Stations', ...new Set(devices.map(d => d.label).filter(Boolean))];
+
+  const filteredWorkers = workers.filter(w => {
+    if (workerFilterStation !== 'All Stations') {
+      const dev = devices.find(d => d.id === w.device_id);
+      if (!dev || dev.label !== workerFilterStation) return false;
+    }
+    if (workerFilterStatus !== 'All Statuses' && w.status !== workerFilterStatus.toLowerCase()) return false;
+    return true;
+  });
+
+  return (
+    <div className="ad-page">
+
+      <aside className="ad-sidebar">
+        <div className="ad-logo" onClick={() => setActiveTab('overview')}>
+          <span className="ad-logo-icon"><WearAwareLogo size={30} /></span> WearAware
+        </div>
+        <nav className="ad-nav">
+          <div className="ad-nav-label">Main Menu</div>
+          {navItems.map(item => (
+            <button key={item.id} className={`ad-nav-item ${activeTab === item.id ? 'active' : ''}`} onClick={() => setActiveTab(item.id)}>
+              <span className="ad-nav-icon">{item.icon}</span> {item.label}
+            </button>
+          ))}
+        </nav>
+        <div className="ad-sidebar-footer">
+          <div className="ad-user-info">
+            <div className="ad-avatar">{initials(user.full_name)}</div>
+            <div>
+              <div className="ad-user-name">{user.full_name || 'Admin'}</div>
+              <div className="ad-user-role">Administrator</div>
+            </div>
+          </div>
+          <button className="ad-logout" onClick={handleLogout}>Sign Out</button>
+        </div>
+      </aside>
+
+      <main className="ad-main">
+        <div className="ad-topbar">
+          <div>
+            <div className="ad-topbar-title">
+              {activeTab === 'overview'   && 'Dashboard Overview'}
+              {activeTab === 'users'      && 'User Management'}
+              {activeTab === 'workers'    && 'Worker Registry'}
+              {activeTab === 'stations'   && 'Station Management'}
+              {activeTab === 'detections' && 'Detection Log'}
+              {activeTab === 'activity'   && 'Activity Log'}
+            </div>
+            <div className="ad-topbar-sub">Welcome back, {user.full_name || 'Admin'} 👋</div>
+          </div>
+          <div className="ad-topbar-right"><span className="ad-badge">ADMIN</span></div>
+        </div>
+
+        <div className="ad-content">
+
+          {/* ── OVERVIEW ── */}
+          {activeTab === 'overview' && (
+            <>
+              <div className="ad-stats">
+                <div className="ad-stat-card">
+                  <div className="ad-stat-icon"><Users size={22} /></div>
+                  <div className="ad-stat-number">{users.length}</div>
+                  <div className="ad-stat-label">Total Users</div>
+                  <div className="ad-stat-change up">↑ Registered accounts</div>
+                </div>
+                <div className="ad-stat-card">
+                  <div className="ad-stat-icon"><ClipboardList size={22} /></div>
+                  <div className="ad-stat-number">{detLoading ? '…' : detStats.total}</div>
+                  <div className="ad-stat-label">Total Detections</div>
+                  <div className="ad-stat-change up">↑ All time</div>
+                </div>
+                <div className="ad-stat-card">
+                  <div className="ad-stat-icon"><AlertTriangle size={22} /></div>
+                  <div className="ad-stat-number">{detLoading ? '…' : detStats.violations}</div>
+                  <div className="ad-stat-label">Violations</div>
+                  <div className={`ad-stat-change ${detStats.violations > 0 ? 'down' : 'up'}`}>
+                    {detStats.violations > 0 ? '↓ Needs review' : '↑ None found'}
+                  </div>
+                </div>
+                <div className="ad-stat-card">
+                  <div className="ad-stat-icon"><HardHat size={22} /></div>
+                  <div className="ad-stat-number">{workers.length}</div>
+                  <div className="ad-stat-label">Workers</div>
+                  <div className="ad-stat-change up">↑ On registry</div>
+                </div>
+              </div>
+
+              <div className="ad-panel" style={{ marginBottom: '1.5rem' }}>
+                <div className="ad-panel-header">
+                  <div>
+                    <div className="ad-panel-title">Compliance Rate Trend</div>
+                    <div className="ad-panel-sub">
+                      Daily compliance across all stations &nbsp;
+                      <span style={{ fontWeight: 700, color: detStats.compliance_rate >= 80 ? '#38a169' : '#e53e3e' }}>
+                        {detLoading ? '…' : `${detStats.compliance_rate}% overall`}
+                      </span>
+                    </div>
+                  </div>
+                  <button className="ad-refresh-btn" onClick={fetchDetections} disabled={detLoading}>
+                    {detLoading ? '…' : '↻ Refresh'}
+                  </button>
+                </div>
+                {detLoading ? <div className="ad-chart-empty">Loading…</div> : <ComplianceLineGraph detections={detections} />}
+              </div>
+
+              <div className="ad-grid">
+                <div className="ad-panel">
+                  <div className="ad-panel-header">
+                    <div><div className="ad-panel-title">Recent Users</div><div className="ad-panel-sub">Latest registered accounts</div></div>
+                    <button className="ad-panel-action" onClick={() => setActiveTab('users')}>View All →</button>
+                  </div>
+                  <table className="ad-table">
+                    <thead><tr><th>Name</th><th>Role</th><th>Status</th></tr></thead>
+                    <tbody>
+                      {users.slice(0, 5).map(u => (
+                        <tr key={u.id}>
+                          <td><div style={{ fontWeight: 600 }}>{u.full_name}</div><div style={{ fontSize: '0.78rem', color: '#aaa' }}>{u.email}</div></td>
+                          <td><span className={`ad-role-badge ad-role-${u.role}`}>{u.role}</span></td>
+                          <td><span className={`ad-status ${u.is_active ? 'active' : 'inactive'}`}><span className="ad-status-dot" />{u.is_active ? 'Active' : 'Inactive'}</span></td>
+                        </tr>
+                      ))}
+                      {users.length === 0 && <tr><td colSpan={3} className="ad-empty">No users found</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="ad-panel">
+                  <div className="ad-panel-header">
+                    <div><div className="ad-panel-title">Recent Detections</div><div className="ad-panel-sub">Latest checkpoint scans</div></div>
+                    <button className="ad-panel-action" onClick={() => setActiveTab('detections')}>View All →</button>
+                  </div>
+                  {detLoading ? <div className="ad-empty">Loading…</div> : (
+                    <div className="ad-activity">
+                      {detections.slice(0, 5).map(d => (
+                        <div className="ad-activity-item" key={d.id}>
+                          <div className="ad-activity-dot-wrap">
+                            <div className="ad-activity-dot" style={{ background: d.result === 'violation' ? '#e53e3e' : '#38a169' }} />
+                          </div>
+                          <div>
+                            <div className="ad-activity-text">
+                              <strong>{d.station || 'Unknown Station'}</strong> — {d.result === 'violation' ? `Violation: ${(d.missing_ppe || []).join(', ') || 'missing PPE'}` : 'Compliant scan'}
+                            </div>
+                            <div className="ad-activity-time">{d.inspector || 'Unknown'} · {d.time} {d.date}</div>
+                          </div>
+                        </div>
+                      ))}
+                      {detections.length === 0 && <div className="ad-empty">No detections yet</div>}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ── USERS ── */}
+          {activeTab === 'users' && (
+            <div className="ad-grid-full">
+              <div className="ad-panel">
+                <div className="ad-panel-header">
+                  <div><div className="ad-panel-title">All Users</div><div className="ad-panel-sub">{users.length} accounts registered</div></div>
+                  <button className="ad-btn ad-btn-primary" onClick={() => { setShowModal(true); setFormMsg({ type: '', text: '' }); setFieldErrors({}); }}>+ Add User</button>
+                </div>
+                {loadingUsers ? <div className="ad-empty">Loading users...</div> : (
+                  <table className="ad-table">
+                    <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+                    <tbody>
+                      {users.map(u => (
+                        <tr key={u.id}>
+                          <td style={{ fontWeight: 600 }}>{u.full_name}</td>
+                          <td style={{ color: '#666' }}>{u.email}</td>
+                          <td><span className={`ad-role-badge ad-role-${u.role}`}>{u.role}</span></td>
+                          <td><span className={`ad-status ${u.is_active ? 'active' : 'inactive'}`}><span className="ad-status-dot" />{u.is_active ? 'Active' : 'Inactive'}</span></td>
+                          <td style={{ color: '#aaa', fontSize: '0.82rem' }}>{new Date(u.created_at).toLocaleDateString()}</td>
+                          <td>
+                            {u.role !== 'admin' && (
+                              <div className="ad-action-btns">
+                                {u.is_active
+                                  ? <button className="ad-btn-deactivate" onClick={() => handleDeactivate(u.id, u.full_name)}>Deactivate</button>
+                                  : <button className="ad-btn-reactivate" onClick={() => handleReactivate(u.id, u.full_name)}>Reactivate</button>}
+                                <button className="ad-btn-delete" onClick={() => handleDelete(u.id, u.full_name)}>Delete</button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                      {users.length === 0 && <tr><td colSpan={6} className="ad-empty">No users found</td></tr>}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── WORKERS ── */}
+          {activeTab === 'workers' && (
+            <div className="ad-grid-full">
+              <div className="ad-panel">
+                <div className="ad-panel-header">
+                  <div>
+                    <div className="ad-panel-title">Worker Registry</div>
+                    <div className="ad-panel-sub">{workers.length} workers on record &nbsp;<span className="ad-log-count">— {filteredWorkers.length} shown</span></div>
+                  </div>
+                  <button className="ad-btn ad-btn-primary" onClick={() => openWorkerModal()}>+ Add Worker</button>
+                </div>
+                <div className="ad-filters">
+                  <div className="ad-filter-group">
+                    <div className="ad-filter-label">Station</div>
+                    <select className="ad-filter-select" value={workerFilterStation} onChange={e => setWorkerFilterStation(e.target.value)}>
+                      {workerStationOptions.map(s => <option key={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div className="ad-filter-group">
+                    <div className="ad-filter-label">Status</div>
+                    <select className="ad-filter-select" value={workerFilterStatus} onChange={e => setWorkerFilterStatus(e.target.value)}>
+                      <option>All Statuses</option><option>Active</option><option>On_leave</option><option>Terminated</option>
+                    </select>
+                  </div>
+                  <button className="ad-filter-reset" onClick={() => { setWorkerFilterStation('All Stations'); setWorkerFilterStatus('All Statuses'); }}>Reset Filters</button>
+                </div>
+                {loadingWorkers ? <div className="ad-empty">Loading workers…</div> : (
+                  <table className="ad-table">
+                    <thead><tr><th>Employee ID</th><th>Name</th><th>Position</th><th>Station</th><th>Contact</th><th>Status</th><th>Actions</th></tr></thead>
+                    <tbody>
+                      {filteredWorkers.length === 0 ? (
+                        <tr><td colSpan={7} className="ad-empty">No workers match your filters</td></tr>
+                      ) : filteredWorkers.map(w => (
+                        <tr key={w.id}>
+                          <td style={{ fontWeight: 600, fontFamily: 'monospace' }}>{w.employee_id}</td>
+                          <td style={{ fontWeight: 600 }}>{w.full_name}</td>
+                          <td style={{ color: '#555' }}>{w.position || '—'}</td>
+                          <td>{w.device_id ? getDeviceLabel(w.device_id) : <span style={{ color: '#ccc' }}>Unassigned</span>}</td>
+                          <td style={{ color: '#555', fontSize: '0.85rem' }}>{w.contact_number || '—'}</td>
+                          <td>
+                            <span className={`ad-status ${w.status === 'active' ? 'active' : 'inactive'}`}>
+                              <span className="ad-status-dot" />
+                              {w.status === 'active' ? 'Active' : w.status === 'on_leave' ? 'On Leave' : 'Terminated'}
+                            </span>
+                          </td>
+                          <td>
+                            <div className="ad-action-btns">
+                              <button className="ad-btn-reactivate" onClick={() => openWorkerModal(w)}>Edit</button>
+                              <button className="ad-btn-delete" onClick={() => handleDeleteWorker(w.id, w.full_name)}>Delete</button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── STATIONS ── */}
+          {activeTab === 'stations' && (
+            <div className="ad-grid-full">
+              <div className="ad-panel">
+                <div className="ad-panel-header">
+                  <div>
+                    <div className="ad-panel-title">Station Management</div>
+                    <div className="ad-panel-sub">{devices.length} registered stations — assign inspectors and manage PPE requirements</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button className="ad-refresh-btn" onClick={fetchDevices}>↻ Refresh</button>
+                    <button className="ad-btn ad-btn-primary" onClick={() => openStationModal()}>+ Add Station</button>
+                  </div>
+                </div>
+                {devices.length === 0 ? (
+                  <div className="ad-empty">No stations yet — click "+ Add Station" to create one, or they're auto-created when a scanner connects.</div>
+                ) : (
+                  <table className="ad-table">
+                    <thead><tr><th>Station</th><th>Location</th><th>Status</th><th>Workers</th><th>Required PPE</th><th>Assigned Inspector</th><th>Actions</th></tr></thead>
+                    <tbody>
+                      {devices.map(d => (
+                        <tr key={d.id}>
+                          <td style={{ fontWeight: 600 }}>{d.label}</td>
+                          <td style={{ color: '#555' }}>{d.location || '—'}</td>
+                          <td>
+                            <span className={`ad-status ${d.is_active ? 'active' : 'inactive'}`}>
+                              <span className="ad-status-dot" />{d.is_active ? 'Active' : 'Offline'}
+                            </span>
+                          </td>
+                          <td>
+                            <span style={{ fontWeight: 600 }}>{parseInt(d.active_workers || 0)}</span>
+                            <span style={{ color: '#aaa', fontSize: '0.8rem' }}> / {parseInt(d.total_workers || 0)}</span>
+                          </td>
+                          <td>
+                            {(d.required_ppe || []).length > 0
+                              ? d.required_ppe.map(p => <span key={p} className="ad-ppe-tag">{p}</span>)
+                              : <span style={{ color: '#ccc', fontSize: '0.8rem' }}>—</span>}
+                          </td>
+                          <td>
+                            <select
+                              className="ad-filter-select"
+                              style={{ minWidth: '180px', fontSize: '0.83rem' }}
+                              value={d.inspector_id || ''}
+                              onChange={e => handleAssignInspector(d.id, e.target.value)}
+                            >
+                              <option value="">— Unassigned —</option>
+                              {inspectors.map(ins => (
+                                <option key={ins.id} value={ins.id}>{ins.full_name}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td>
+                            <div className="ad-action-btns">
+                              <button className="ad-btn-reactivate" onClick={() => openStationModal(d)}>Edit</button>
+                              <button className="ad-btn-delete" onClick={() => handleDeleteStation(d.id, d.label)}>Delete</button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── DETECTION LOG ── */}
+          {activeTab === 'detections' && (
+            <div className="ad-grid-full">
+              <div className="ad-panel">
+                <div className="ad-panel-header">
+                  <div>
+                    <div className="ad-panel-title">Detection Log</div>
+                    <div className="ad-panel-sub">All PPE detections across all stations &nbsp;<span className="ad-log-count">— {filteredDetections.length} of {detections.length} records</span></div>
+                  </div>
+                  <button className="ad-refresh-btn" onClick={fetchDetections} disabled={detLoading}>{detLoading ? '…' : '↻ Refresh'}</button>
+                </div>
+                <div className="ad-filters">
+                  <div className="ad-filter-group">
+                    <div className="ad-filter-label">Station</div>
+                    <select className="ad-filter-select" value={filterStation} onChange={e => setFilterStation(e.target.value)}>
+                      {stationOptions.map(s => <option key={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div className="ad-filter-group">
+                    <div className="ad-filter-label">Inspector</div>
+                    <select className="ad-filter-select" value={filterInspector} onChange={e => setFilterInspector(e.target.value)}>
+                      {inspectorOptions.map(i => <option key={i}>{i}</option>)}
+                    </select>
+                  </div>
+                  <div className="ad-filter-group">
+                    <div className="ad-filter-label">Date</div>
+                    <input className="ad-filter-input" type="date" value={filterDate} onChange={e => setFilterDate(e.target.value)} />
+                  </div>
+                  <div className="ad-filter-group">
+                    <div className="ad-filter-label">Status</div>
+                    <select className="ad-filter-select" value={filterViolation} onChange={e => setFilterViolation(e.target.value)}>
+                      <option>All Types</option><option>Violation</option><option>Compliant</option>
+                    </select>
+                  </div>
+                  <button className="ad-filter-reset" onClick={resetFilters}>Reset Filters</button>
+                </div>
+                <table className="ad-table">
+                  <thead><tr><th>#</th><th>Station</th><th>Inspector</th><th>Date & Time</th><th>Status</th><th>Missing PPE</th><th>Present PPE</th></tr></thead>
+                  <tbody>
+                    {detLoading ? (
+                      <tr><td colSpan={7} className="ad-empty">Loading detections…</td></tr>
+                    ) : filteredDetections.length === 0 ? (
+                      <tr><td colSpan={7} className="ad-empty">No detections match your filters</td></tr>
+                    ) : filteredDetections.map(d => (
+                      <tr key={d.id}>
+                        <td style={{ color: '#ccc', fontSize: '0.8rem' }}>{d.id}</td>
+                        <td style={{ fontWeight: 600 }}>{d.station || '—'}</td>
+                        <td style={{ color: '#555' }}>{d.inspector || '—'}</td>
+                        <td style={{ fontSize: '0.85rem' }}><div style={{ color: '#444' }}>{d.date}</div><div style={{ color: '#bbb' }}>{d.time}</div></td>
+                        <td>
+                          <span className={`ad-violation-badge ${d.result === 'violation' ? 'ad-violation-yes' : 'ad-violation-no'}`}>
+                            {d.result === 'violation' ? '⚠ Violation' : '✓ Compliant'}
+                          </span>
+                        </td>
+                        <td>{(d.missing_ppe || []).length > 0 ? d.missing_ppe.map(p => <span key={p} className="ad-ppe-tag missing">{p}</span>) : <span style={{ color: '#ccc', fontSize: '0.8rem' }}>—</span>}</td>
+                        <td>{(d.detected_ppe || []).length > 0 ? d.detected_ppe.map(p => <span key={p} className="ad-ppe-tag">{p}</span>) : <span style={{ color: '#ccc', fontSize: '0.8rem' }}>—</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* ── ACTIVITY ── */}
+          {activeTab === 'activity' && (
+            <div className="ad-panel">
+              <div className="ad-panel-header">
+                <div>
+                  <div className="ad-panel-title">Activity Log</div>
+                  <div className="ad-panel-sub">
+                    Recent system events — user registrations &amp; checkpoint scans
+                  </div>
+                </div>
+                <button className="ad-refresh-btn" onClick={fetchActivity} disabled={actLoading}>
+                  {actLoading ? '…' : '↻ Refresh'}
+                </button>
+              </div>
+
+              {actLoading ? (
+                <div className="ad-empty">Loading activity…</div>
+              ) : activity.length === 0 ? (
+                <div className="ad-empty">No activity yet — scans and user registrations will appear here</div>
+              ) : (
+                <div className="ad-activity">
+                  {activity.map((a, i) => (
+                    <div className="ad-activity-item" key={i}>
+                      <div className="ad-activity-dot-wrap">
+                        <div className="ad-activity-dot" style={{
+                          background: a.type === 'detection'
+                            ? (a.text.includes('violation') ? '#e53e3e' : '#38a169')
+                            : 'linear-gradient(135deg, #667eea, #764ba2)'
+                        }} />
+                        {i < activity.length - 1 && <div className="ad-activity-line" />}
+                      </div>
+                      <div>
+                        <div className="ad-activity-text">
+                          <span style={{ marginRight: '0.4rem' }}>{a.icon}</span>
+                          {a.text}
+                        </div>
+                        <div className="ad-activity-time">{a.time}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+        </div>
+      </main>
+
+      {/* ── Add User Modal ── */}
+      {showModal && (
+        <div className="ad-modal-overlay" onClick={(e) => e.target === e.currentTarget && setShowModal(false)}>
+          <div className="ad-modal">
+            <div className="ad-modal-title">Add New User</div>
+            <div className="ad-modal-sub">Create an account and assign a role</div>
+            <form className="ad-modal-form" onSubmit={handleAddUser}>
+              {formMsg.text && <div className={formMsg.type === 'success' ? 'ad-success-msg' : 'ad-error-msg'}>{formMsg.text}</div>}
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Full Name</label>
+                <input className={`ad-modal-input${fieldErrors.full_name ? ' error' : ''}`} placeholder="Juan dela Cruz" value={newUser.full_name}
+                  onChange={e => {
+                    const filtered = e.target.value.replace(/[^A-Za-zÀ-ÖØ-öø-ÿÑñ\s'.\-]/g, '');
+                    setNewUser({ ...newUser, full_name: filtered });
+                    setFieldErrors(p => ({ ...p, full_name: '' }));
+                  }} />
+                {fieldErrors.full_name && <span className="ad-field-error">⚠ {fieldErrors.full_name}</span>}
+              </div>
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Email Address</label>
+                <input className={`ad-modal-input${fieldErrors.email ? ' error' : ''}`} type="email" placeholder="username@wearaware.ph" value={newUser.email}
+                  onChange={e => { setNewUser({ ...newUser, email: e.target.value }); setFieldErrors(p => ({ ...p, email: '' })); }} />
+                {fieldErrors.email && <span className="ad-field-error">⚠ {fieldErrors.email}</span>}
+              </div>
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Password</label>
+                <input className={`ad-modal-input${fieldErrors.password ? ' error' : ''}`} type="password" placeholder="Min. 8 characters, letters and numbers" value={newUser.password}
+                  onChange={e => { setNewUser({ ...newUser, password: e.target.value }); setFieldErrors(p => ({ ...p, password: '' })); }} />
+                {fieldErrors.password && <span className="ad-field-error">⚠ {fieldErrors.password}</span>}
+                {newUser.password.length >= 8 && !fieldErrors.password && <span className="ad-field-ok">✓ Strong enough</span>}
+              </div>
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Role</label>
+                <select className="ad-modal-select" value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })}>
+                  <option value="inspector">Inspector</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <div className="ad-modal-footer">
+                <button type="button" className="ad-btn ad-btn-ghost"
+                  onClick={() => { setShowModal(false); setNewUser({ full_name: '', email: '', password: '', role: 'inspector' }); setFieldErrors({}); setFormMsg({ type: '', text: '' }); }}>
+                  Cancel
+                </button>
+                <button type="submit" className="ad-btn ad-btn-primary" disabled={submitting}>{submitting ? 'Creating…' : 'Create User'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Add / Edit Worker Modal ── */}
+      {showWorkerModal && (
+        <div className="ad-modal-overlay" onClick={(e) => e.target === e.currentTarget && setShowWorkerModal(false)}>
+          <div className="ad-modal">
+            <div className="ad-modal-title">{editingWorker ? 'Edit Worker' : 'Add New Worker'}</div>
+            <div className="ad-modal-sub">{editingWorker ? 'Update worker details' : 'Register a worker for station roster tracking'}</div>
+            <form className="ad-modal-form" onSubmit={handleSaveWorker}>
+              {workerFormMsg.text && <div className={workerFormMsg.type === 'success' ? 'ad-success-msg' : 'ad-error-msg'}>{workerFormMsg.text}</div>}
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Full Name</label>
+                <input className={`ad-modal-input${workerErrors.full_name ? ' error' : ''}`} placeholder="Juan dela Cruz"
+                  value={newWorker.full_name}
+                  onChange={e => {
+                    const filtered = e.target.value.replace(/[^A-Za-zÀ-ÖØ-öø-ÿÑñ\s'.\-]/g, '');
+                    setNewWorker({ ...newWorker, full_name: filtered });
+                    setWorkerErrors(p => ({ ...p, full_name: '' }));
+                  }} />
+                {workerErrors.full_name && <span className="ad-field-error">⚠ {workerErrors.full_name}</span>}
+              </div>
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Position</label>
+                <input className="ad-modal-input" placeholder="e.g. Electrician, Welder, Laborer"
+                  value={newWorker.position}
+                  onChange={e => setNewWorker({ ...newWorker, position: e.target.value })} />
+              </div>
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Assigned Station</label>
+                <select className="ad-modal-select" value={newWorker.device_id} onChange={e => setNewWorker({ ...newWorker, device_id: e.target.value })}>
+                  <option value="">— Unassigned —</option>
+                  {devices.map(d => <option key={d.id} value={d.id}>{d.label} — {d.location || 'No location'}</option>)}
+                </select>
+              </div>
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Contact Number</label>
+                <input className={`ad-modal-input${workerErrors.contact_number ? ' error' : ''}`} placeholder="e.g. 0917-123-4567"
+                  value={newWorker.contact_number}
+                  onChange={e => { setNewWorker({ ...newWorker, contact_number: e.target.value }); setWorkerErrors(p => ({ ...p, contact_number: '' })); }} />
+                {workerErrors.contact_number && <span className="ad-field-error">⚠ {workerErrors.contact_number}</span>}
+              </div>
+              {editingWorker && (
+                <div className="ad-modal-field">
+                  <label className="ad-modal-label">Status</label>
+                  <select className="ad-modal-select" value={newWorker.status} onChange={e => setNewWorker({ ...newWorker, status: e.target.value })}>
+                    <option value="active">Active</option>
+                    <option value="on_leave">On Leave</option>
+                    <option value="terminated">Terminated</option>
+                  </select>
+                </div>
+              )}
+              <div className="ad-modal-footer">
+                <button type="button" className="ad-btn ad-btn-ghost"
+                  onClick={() => { setShowWorkerModal(false); setEditingWorker(null); setNewWorker({ full_name: '', position: '', device_id: '', contact_number: '', status: 'active' }); setWorkerErrors({}); setWorkerFormMsg({ type: '', text: '' }); }}>
+                  Cancel
+                </button>
+                <button type="submit" className="ad-btn ad-btn-primary" disabled={workerSubmitting}>
+                  {workerSubmitting ? 'Saving…' : editingWorker ? 'Update Worker' : 'Add Worker'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Add / Edit Station Modal ── */}
+      {showStationModal && (
+        <div className="ad-modal-overlay" onClick={(e) => e.target === e.currentTarget && setShowStationModal(false)}>
+          <div className="ad-modal">
+            <div className="ad-modal-title">{editingStation ? 'Edit Station' : 'Add New Station'}</div>
+            <div className="ad-modal-sub">{editingStation ? 'Update station details and assignment' : 'Register a new checkpoint station'}</div>
+            <form className="ad-modal-form" onSubmit={handleSaveStation}>
+              {stationFormMsg.text && <div className={stationFormMsg.type === 'success' ? 'ad-success-msg' : 'ad-error-msg'}>{stationFormMsg.text}</div>}
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Station Name</label>
+                <input className={`ad-modal-input${stationErrors.label ? ' error' : ''}`} placeholder="e.g. Checkpoint Scanner A"
+                  value={newStation.label}
+                  onChange={e => { setNewStation({ ...newStation, label: e.target.value }); setStationErrors(p => ({ ...p, label: '' })); }} />
+                {stationErrors.label && <span className="ad-field-error">⚠ {stationErrors.label}</span>}
+              </div>
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Location</label>
+                <input className="ad-modal-input" placeholder="e.g. Building 1 — East Wing Entrance"
+                  value={newStation.location}
+                  onChange={e => setNewStation({ ...newStation, location: e.target.value })} />
+              </div>
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Required PPE</label>
+                <input className="ad-modal-input" placeholder="e.g. helmet,vest,gloves"
+                  value={newStation.required_ppe}
+                  onChange={e => setNewStation({ ...newStation, required_ppe: e.target.value })} />
+                <span style={{ fontSize: '0.75rem', color: '#aaa' }}>Comma-separated list of required PPE items</span>
+              </div>
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Assign Inspector</label>
+                <select className="ad-modal-select" value={newStation.inspector_id} onChange={e => setNewStation({ ...newStation, inspector_id: e.target.value })}>
+                  <option value="">— Unassigned —</option>
+                  {inspectors.map(ins => <option key={ins.id} value={ins.id}>{ins.full_name}</option>)}
+                </select>
+              </div>
+              {editingStation && (
+                <div className="ad-modal-field">
+                  <label className="ad-modal-label">Status</label>
+                  <select className="ad-modal-select" value={newStation.is_active} onChange={e => setNewStation({ ...newStation, is_active: e.target.value === 'true' })}>
+                    <option value="true">Active</option>
+                    <option value="false">Offline</option>
+                  </select>
+                </div>
+              )}
+              <div className="ad-modal-footer">
+                <button type="button" className="ad-btn ad-btn-ghost"
+                  onClick={() => { setShowStationModal(false); setEditingStation(null); setNewStation({ label: '', location: '', required_ppe: 'helmet,vest', inspector_id: '', is_active: true }); setStationErrors({}); setStationFormMsg({ type: '', text: '' }); }}>
+                  Cancel
+                </button>
+                <button type="submit" className="ad-btn ad-btn-primary" disabled={stationSubmitting}>
+                  {stationSubmitting ? 'Saving…' : editingStation ? 'Update Station' : 'Create Station'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

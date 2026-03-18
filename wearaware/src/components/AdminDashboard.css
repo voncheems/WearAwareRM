@@ -1,0 +1,323 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+        .ad-page {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+        background: #f4f6fb;
+        min-height: 100vh;
+        display: flex;
+        }
+
+        /* ── Sidebar ── */
+        .ad-sidebar {
+        width: 260px;
+        background: linear-gradient(180deg, #dc2626 0%, #991b1b 100%);
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        padding: 2rem 1.5rem;
+        position: sticky;
+        top: 0;
+        flex-shrink: 0;
+        overflow-y: auto;
+        z-index: 100;
+        }
+
+        .ad-logo {
+        display: flex; align-items: center; gap: 0.6rem;
+        color: white; font-size: 1.3rem; font-weight: 800;
+        margin-bottom: 2.5rem; padding-bottom: 2rem;
+        border-bottom: 1px solid rgba(255,255,255,0.2); cursor: pointer;
+        }
+        .ad-logo-icon { font-size: 1.8rem; }
+
+        .ad-nav { display: flex; flex-direction: column; gap: 0.4rem; flex: 1; }
+        .ad-nav-label {
+        font-size: 0.7rem; font-weight: 700; letter-spacing: 0.15em;
+        color: rgba(255,255,255,0.5); text-transform: uppercase;
+        margin: 1.2rem 0 0.5rem 0.5rem;
+        }
+        .ad-nav-item {
+        display: flex; align-items: center; gap: 0.75rem;
+        padding: 0.75rem 1rem; border-radius: 12px;
+        color: rgba(255,255,255,0.8); font-size: 0.92rem; font-weight: 500;
+        cursor: pointer; border: none; background: none;
+        width: 100%; text-align: left; transition: all 0.2s ease;
+        }
+        .ad-nav-item:hover  { background: rgba(255,255,255,0.15); color: white; }
+        .ad-nav-item.active { background: rgba(255,255,255,0.2);  color: white; font-weight: 700; }
+        .ad-nav-icon { font-size: 1.1rem; width: 20px; text-align: center; }
+
+        .ad-sidebar-footer { border-top: 1px solid rgba(255,255,255,0.2); padding-top: 1.5rem; }
+        .ad-user-info { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; }
+        .ad-avatar {
+        width: 38px; height: 38px; border-radius: 50%;
+        background: rgba(255,255,255,0.25);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1rem; color: white; font-weight: 700; flex-shrink: 0;
+        }
+        .ad-user-name { font-size: 0.88rem; font-weight: 600; color: white; }
+        .ad-user-role { font-size: 0.75rem; color: rgba(255,255,255,0.6); }
+
+        .ad-logout {
+        width: 100%; padding: 0.65rem 1rem; border-radius: 10px;
+        border: 1px solid rgba(255,255,255,0.3); background: none;
+        color: rgba(255,255,255,0.8); font-family: inherit;
+        font-size: 0.88rem; font-weight: 600; cursor: pointer; transition: all 0.2s ease;
+        }
+        .ad-logout:hover { background: rgba(255,255,255,0.15); color: white; }
+
+        /* ── Main ── */
+        .ad-main { flex: 1; display: flex; flex-direction: column; min-height: 100vh; overflow: hidden; }
+
+        .ad-topbar {
+        background: white; padding: 1.2rem 2.5rem;
+        display: flex; align-items: center; justify-content: space-between;
+        border-bottom: 1px solid #e8e8f0; position: sticky; top: 0; z-index: 50;
+        }
+        .ad-topbar-title { font-size: 1.3rem; font-weight: 800; color: #1a1a1a; }
+        .ad-topbar-sub   { font-size: 0.85rem; color: #888; margin-top: 1px; }
+        .ad-topbar-right { display: flex; align-items: center; gap: 1rem; }
+
+        .ad-badge {
+        background: linear-gradient(135deg, #dc2626, #991b1b);
+        color: white; font-size: 0.75rem; font-weight: 700;
+        padding: 0.3rem 0.8rem; border-radius: 20px; letter-spacing: 0.5px;
+        }
+
+        .ad-content { padding: 2.5rem; }
+
+        /* ── Stat Cards ── */
+        .ad-stats {
+        display: grid; grid-template-columns: repeat(3, 1fr);
+        gap: 1.5rem; margin-bottom: 1.5rem;
+        }
+        .ad-stat-card {
+        background: white; border-radius: 16px; padding: 1.8rem;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+        border: 2px solid transparent; transition: all 0.3s ease;
+        position: relative; overflow: hidden;
+        }
+        .ad-stat-card::before {
+        content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px;
+        background: linear-gradient(135deg, #dc2626, #991b1b);
+        }
+        .ad-stat-card:hover { transform: translateY(-4px); box-shadow: 0 8px 24px rgba(220,38,38,0.15); border-color: rgba(220,38,38,0.2); }
+        .ad-stat-icon   { font-size: 2rem; margin-bottom: 1rem; }
+        .ad-stat-number { font-size: 2.2rem; font-weight: 900; color: #1a1a1a; letter-spacing: -1px; }
+        .ad-stat-label  { font-size: 0.85rem; color: #888; margin-top: 0.3rem; font-weight: 500; }
+        .ad-stat-change { font-size: 0.78rem; font-weight: 600; margin-top: 0.5rem; display: flex; align-items: center; gap: 0.3rem; }
+        .ad-stat-change.up   { color: #38a169; }
+        .ad-stat-change.down { color: #e53e3e; }
+
+        /* ── Layout ── */
+        .ad-grid      { display: grid; grid-template-columns: 1.4fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
+        .ad-grid-full { margin-bottom: 1.5rem; }
+
+        /* ── Panel ── */
+        .ad-panel { background: white; border-radius: 16px; padding: 1.8rem; box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+        .ad-panel-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
+        .ad-panel-title  { font-size: 1rem; font-weight: 800; color: #1a1a1a; }
+        .ad-panel-sub    { font-size: 0.8rem; color: #aaa; margin-top: 2px; }
+        .ad-panel-action {
+        font-size: 0.82rem; font-weight: 600; color: #dc2626;
+        background: none; border: none; cursor: pointer;
+        padding: 0.4rem 0.8rem; border-radius: 8px; transition: background 0.2s;
+        }
+        .ad-panel-action:hover { background: #fef2f2; }
+
+        /* ── Table ── */
+        .ad-table { width: 100%; border-collapse: collapse; }
+        .ad-table th {
+        font-size: 0.75rem; font-weight: 700; letter-spacing: 0.08em; color: #aaa;
+        text-transform: uppercase; padding: 0.6rem 1rem; text-align: left;
+        border-bottom: 2px solid #f0f0f5;
+        }
+        .ad-table td {
+        padding: 1rem; font-size: 0.9rem; color: #333;
+        border-bottom: 1px solid #f5f5f8; vertical-align: middle;
+        }
+        .ad-table tr:last-child td { border-bottom: none; }
+        .ad-table tr:hover td { background: #fafafe; }
+
+        /* ── Badges & Status ── */
+        .ad-role-badge {
+        display: inline-block; padding: 0.25rem 0.7rem; border-radius: 20px;
+        font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+        }
+        .ad-role-admin     { background: #fef2f2; color: #dc2626; }
+        .ad-role-inspector { background: #e6fffa; color: #2c7a7b; }
+
+        .ad-status { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; font-weight: 600; }
+        .ad-status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+        .ad-status.active   .ad-status-dot { background: #38a169; }
+        .ad-status.inactive .ad-status-dot { background: #aaa; }
+        .ad-status.active   { color: #38a169; }
+        .ad-status.inactive { color: #aaa; }
+
+        .ad-violation-badge {
+        display: inline-flex; align-items: center; gap: 0.3rem;
+        padding: 0.25rem 0.7rem; border-radius: 20px;
+        font-size: 0.75rem; font-weight: 700;
+        }
+        .ad-violation-yes { background: #fff5f5; color: #e53e3e; }
+        .ad-violation-no  { background: #f0fff4; color: #38a169; }
+
+        .ad-ppe-tag {
+        display: inline-block; padding: 0.18rem 0.5rem; border-radius: 6px;
+        font-size: 0.72rem; font-weight: 600; background: #fef2f2; color: #dc2626; margin: 0.1rem;
+        }
+        .ad-ppe-tag.missing { background: #fff5f5; color: #e53e3e; }
+
+        /* ── Action Buttons ── */
+        .ad-action-btns { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+        .ad-btn-deactivate {
+        background: none; border: 1px solid #fed7d7; color: #e53e3e;
+        padding: 0.3rem 0.7rem; border-radius: 8px; font-size: 0.78rem;
+        font-weight: 600; cursor: pointer; transition: all 0.2s; font-family: inherit;
+        }
+        .ad-btn-deactivate:hover { background: #fff5f5; }
+        .ad-btn-reactivate {
+        background: none; border: 1px solid #9ae6b4; color: #38a169;
+        padding: 0.3rem 0.7rem; border-radius: 8px; font-size: 0.78rem;
+        font-weight: 600; cursor: pointer; transition: all 0.2s; font-family: inherit;
+        }
+        .ad-btn-reactivate:hover { background: #f0fff4; }
+        .ad-btn-delete {
+        background: none; border: 1px solid #e2e8f0; color: #999;
+        padding: 0.3rem 0.7rem; border-radius: 8px; font-size: 0.78rem;
+        font-weight: 600; cursor: pointer; transition: all 0.2s; font-family: inherit;
+        }
+        .ad-btn-delete:hover { border-color: #fc8181; color: #e53e3e; background: #fff5f5; }
+
+        /* ── Activity ── */
+        .ad-activity { display: flex; flex-direction: column; gap: 1rem; }
+        .ad-activity-item { display: flex; align-items: flex-start; gap: 0.9rem; }
+        .ad-activity-dot-wrap { display: flex; flex-direction: column; align-items: center; padding-top: 4px; }
+        .ad-activity-dot  { width: 10px; height: 10px; border-radius: 50%; background: linear-gradient(135deg, #dc2626, #991b1b); flex-shrink: 0; }
+        .ad-activity-line { width: 2px; height: 24px; background: #e8e8f0; margin-top: 4px; }
+        .ad-activity-text { font-size: 0.88rem; color: #444; line-height: 1.5; }
+        .ad-activity-time { font-size: 0.78rem; color: #bbb; margin-top: 2px; }
+
+        /* ── Filters ── */
+        .ad-filters { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; align-items: flex-end; }
+        .ad-filter-group { display: flex; flex-direction: column; gap: 0.35rem; flex: 1; min-width: 130px; }
+        .ad-filter-label {
+        font-size: 0.72rem; font-weight: 700; color: #aaa;
+        text-transform: uppercase; letter-spacing: 0.08em;
+        }
+        .ad-filter-select, .ad-filter-input {
+        padding: 0.6rem 0.9rem; border: 2px solid #e8e8f0; border-radius: 10px;
+        font-size: 0.88rem; font-family: inherit; color: #1a1a1a;
+        background: #fafafa; outline: none; transition: border-color 0.2s;
+        }
+        .ad-filter-select:focus, .ad-filter-input:focus { border-color: #dc2626; background: white; }
+        .ad-filter-reset {
+        padding: 0.6rem 1.2rem; border: 2px solid #e8e8f0; border-radius: 10px;
+        font-size: 0.85rem; font-weight: 600; color: #888;
+        background: none; cursor: pointer; font-family: inherit;
+        transition: all 0.2s; align-self: flex-end; white-space: nowrap;
+        }
+        .ad-filter-reset:hover { border-color: #dc2626; color: #dc2626; background: #fef2f2; }
+        .ad-log-count { font-size: 0.82rem; color: #aaa; font-weight: 400; }
+
+        /* ── Modal ── */
+        .ad-modal-overlay {
+        position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 200;
+        display: flex; align-items: center; justify-content: center;
+        padding: 1rem; animation: adFadeIn 0.2s ease;
+        }
+        @keyframes adFadeIn  { from { opacity: 0; } to { opacity: 1; } }
+        .ad-modal {
+        background: white; border-radius: 20px; padding: 2.5rem;
+        width: 100%; max-width: 480px;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.25); animation: adSlideUp 0.25s ease;
+        }
+        @keyframes adSlideUp {
+        from { opacity: 0; transform: translateY(20px); }
+        to   { opacity: 1; transform: none; }
+        }
+        .ad-modal-title { font-size: 1.4rem; font-weight: 800; margin-bottom: 0.4rem; color: #1a1a1a; }
+        .ad-modal-sub   { font-size: 0.88rem; color: #888; margin-bottom: 2rem; }
+        .ad-modal-form  { display: flex; flex-direction: column; gap: 1.2rem; }
+        .ad-modal-field { display: flex; flex-direction: column; gap: 0.45rem; }
+        .ad-modal-label { font-size: 0.85rem; font-weight: 600; color: #333; }
+        .ad-modal-input, .ad-modal-select {
+        padding: 0.8rem 1.1rem; border: 2px solid #e8e8f0; border-radius: 12px;
+        font-size: 0.93rem; font-family: inherit; color: #1a1a1a;
+        outline: none; transition: border-color 0.2s, box-shadow 0.2s; background: #fafafa;
+        }
+        .ad-modal-input:focus, .ad-modal-select:focus {
+        border-color: #dc2626; box-shadow: 0 0 0 4px rgba(220,38,38,0.1); background: white;
+        }
+        .ad-modal-input.error { border-color: #dc2626; background: #fff5f5; }
+        .ad-modal-footer { display: flex; gap: 1rem; justify-content: flex-end; margin-top: 0.5rem; }
+
+        /* ── Buttons ── */
+        .ad-btn {
+        padding: 0.8rem 1.8rem; border-radius: 50px; font-family: inherit;
+        font-size: 0.92rem; font-weight: 700; cursor: pointer;
+        transition: all 0.2s ease; border: 2px solid transparent;
+        }
+        .ad-btn-primary { background: linear-gradient(135deg, #dc2626, #991b1b); color: white; border: none; }
+        .ad-btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(220,38,38,0.35); }
+        .ad-btn-primary:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        .ad-btn-ghost { background: none; color: #666; border-color: #e0e0e0; }
+        .ad-btn-ghost:hover { background: #f5f5f5; }
+
+        .ad-refresh-btn {
+        padding: 0.45rem 1rem; border-radius: 10px; font-size: 0.82rem; font-weight: 700;
+        border: 2px solid #dc2626; color: #dc2626; background: none; cursor: pointer;
+        font-family: inherit; transition: all 0.2s;
+        }
+        .ad-refresh-btn:hover    { background: #fef2f2; }
+        .ad-refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* ── Messages ── */
+        .ad-success-msg {
+        background: #f0fff4; border: 2px solid #9ae6b4; border-radius: 12px;
+        color: #276749; padding: 0.8rem 1.2rem; font-size: 0.88rem; font-weight: 500;
+        }
+        .ad-error-msg {
+        background: #fff5f5; border: 2px solid #fed7d7; border-radius: 12px;
+        color: #c53030; padding: 0.8rem 1.2rem; font-size: 0.88rem; font-weight: 500;
+        }
+        .ad-field-error { font-size: 0.78rem; color: #dc2626; margin-top: 2px; }
+        .ad-field-ok    { font-size: 0.75rem; color: #16a34a; margin-top: 2px; }
+        .ad-empty { text-align: center; padding: 3rem 1rem; color: #bbb; font-size: 0.95rem; }
+
+        /* ── Chart ── */
+        .ad-chart-wrap { position: relative; width: 100%; overflow: visible; }
+        .ad-chart-svg  { width: 100%; display: block; overflow: visible; }
+        .ad-chart-tooltip {
+        position: absolute; background: #1a1a1a; color: white;
+        padding: 0.5rem 0.8rem; border-radius: 8px; font-size: 0.78rem;
+        font-weight: 600; pointer-events: none; white-space: nowrap;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 10;
+        transform: translate(-50%, -110%);
+        }
+        .ad-chart-tooltip::after {
+        content: ''; position: absolute; bottom: -5px; left: 50%;
+        transform: translateX(-50%);
+        border: 5px solid transparent; border-top-color: #1a1a1a; border-bottom: none;
+        }
+        .ad-chart-empty {
+        display: flex; align-items: center; justify-content: center;
+        height: 160px; color: #ccc; font-size: 0.9rem; font-weight: 500;
+        }
+        .ad-chart-legend { display: flex; gap: 1.2rem; margin-top: 1rem; flex-wrap: wrap; }
+        .ad-chart-legend-item {
+        display: flex; align-items: center; gap: 0.4rem;
+        font-size: 0.78rem; font-weight: 600; color: #666;
+        }
+        .ad-chart-legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+        /* ── Responsive ── */
+        @media (max-width: 1100px) {
+        .ad-stats { grid-template-columns: repeat(3, 1fr); }
+        .ad-grid  { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 768px) {
+        .ad-sidebar { display: none; }
+        .ad-stats   { grid-template-columns: repeat(2, 1fr); }
+        .ad-filters { flex-direction: column; }
+        }

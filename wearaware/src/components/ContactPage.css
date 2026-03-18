@@ -1,0 +1,320 @@
+/* ============================================================
+   ContactPage.css
+   Matches LandingPage.css design system.
+   Import LandingPage.css first for shared styles.
+   ============================================================ */
+
+/* ── Active nav link ── */
+.nav-active {
+  color: #ff6b35 !important;
+}
+
+/* ══════════════════════════════════════════
+   HERO
+══════════════════════════════════════════ */
+.cp-hero {
+  position: relative;
+  min-height: 80vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6rem;
+  background: linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5)),
+              url('https://images.unsplash.com/photo-1504307651254-35680f356dfd?q=80&w=2076') center/cover no-repeat;
+}
+
+.cp-hero-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.75) 0%, rgba(118, 75, 162, 0.75) 100%);
+  z-index: 0;
+}
+
+.cp-hero-content {
+  position: relative;
+  text-align: center;
+  color: white;
+  max-width: 800px;
+  z-index: 1;
+}
+
+/* ══════════════════════════════════════════
+   CONTACT INFO CARDS
+══════════════════════════════════════════ */
+.cp-info-section {
+  padding: 8rem 5%;
+  background: #ffffff;
+}
+
+.cp-info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 2rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.cp-info-card {
+  background: #f8f9fa;
+  border-radius: 20px;
+  padding: 2.5rem 2rem;
+  text-align: center;
+  border: 2px solid transparent;
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.05);
+  transition: all 0.3s ease;
+}
+
+.cp-info-card:hover {
+  transform: translateY(-8px);
+  border-color: #667eea;
+  box-shadow: 0 15px 40px rgba(102, 126, 234, 0.15);
+}
+
+.cp-info-icon {
+  font-size: 2.5rem;
+  margin-bottom: 1rem;
+}
+
+.cp-info-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #667eea;
+  margin-bottom: 0.6rem;
+  text-transform: uppercase;
+}
+
+.cp-info-value {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #1a1a1a;
+  margin-bottom: 0.4rem;
+}
+
+.cp-info-sub {
+  font-size: 0.88rem;
+  color: #888;
+  line-height: 1.5;
+}
+
+/* ══════════════════════════════════════════
+   FORM SECTION
+══════════════════════════════════════════ */
+.cp-form-section {
+  padding: 6rem 5%;
+  background: #f8f9fa;
+}
+
+.cp-form-wrapper {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 4rem;
+  max-width: 1200px;
+  margin: 0 auto;
+  align-items: start;
+}
+
+/* ── Form Left ── */
+.cp-form-left {
+  background: #ffffff;
+  border-radius: 24px;
+  padding: 3rem;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.07);
+}
+
+.cp-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.cp-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+.cp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.cp-field label {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #444;
+  letter-spacing: 0.3px;
+}
+
+.cp-field input,
+.cp-field select,
+.cp-field textarea {
+  padding: 0.85rem 1.1rem;
+  border: 2px solid #e8e8e8;
+  border-radius: 12px;
+  font-size: 0.97rem;
+  font-family: inherit;
+  color: #1a1a1a;
+  background: #fafafa;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  outline: none;
+  resize: none;
+}
+
+.cp-field input:focus,
+.cp-field select:focus,
+.cp-field textarea:focus {
+  border-color: #667eea;
+  box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
+  background: #fff;
+}
+
+.cp-field select {
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23667eea' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 1rem center;
+  padding-right: 2.5rem;
+}
+
+.cp-submit-btn {
+  align-self: flex-start;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  font-size: 1rem;
+  padding: 1rem 2.5rem;
+  transition: all 0.3s ease;
+}
+
+.cp-submit-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+}
+
+/* ── Success State ── */
+.cp-success {
+  text-align: center;
+  padding: 3rem 1rem;
+}
+
+.cp-success-icon {
+  font-size: 4rem;
+  margin-bottom: 1.5rem;
+}
+
+.cp-success h3 {
+  font-size: 1.8rem;
+  font-weight: 800;
+  color: #1a1a1a;
+  margin-bottom: 0.75rem;
+}
+
+.cp-success p {
+  font-size: 1rem;
+  color: #666;
+  line-height: 1.7;
+  margin-bottom: 2rem;
+}
+
+/* ── Form Right ── */
+.cp-form-right {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.cp-side-card {
+  background: #ffffff;
+  border-radius: 24px;
+  padding: 2.5rem;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.07);
+  border: 2px solid transparent;
+  transition: border-color 0.3s ease;
+}
+
+.cp-side-card:hover {
+  border-color: #667eea;
+}
+
+.cp-side-card--dark {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border: none;
+}
+
+.cp-side-title {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: #1a1a1a;
+  margin-bottom: 1.5rem;
+  letter-spacing: -0.3px;
+}
+
+.cp-side-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cp-side-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.95rem;
+  color: #444;
+}
+
+.cp-side-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+/* ══════════════════════════════════════════
+   RESPONSIVE
+══════════════════════════════════════════ */
+@media (max-width: 960px) {
+  .cp-form-wrapper {
+    grid-template-columns: 1fr;
+    gap: 2rem;
+  }
+
+  .cp-form-right {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .cp-side-card {
+    flex: 1;
+    min-width: 260px;
+  }
+}
+
+@media (max-width: 640px) {
+  .cp-form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .cp-hero {
+    padding: 4rem 2rem;
+    min-height: 60vh;
+  }
+
+  .cp-form-left {
+    padding: 2rem 1.5rem;
+  }
+
+  .cp-form-right {
+    flex-direction: column;
+  }
+}
