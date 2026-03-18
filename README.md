@@ -1,2 +1,0 @@
-# WearAwareRM
-PPE Detection Project. 
