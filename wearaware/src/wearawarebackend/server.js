@@ -243,10 +243,18 @@ app.patch('/api/inspector/profile', requireAuth, requireRole('inspector'), async
 });
 
 // ══════════════════════════════════════════════════════════════
-//  POST /api/detections
+//  POST /api/detections  ✅ UPDATED — now saves worker_id
 // ══════════════════════════════════════════════════════════════
 app.post('/api/detections', requireAuth, requireRole('inspector'), async (req, res) => {
-  const { device_uuid, result, missing_ppe = [], detected_ppe = [], confidence_score } = req.body;
+  const {
+    device_uuid,
+    result,
+    missing_ppe     = [],
+    detected_ppe    = [],
+    confidence_score,
+    worker_id,
+    photo_url       = null,   // base64 snapshot for violations
+  } = req.body;
 
   if (!device_uuid || !result)
     return res.status(400).json({ error: 'device_uuid and result are required.' });
@@ -273,11 +281,13 @@ app.post('/api/detections', requireAuth, requireRole('inspector'), async (req, r
       deviceDbId = deviceResult.rows[0].id;
     }
 
-    // Save detection
+    // Save detection with worker_id and photo
     const det = await pool.query(
-      `INSERT INTO detections (device_id, inspector_id, result, missing_ppe, detected_ppe, confidence_score)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-      [deviceDbId, req.user.id, result, missing_ppe, detected_ppe, confidence_score || null]
+      `INSERT INTO detections
+         (device_id, inspector_id, result, missing_ppe, detected_ppe, confidence_score, worker_id, photo_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING id`,
+      [deviceDbId, req.user.id, result, missing_ppe, detected_ppe, confidence_score || null, worker_id || null, photo_url || null]
     );
     const detectionId = det.rows[0].id;
 
@@ -288,7 +298,6 @@ app.post('/api/detections', requireAuth, requireRole('inspector'), async (req, r
         [detectionId, req.user.id]
       );
 
-      // ── Broadcast to Android app ──
       const alertPayload = JSON.stringify({
         title:   'PPE VIOLATION DETECTED',
         message: `Missing: ${missing_ppe.join(', ') || 'PPE'} at Site Entrance`,

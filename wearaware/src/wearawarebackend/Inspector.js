@@ -17,10 +17,13 @@ router.get('/detections', requireAuth, requireRole('inspector'), async (req, res
          det.detected_ppe,
          det.missing_ppe,
          det.photo_url,
+         w.full_name    AS worker_name,
+         w.employee_id  AS worker_employee_id,
          TO_CHAR(det.detected_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD') AS date,
          TO_CHAR(det.detected_at AT TIME ZONE 'Asia/Manila', 'HH12:MI AM') AS time
        FROM detections det
-       LEFT JOIN devices d ON d.id = det.device_id
+       LEFT JOIN devices d  ON d.id  = det.device_id
+       LEFT JOIN workers w  ON w.id  = det.worker_id
        WHERE det.inspector_id = $1
        ORDER BY det.detected_at DESC`,
       [req.user.id]
@@ -52,10 +55,17 @@ router.get('/detections/stats', requireAuth, requireRole('inspector'), async (re
     );
     const row = result.rows[0];
     res.json({
-      total:           parseInt(row.total)           || 0,
-      violations:      parseInt(row.violations)      || 0,
-      compliant:       parseInt(row.compliant)        || 0,
-      compliance_rate: parseInt(row.compliance_rate) || 100,
+      total:           parseInt(row.total)              || 0,
+      violations:      parseInt(row.violations)         || 0,
+      compliant:       parseInt(row.compliant)          || 0,
+      // Starts at 100%, drops with each violation
+      // Formula: (total - violations) / total * 100
+      compliance_rate: (() => {
+        const total      = parseInt(row.total)      || 0;
+        const violations = parseInt(row.violations) || 0;
+        if (total === 0) return 100;
+        return Math.round(((total - violations) / total) * 100);
+      })(),
     });
   } catch (err) {
     console.error('GET /inspector/detections/stats error:', err.message);
@@ -65,8 +75,6 @@ router.get('/detections/stats', requireAuth, requireRole('inspector'), async (re
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/inspector/stations
-//  NOTE: Requires inspector_id column on devices table.
-//  If devices are not inspector-owned, remove the WHERE clause.
 // ══════════════════════════════════════════════════════════════
 router.get('/stations', requireAuth, requireRole('inspector'), async (req, res) => {
   try {
@@ -122,6 +130,198 @@ router.get('/stations/:id/workers', requireAuth, requireRole('inspector'), async
 });
 
 // ══════════════════════════════════════════════════════════════
+//  GET /api/inspector/workers
+// ══════════════════════════════════════════════════════════════
+router.get('/workers', requireAuth, requireRole('inspector'), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT
+         w.id,
+         w.employee_id,
+         w.full_name,
+         w.position,
+         w.contact_number,
+         w.status,
+         w.created_at,
+         d.id    AS device_id,
+         d.label AS station_label
+       FROM workers w
+       JOIN devices d ON w.device_id = d.id
+       WHERE d.inspector_id = $1
+       ORDER BY w.full_name ASC`,
+      [req.user.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('GET /inspector/workers error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch workers.' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  GET /api/inspector/workers/unassigned
+// ══════════════════════════════════════════════════════════════
+router.get('/workers/unassigned', requireAuth, requireRole('inspector'), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, employee_id, full_name, position, contact_number, status, created_at
+       FROM workers
+       WHERE device_id IS NULL
+       ORDER BY full_name ASC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('GET /inspector/workers/unassigned error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch unassigned workers.' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  PATCH /api/inspector/workers/:id/assign
+// ══════════════════════════════════════════════════════════════
+router.patch('/workers/:id/assign', requireAuth, requireRole('inspector'), async (req, res) => {
+  const { station_id } = req.body;
+  if (!station_id)
+    return res.status(400).json({ error: 'station_id is required.' });
+  try {
+    const stationCheck = await pool.query(
+      'SELECT id FROM devices WHERE id = $1 AND inspector_id = $2',
+      [station_id, req.user.id]
+    );
+    if (!stationCheck.rows[0])
+      return res.status(403).json({ error: 'Station not assigned to you.' });
+
+    const workerCheck = await pool.query(
+      'SELECT id, device_id FROM workers WHERE id = $1',
+      [req.params.id]
+    );
+    if (!workerCheck.rows[0])
+      return res.status(404).json({ error: 'Worker not found.' });
+    if (workerCheck.rows[0].device_id !== null)
+      return res.status(409).json({ error: 'Worker is already assigned to a station.' });
+
+    const result = await pool.query(
+      `UPDATE workers SET device_id = $1 WHERE id = $2
+       RETURNING id, employee_id, full_name, position, contact_number, status`,
+      [station_id, req.params.id]
+    );
+    res.json({ success: true, worker: result.rows[0] });
+  } catch (err) {
+    console.error('PATCH /inspector/workers/:id/assign error:', err.message);
+    res.status(500).json({ error: 'Failed to assign worker.' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  GET /api/inspector/inspections
+// ══════════════════════════════════════════════════════════════
+router.get('/inspections', requireAuth, requireRole('inspector'), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT
+         i.id,
+         i.title,
+         i.notes,
+         i.status,
+         i.completed_at,
+         i.created_at,
+         d.id       AS device_id,
+         d.label    AS station_label,
+         d.location AS station_location
+       FROM inspections i
+       LEFT JOIN devices d ON i.device_id = d.id
+       WHERE i.inspector_id = $1
+       ORDER BY
+         CASE WHEN i.status = 'pending' THEN 0 ELSE 1 END,
+         i.created_at DESC`,
+      [req.user.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('GET /inspector/inspections error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch inspections.' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  POST /api/inspector/inspections
+// ══════════════════════════════════════════════════════════════
+router.post('/inspections', requireAuth, requireRole('inspector'), async (req, res) => {
+  const { title, device_id, notes } = req.body;
+  if (!title || !title.trim())
+    return res.status(400).json({ error: 'Title is required.' });
+  try {
+    if (device_id) {
+      const stationCheck = await pool.query(
+        'SELECT id FROM devices WHERE id = $1 AND inspector_id = $2',
+        [device_id, req.user.id]
+      );
+      if (!stationCheck.rows[0])
+        return res.status(403).json({ error: 'Station not assigned to you.' });
+    }
+    const result = await pool.query(
+      `INSERT INTO inspections (inspector_id, device_id, title, notes, status)
+       VALUES ($1, $2, $3, $4, 'pending')
+       RETURNING id, title, notes, status, created_at, device_id`,
+      [req.user.id, device_id || null, title.trim(), notes?.trim() || null]
+    );
+    res.status(201).json({ success: true, inspection: result.rows[0] });
+  } catch (err) {
+    console.error('POST /inspector/inspections error:', err.message);
+    res.status(500).json({ error: 'Failed to create inspection.' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  PATCH /api/inspector/inspections/:id/complete
+// ══════════════════════════════════════════════════════════════
+router.patch('/inspections/:id/complete', requireAuth, requireRole('inspector'), async (req, res) => {
+  const { notes } = req.body;
+  try {
+    const check = await pool.query(
+      'SELECT id, status FROM inspections WHERE id = $1 AND inspector_id = $2',
+      [req.params.id, req.user.id]
+    );
+    if (!check.rows[0])
+      return res.status(404).json({ error: 'Inspection not found.' });
+    if (check.rows[0].status === 'completed')
+      return res.status(409).json({ error: 'Inspection already completed.' });
+    const result = await pool.query(
+      `UPDATE inspections
+       SET status = 'completed', completed_at = NOW(), notes = COALESCE($1, notes)
+       WHERE id = $2 AND inspector_id = $3
+       RETURNING id, title, notes, status, completed_at`,
+      [notes?.trim() || null, req.params.id, req.user.id]
+    );
+    res.json({ success: true, inspection: result.rows[0] });
+  } catch (err) {
+    console.error('PATCH /inspector/inspections/:id/complete error:', err.message);
+    res.status(500).json({ error: 'Failed to complete inspection.' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  DELETE /api/inspector/inspections/:id
+// ══════════════════════════════════════════════════════════════
+router.delete('/inspections/:id', requireAuth, requireRole('inspector'), async (req, res) => {
+  try {
+    const check = await pool.query(
+      'SELECT id, status FROM inspections WHERE id = $1 AND inspector_id = $2',
+      [req.params.id, req.user.id]
+    );
+    if (!check.rows[0])
+      return res.status(404).json({ error: 'Inspection not found.' });
+    if (check.rows[0].status === 'completed')
+      return res.status(409).json({ error: 'Cannot delete a completed inspection.' });
+    await pool.query('DELETE FROM inspections WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('DELETE /inspector/inspections/:id error:', err.message);
+    res.status(500).json({ error: 'Failed to delete inspection.' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
 //  GET /api/inspector/notifications
 // ══════════════════════════════════════════════════════════════
 router.get('/notifications', requireAuth, requireRole('inspector'), async (req, res) => {
@@ -129,10 +329,13 @@ router.get('/notifications', requireAuth, requireRole('inspector'), async (req, 
     const result = await pool.query(
       `SELECT n.id, n.detection_id, n.is_read, n.created_at,
               d.result, d.missing_ppe, d.photo_url,
-              dev.label AS station, dev.location
+              dev.label AS station, dev.location,
+              w.full_name   AS worker_name,
+              w.employee_id AS worker_employee_id
        FROM notifications n
        JOIN detections d   ON n.detection_id = d.id
        JOIN devices    dev ON d.device_id    = dev.id
+       LEFT JOIN workers w ON w.id           = d.worker_id
        WHERE n.inspector_id = $1
        ORDER BY n.created_at DESC
        LIMIT 50`,
@@ -158,6 +361,46 @@ router.patch('/notifications/:id/read', requireAuth, requireRole('inspector'), a
   } catch (err) {
     console.error('PATCH /inspector/notifications/:id/read error:', err.message);
     res.status(500).json({ error: 'Failed to update notification.' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  PATCH /api/inspector/detections/:id/override
+//  Inspector overrides a violation → compliant
+// ══════════════════════════════════════════════════════════════
+router.patch('/detections/:id/override', requireAuth, requireRole('inspector'), async (req, res) => {
+  try {
+    // Verify detection belongs to this inspector
+    const check = await pool.query(
+      'SELECT id, result FROM detections WHERE id = $1 AND inspector_id = $2',
+      [req.params.id, req.user.id]
+    );
+    if (!check.rows[0])
+      return res.status(404).json({ error: 'Detection not found.' });
+    if (check.rows[0].result === 'compliant')
+      return res.status(409).json({ error: 'Already marked as compliant.' });
+
+    const result = await pool.query(
+      `UPDATE detections
+       SET result     = 'compliant',
+           missing_ppe = '{}',
+           detected_ppe = CASE
+             WHEN array_length(detected_ppe, 1) IS NULL OR array_length(detected_ppe, 1) = 0
+             THEN (
+               SELECT COALESCE(d.required_ppe, ARRAY['helmet','vest'])
+               FROM devices d
+               WHERE d.id = (SELECT device_id FROM detections WHERE id = $1)
+             )
+             ELSE detected_ppe
+           END
+       WHERE id = $1 AND inspector_id = $2
+       RETURNING id, result, missing_ppe, detected_ppe`,
+      [req.params.id, req.user.id]
+    );
+    res.json({ success: true, detection: result.rows[0] });
+  } catch (err) {
+    console.error('PATCH /inspector/detections/:id/override error:', err.message);
+    res.status(500).json({ error: 'Failed to override detection.' });
   }
 });
 

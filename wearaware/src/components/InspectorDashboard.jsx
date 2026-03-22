@@ -41,7 +41,6 @@ export default function InspectorDashboard({ setCurrentPage }) {
 
   const storedUser = useMemo(() => JSON.parse(localStorage.getItem('user') || '{}'), []);
 
-  // ── Auto-logout on 401 (e.g. password changed on another device) ──
   const handleUnauthorized = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
@@ -148,6 +147,291 @@ export default function InspectorDashboard({ setCurrentPage }) {
   };
 
   const handleLogout = () => { localStorage.removeItem('token'); localStorage.removeItem('user'); setCurrentPage('landing'); };
+
+  const handleOverride = async (detectionId) => {
+    if (!window.confirm('Override this violation as compliant?')) return;
+    try {
+      const res  = await authFetch(`${API}/inspector/detections/${detectionId}/override`, { method: 'PATCH' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      fetchDetections();  // refresh stats + log
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const [photoModal,   setPhotoModal]   = useState(null);
+  const [reportModal,  setReportModal]  = useState(false);
+  const [reportPeriod, setReportPeriod] = useState('all');
+  const [reportFrom,   setReportFrom]   = useState('');
+  const [reportTo,     setReportTo]     = useState('');
+
+  const generateReport = () => {
+    // Compute date range from selected period
+    const today     = new Date();
+    const todayStr  = today.toISOString().split('T')[0];
+    let fromDate = null;
+
+    if (reportPeriod === 'today') {
+      fromDate = todayStr;
+    } else if (reportPeriod === 'yesterday') {
+      const y = new Date(today); y.setDate(y.getDate() - 1);
+      fromDate = y.toISOString().split('T')[0];
+    } else if (reportPeriod === 'week') {
+      const w = new Date(today); w.setDate(w.getDate() - 7);
+      fromDate = w.toISOString().split('T')[0];
+    } else if (reportPeriod === 'lastweek') {
+      const start = new Date(today); start.setDate(start.getDate() - 14);
+      const end   = new Date(today); end.setDate(end.getDate() - 7);
+      fromDate = start.toISOString().split('T')[0];
+    } else if (reportPeriod === 'month') {
+      const m = new Date(today); m.setDate(1);
+      fromDate = m.toISOString().split('T')[0];
+    } else if (reportPeriod === 'lastmonth') {
+      const lm = new Date(today); lm.setMonth(lm.getMonth() - 1); lm.setDate(1);
+      fromDate = lm.toISOString().split('T')[0];
+    }
+
+    const filtered = reportPeriod === 'all'
+      ? detections  // all time — no filter
+      : detections.filter(d => {
+          if (!d.date) return false;
+          if (fromDate && d.date < fromDate) return false;
+          if (reportPeriod === 'yesterday') {
+            const y = new Date(today); y.setDate(y.getDate() - 1);
+            if (d.date !== y.toISOString().split('T')[0]) return false;
+          }
+          if (reportPeriod === 'lastweek') {
+            const end = new Date(today); end.setDate(end.getDate() - 7);
+            if (d.date >= end.toISOString().split('T')[0]) return false;
+          }
+          if (reportPeriod === 'lastmonth') {
+            const thisMonth = new Date(today); thisMonth.setDate(1);
+            if (d.date >= thisMonth.toISOString().split('T')[0]) return false;
+          }
+          return true;
+        });
+
+    // Recompute stats for filtered period
+    const filteredTotal      = filtered.length;
+    const filteredViolations = filtered.filter(d => d.result === 'violation').length;
+    const filteredCompliant  = filtered.filter(d => d.result === 'compliant').length;
+    const filteredRate       = filteredTotal === 0 ? 100
+      : Math.round(((filteredTotal - filteredViolations) / filteredTotal) * 100);
+
+    // Recompute PPE breakdown for filtered period
+    const ppeCounts = {};
+    const normalise = item => item.toLowerCase().replace(/^no-/, '').replace(/-/g, ' ').trim();
+    filtered.forEach(d => {
+      (d.detected_ppe || []).forEach(item => {
+        const label = normalise(item); if (!label) return;
+        if (!ppeCounts[label]) ppeCounts[label] = { present: 0, total: 0 };
+        ppeCounts[label].present++; ppeCounts[label].total++;
+      });
+      (d.missing_ppe || []).forEach(item => {
+        const label = normalise(item); if (!label) return;
+        if (!ppeCounts[label]) ppeCounts[label] = { present: 0, total: 0 };
+        ppeCounts[label].total++;
+      });
+    });
+    const filteredPPE = Object.entries(ppeCounts).map(([label, c]) => ({
+      label: label.charAt(0).toUpperCase() + label.slice(1),
+      present: c.present, total: c.total,
+      pct: c.total > 0 ? Math.round((c.present / c.total) * 100) : 0,
+    })).sort((a, b) => b.total - a.total);
+
+    // Recompute station compliance for filtered period
+    const byStation = {};
+    filtered.forEach(d => {
+      const key = d.station || 'Unknown';
+      if (!byStation[key]) byStation[key] = { total: 0, compliant: 0 };
+      byStation[key].total++;
+      if (d.result === 'compliant') byStation[key].compliant++;
+    });
+    const filteredStations = Object.entries(byStation).map(([station, c]) => ({
+      station, compliant: c.compliant, total: c.total,
+      violations: c.total - c.compliant,
+      rate: c.total > 0 ? Math.round((c.compliant / c.total) * 100) : 0,
+    }));
+
+    // Recompute daily trend for filtered period
+    const byDate = {};
+    filtered.forEach(d => {
+      if (!d.date) return;
+      if (!byDate[d.date]) byDate[d.date] = { total: 0, compliant: 0 };
+      byDate[d.date].total++;
+      if (d.result === 'compliant') byDate[d.date].compliant++;
+    });
+    const filteredTrends = Object.entries(byDate)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, c]) => ({
+        dateLabel: new Date(date + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }),
+        total: c.total, compliant: c.compliant,
+        violations: c.total - c.compliant,
+        rate: Math.round((c.compliant / c.total) * 100),
+      }));
+
+    const periodLabels = {
+      all: 'All time', today: 'Today', yesterday: 'Yesterday',
+      week: 'This week', lastweek: 'Last week',
+      month: 'This month', lastmonth: 'Last month',
+    };
+    const periodLabel = periodLabels[reportPeriod] || 'All time';
+    const now        = new Date();
+    const reportDate = now.toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
+    const reportTime = now.toLocaleTimeString('en-PH');
+    const inspector  = displayName;
+
+    // ── Build detection log rows (filtered) ──
+    const logRows = filtered.map(d => `
+      <tr>
+        <td>${d.worker_name || '—'}</td>
+        <td style="font-family:monospace;font-size:11px">${d.worker_employee_id || '—'}</td>
+        <td>${d.station || '—'}</td>
+        <td>${d.date} ${d.time}</td>
+        <td style="color:${d.result === 'violation' ? '#dc2626' : '#16a34a'};font-weight:700">
+          ${d.result === 'violation' ? '⚠ Violation' : '✓ Compliant'}
+        </td>
+        <td>${(d.missing_ppe || []).join(', ') || '—'}</td>
+        <td>${(d.detected_ppe || []).join(', ') || '—'}</td>
+      </tr>`).join('');
+
+    // ── Build PPE breakdown rows ──
+    const ppeRows = filteredPPE.map(item => `
+      <tr>
+        <td>${item.label}</td>
+        <td>${item.present}</td>
+        <td>${item.total}</td>
+        <td>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="flex:1;height:8px;background:#e5e7eb;border-radius:4px;overflow:hidden">
+              <div style="width:${item.pct}%;height:100%;background:${item.pct>=80?'#16a34a':item.pct>=50?'#f59e0b':'#dc2626'};border-radius:4px"></div>
+            </div>
+            <span style="font-weight:700;color:${item.pct>=80?'#16a34a':item.pct>=50?'#f59e0b':'#dc2626'}">${item.pct}%</span>
+          </div>
+        </td>
+      </tr>`).join('');
+
+    // ── Build station compliance rows ──
+    const stationRows = filteredStations.map(s => `
+      <tr>
+        <td>${s.station}</td>
+        <td>${s.compliant}</td>
+        <td>${s.total - s.compliant}</td>
+        <td>${s.total}</td>
+        <td style="font-weight:700;color:${s.rate>=80?'#16a34a':s.rate>=50?'#f59e0b':'#dc2626'}">${s.rate}%</td>
+      </tr>`).join('');
+
+    // ── Build daily trend rows ──
+    const trendRows = filteredTrends.map(t => `
+      <tr>
+        <td>${t.dateLabel}</td>
+        <td>${t.total}</td>
+        <td>${t.compliant}</td>
+        <td>${t.violations}</td>
+        <td style="font-weight:700;color:${t.rate>=80?'#16a34a':t.rate>=50?'#f59e0b':'#dc2626'}">${t.rate}%</td>
+      </tr>`).join('');
+
+    // ── Build violation photos ──
+    const photoSection = filtered.filter(d => d.photo_url).map(d => `
+      <div style="break-inside:avoid;display:inline-block;width:280px;margin:8px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;vertical-align:top">
+        <img src="${d.photo_url}" style="width:100%;height:160px;object-fit:cover;display:block"/>
+        <div style="padding:10px;font-size:12px">
+          <div style="font-weight:700">${d.worker_name || 'Unknown'} <span style="font-family:monospace;color:#94a3b8">${d.worker_employee_id || ''}</span></div>
+          <div style="color:#64748b">${d.station || ''} &middot; ${d.date} ${d.time}</div>
+          <div style="color:#dc2626;margin-top:4px">${(d.missing_ppe||[]).join(', ') || '—'}</div>
+          <div style="margin-top:4px;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;display:inline-block;background:${d.result==='violation'?'#fee2e2':'#dcfce7'};color:${d.result==='violation'?'#dc2626':'#16a34a'}">
+            ${d.result === 'violation' ? '⚠ Violation' : '✓ Overridden'}
+          </div>
+        </div>
+      </div>`).join('');
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8"/>
+  <title>WearAware Compliance Report — ${periodLabel}</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family: Arial, sans-serif; color: #1a202c; font-size: 13px; padding: 32px; }
+    h1 { font-size: 22px; font-weight: 800; color: #0f766e; }
+    h2 { font-size: 15px; font-weight: 700; color: #0f766e; margin: 24px 0 10px; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px; }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
+    .header-meta { font-size: 11px; color: #64748b; text-align: right; line-height: 1.8; }
+    .stats-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 8px; }
+    .stat-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; text-align: center; }
+    .stat-val { font-size: 26px; font-weight: 800; color: #0f766e; }
+    .stat-label { font-size: 11px; color: #94a3b8; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.05em; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th { background: #f1f5f9; padding: 8px 10px; text-align: left; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: #64748b; }
+    td { padding: 7px 10px; border-bottom: 1px solid #f1f5f9; }
+    tr:last-child td { border-bottom: none; }
+    .photos-wrap { display: flex; flex-wrap: wrap; gap: 8px; }
+    @media print {
+      body { padding: 16px; }
+      @page { margin: 1cm; size: A4; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>🦺 WearAware</h1>
+      <div style="font-size:14px;font-weight:700;margin-top:4px">PPE Compliance Report</div>
+    </div>
+    <div class="header-meta">
+      <div><strong>Inspector:</strong> ${inspector}</div>
+      <div><strong>Generated:</strong> ${reportDate} ${reportTime}</div>
+      <div><strong>Period:</strong> ${periodLabel}</div>
+      <div><strong>Total Records:</strong> ${filteredTotal}</div>
+    </div>
+  </div>
+
+  <h2>Compliance Summary</h2>
+  <div class="stats-grid">
+    <div class="stat-box"><div class="stat-val">${filteredTotal}</div><div class="stat-label">Total Scans</div></div>
+    <div class="stat-box"><div class="stat-val" style="color:#dc2626">${filteredViolations}</div><div class="stat-label">Violations</div></div>
+    <div class="stat-box"><div class="stat-val" style="color:#16a34a">${filteredCompliant}</div><div class="stat-label">Compliant</div></div>
+    <div class="stat-box"><div class="stat-val" style="color:${filteredRate>=80?'#16a34a':filteredRate>=50?'#f59e0b':'#dc2626'}">${filteredRate}%</div><div class="stat-label">Compliance Rate</div></div>
+  </div>
+
+  <h2>PPE Compliance Breakdown</h2>
+  <table>
+    <thead><tr><th>PPE Item</th><th>Present</th><th>Total</th><th>Rate</th></tr></thead>
+    <tbody>${ppeRows || '<tr><td colspan="4" style="color:#aaa;text-align:center">No data</td></tr>'}</tbody>
+  </table>
+
+  <h2>Station Compliance</h2>
+  <table>
+    <thead><tr><th>Station</th><th>Compliant</th><th>Violations</th><th>Total</th><th>Rate</th></tr></thead>
+    <tbody>${stationRows || '<tr><td colspan="5" style="color:#aaa;text-align:center">No data</td></tr>'}</tbody>
+  </table>
+
+  <h2>Daily Compliance Trend</h2>
+  <table>
+    <thead><tr><th>Date</th><th>Total Scans</th><th>Compliant</th><th>Violations</th><th>Rate</th></tr></thead>
+    <tbody>${trendRows || '<tr><td colspan="5" style="color:#aaa;text-align:center">No data</td></tr>'}</tbody>
+  </table>
+
+  <h2>Full Detection Log</h2>
+  <table>
+    <thead><tr><th>Worker</th><th>ID</th><th>Station</th><th>Date & Time</th><th>Status</th><th>Missing PPE</th><th>Present PPE</th></tr></thead>
+    <tbody>${logRows || '<tr><td colspan="7" style="color:#aaa;text-align:center">No data</td></tr>'}</tbody>
+  </table>
+
+  ${photoSection ? `<h2>Violation Proof Photos</h2><div class="photos-wrap">${photoSection}</div>` : ''}
+
+  <div style="margin-top:32px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:10px;color:#94a3b8;text-align:center">
+    WearAware PPE Compliance Monitoring System &mdash; Generated by ${inspector} on ${reportDate}
+  </div>
+</body>
+</html>`;
+
+    const win = window.open('', '_blank');
+    win.document.write(html);
+    win.document.close();
+    win.onload = () => win.print();
+  };
   const resetFilters = () => { setFilterStation('All Stations'); setFilterDate(''); setFilterViolation('All Types'); };
 
   const stationOptions = ['All Stations', ...new Set(detections.map(d => d.station).filter(Boolean))];
@@ -182,21 +466,29 @@ export default function InspectorDashboard({ setCurrentPage }) {
 
   const ppeBreakdown = (() => {
     const ppeCounts = {};
+
+    const normalise = (item) =>
+      item.toLowerCase().replace(/^no-/, '').replace(/-/g, ' ').trim();
+
     detections.forEach(d => {
+      // Items in detected_ppe are compliant (present)
       (d.detected_ppe || []).forEach(item => {
-        const label = item.replace(/-/g, ' ').replace(/\bno\b\s*/gi, '').trim();
+        const label = normalise(item);
         if (!label) return;
         if (!ppeCounts[label]) ppeCounts[label] = { present: 0, total: 0 };
         ppeCounts[label].present++;
         ppeCounts[label].total++;
       });
+
+      // Items in missing_ppe were absent — add to total but not present
       (d.missing_ppe || []).forEach(item => {
-        const label = item.replace(/-/g, ' ').replace(/\bno\b\s*/gi, '').trim();
+        const label = normalise(item);
         if (!label) return;
         if (!ppeCounts[label]) ppeCounts[label] = { present: 0, total: 0 };
         ppeCounts[label].total++;
       });
     });
+
     return Object.entries(ppeCounts)
       .map(([label, counts]) => ({
         label: label.charAt(0).toUpperCase() + label.slice(1),
@@ -229,6 +521,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
   const navItems = [
     { id: 'violations', icon: <AlertTriangle size={18} />, label: 'Violation History' },
     { id: 'ppe',        icon: <ScanLine size={18} />,      label: 'PPE Detection'     },
+    { id: 'proof',      icon: <CheckCircle size={18} />,   label: 'Proof Photos'      },
     { id: 'stations',   icon: <MapPin size={18} />,        label: 'My Stations'       },
     { id: 'analytics',  icon: <TrendingUp size={18} />,    label: 'Analytics'         },
     { id: 'profile',    icon: <User size={18} />,          label: 'My Profile'        },
@@ -267,6 +560,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
             <div className="ins-topbar-title">
               {activeTab === 'violations' && 'Violation History'}
               {activeTab === 'ppe'        && 'PPE Detection'}
+              {activeTab === 'proof'      && 'Proof Photos'}
               {activeTab === 'stations'   && 'My Stations'}
               {activeTab === 'analytics'  && 'Analytics'}
               {activeTab === 'profile'    && 'My Profile'}
@@ -283,10 +577,10 @@ export default function InspectorDashboard({ setCurrentPage }) {
             <>
               <div className="ins-stats">
                 {[
-                  { icon: <ClipboardList size={20} />, val: detStats.total,            label: 'Total Detections', sub: 'All time' },
-                  { icon: <AlertTriangle size={20} />, val: detStats.violations,       label: 'Violations',       sub: 'Needs review' },
-                  { icon: <CheckCircle size={20} />,   val: detStats.compliant,        label: 'Compliant',        sub: 'All clear' },
-                  { icon: <BarChart3 size={20} />,     val: `${detStats.compliance_rate ?? 100}%`, label: 'Compliance Rate', sub: 'Overall' },
+                  { icon: <ClipboardList size={20} />, val: detStats.total,                          label: 'Total Detections', sub: 'All time'    },
+                  { icon: <AlertTriangle size={20} />, val: detStats.violations,                     label: 'Violations',       sub: 'Needs review' },
+                  { icon: <CheckCircle size={20} />,   val: detStats.compliant,                      label: 'Compliant',        sub: 'All clear'    },
+                  { icon: <BarChart3 size={20} />,     val: `${detStats.compliance_rate ?? 100}%`,   label: 'Compliance Rate',  sub: 'Overall'      },
                 ].map(card => (
                   <div className="ins-stat-card" key={card.label}>
                     <div className="ins-stat-icon">{card.icon}</div>
@@ -327,17 +621,29 @@ export default function InspectorDashboard({ setCurrentPage }) {
                   </div>
                   <button className="ins-filter-reset" onClick={resetFilters}>Reset</button>
                 </div>
+
+                {/* ✅ UPDATED: added Worker column */}
                 <table className="ins-table">
-                  <thead><tr><th>Photo</th><th>Station</th><th>Date & Time</th><th>Status</th><th>Missing PPE</th><th>Present PPE</th></tr></thead>
+                  <thead>
+                    <tr>
+                      <th>Photo</th>
+                      <th>Worker</th>
+                      <th>Station</th>
+                      <th>Date & Time</th>
+                      <th>Status</th>
+                      <th>Missing PPE</th>
+                      <th>Present PPE</th>
+                    </tr>
+                  </thead>
                   <tbody>
                     {detLoading ? (
-                      <tr><td colSpan={6} className="ins-empty">Loading detections…</td></tr>
+                      <tr><td colSpan={7} className="ins-empty">Loading detections…</td></tr>
                     ) : filteredViolations.length === 0 ? (
-                      <tr><td colSpan={6} className="ins-empty">No records match your filters</td></tr>
+                      <tr><td colSpan={7} className="ins-empty">No records match your filters</td></tr>
                     ) : filteredViolations.map((d, i) => {
                       const prevDate = i > 0 ? filteredViolations[i - 1].date : null;
                       const showDateHeader = d.date !== prevDate;
-                      const today = new Date().toISOString().split('T')[0];
+                      const today     = new Date().toISOString().split('T')[0];
                       const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
                       const dateLabel = d.date === today ? 'Today' : d.date === yesterday ? 'Yesterday'
                         : new Date(d.date + 'T00:00:00').toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -345,18 +651,66 @@ export default function InspectorDashboard({ setCurrentPage }) {
                         <React.Fragment key={d.id}>
                           {showDateHeader && (
                             <tr>
-                              <td colSpan={6} style={{ padding: '0.65rem 1rem', background: 'linear-gradient(90deg, #f0f0ff 0%, #f9fafb 100%)', borderTop: i > 0 ? '2px solid #e2e4f0' : 'none', borderBottom: '1px solid #eee', fontWeight: 700, fontSize: '0.82rem', color: '#4a5073', letterSpacing: '0.02em' }}>
+                              <td colSpan={7} style={{ padding: '0.65rem 1rem', background: 'linear-gradient(90deg, #f0f0ff 0%, #f9fafb 100%)', borderTop: i > 0 ? '2px solid #e2e4f0' : 'none', borderBottom: '1px solid #eee', fontWeight: 700, fontSize: '0.82rem', color: '#4a5073', letterSpacing: '0.02em' }}>
                                 <Calendar size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: '0.35rem' }} />{dateLabel}
                               </td>
                             </tr>
                           )}
                           <tr>
-                            <td><div className="ins-photo">{d.result === 'violation' ? <AlertTriangle size={18} color="#e53e3e" /> : <CheckCircle size={18} color="#38a169" />}</div></td>
+                            <td>
+                              {d.photo_url
+                                ? <img
+                                    src={d.photo_url}
+                                    alt="Violation proof"
+                                    onClick={() => setPhotoModal(d.photo_url)}
+                                    style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 6, cursor: 'pointer', border: '2px solid #fca5a5' }}
+                                  />
+                                : <div className="ins-photo">
+                                    {d.result === 'violation'
+                                      ? <AlertTriangle size={18} color="#e53e3e" />
+                                      : <CheckCircle   size={18} color="#38a169" />}
+                                  </div>}
+                            </td>
+
+                            {/* ✅ NEW: Worker cell */}
+                            <td>
+                              {d.worker_name
+                                ? <>
+                                    <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>{d.worker_name}</div>
+                                    <div style={{ color: '#aaa', fontSize: '0.75rem', fontFamily: 'monospace' }}>{d.worker_employee_id}</div>
+                                  </>
+                                : <span style={{ color: '#ccc', fontSize: '0.78rem' }}>—</span>}
+                            </td>
+
                             <td style={{ fontWeight: 600 }}>{d.station || '—'}</td>
-                            <td style={{ fontSize: '0.83rem' }}><div style={{ color: '#444' }}>{d.date}</div><div style={{ color: '#bbb' }}>{d.time}</div></td>
-                            <td><span className={`ins-vbadge ${d.result === 'violation' ? 'yes' : 'no'}`}>{d.result === 'violation' ? '⚠ Violation' : '✓ Compliant'}</span></td>
-                            <td>{(d.missing_ppe||[]).length>0?d.missing_ppe.map(p=><span key={p} className="ins-ppe-tag missing">{p}</span>):<span style={{color:'#ccc',fontSize:'0.78rem'}}>—</span>}</td>
-                            <td>{(d.detected_ppe||[]).length>0?d.detected_ppe.map(p=><span key={p} className="ins-ppe-tag">{p}</span>):<span style={{color:'#ccc',fontSize:'0.78rem'}}>—</span>}</td>
+                            <td style={{ fontSize: '0.83rem' }}>
+                              <div style={{ color: '#444' }}>{d.date}</div>
+                              <div style={{ color: '#bbb' }}>{d.time}</div>
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', alignItems: 'flex-start' }}>
+                                <span className={`ins-vbadge ${d.result === 'violation' ? 'yes' : 'no'}`}>
+                                  {d.result === 'violation' ? '⚠ Violation' : '✓ Compliant'}
+                                </span>
+                                {d.result === 'violation' && (
+                                  <button
+                                    onClick={() => handleOverride(d.id)}
+                                    style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: 4, border: '1px solid #16a34a', background: '#f0fdf4', color: '#16a34a', cursor: 'pointer', fontWeight: 600 }}>
+                                    ✓ Override
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                            <td>
+                              {(d.missing_ppe || []).length > 0
+                                ? d.missing_ppe.map(p => <span key={p} className="ins-ppe-tag missing">{p}</span>)
+                                : <span style={{ color: '#ccc', fontSize: '0.78rem' }}>—</span>}
+                            </td>
+                            <td>
+                              {(d.detected_ppe || []).length > 0
+                                ? d.detected_ppe.map(p => <span key={p} className="ins-ppe-tag">{p}</span>)
+                                : <span style={{ color: '#ccc', fontSize: '0.78rem' }}>—</span>}
+                            </td>
                           </tr>
                         </React.Fragment>
                       );
@@ -368,7 +722,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
           )}
 
           {/* ── PPE DETECTION ── */}
-          {activeTab === 'ppe' && <PPEDetectionTab />}
+          {activeTab === 'ppe' && <PPEDetectionTab onScanComplete={fetchDetections} />}
 
           {/* ── MY STATIONS ── */}
           {activeTab === 'stations' && (
@@ -449,10 +803,148 @@ export default function InspectorDashboard({ setCurrentPage }) {
             </>
           )}
 
+          {/* ── PROOF PHOTOS ── */}
+          {activeTab === 'proof' && (
+            <>
+              <div className="ins-panel">
+                <div className="ins-panel-header">
+                  <div>
+                    <div className="ins-panel-title">Violation Proof Photos</div>
+                    <div className="ins-panel-sub">
+                      {detections.filter(d => d.photo_url).length} photos on record &nbsp;
+                      <span className="ins-log-count">— violations with captured proof</span>
+                    </div>
+                  </div>
+                  <button className="ins-btn ins-btn-secondary"
+                    style={{ padding: '0.45rem 1rem', fontSize: '0.82rem' }}
+                    onClick={fetchDetections} disabled={detLoading}>
+                    {detLoading ? '…' : '↻ Refresh'}
+                  </button>
+                </div>
+
+                {detLoading ? (
+                  <div className="ins-empty">Loading photos…</div>
+                ) : detections.filter(d => d.photo_url).length === 0 ? (
+                  <div className="ins-empty">No proof photos yet — violation snapshots will appear here after checkpoint scans</div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.25rem', padding: '0.5rem 0' }}>
+                    {detections.filter(d => d.photo_url).map(d => (
+                      <div key={d.id} style={{
+                        background: '#fff', border: '1px solid #e2e8f0',
+                        borderRadius: 12, overflow: 'hidden',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+                      }}>
+                        {/* Photo */}
+                        <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => setPhotoModal(d.photo_url)}>
+                          <img
+                            src={d.photo_url}
+                            alt="Violation proof"
+                            style={{ width: '100%', height: 180, objectFit: 'cover', display: 'block' }}
+                          />
+                          <div style={{
+                            position: 'absolute', inset: 0,
+                            background: 'rgba(0,0,0,0.25)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            opacity: 0, transition: 'opacity 0.2s',
+                          }}
+                            onMouseEnter={e => e.currentTarget.style.opacity = 1}
+                            onMouseLeave={e => e.currentTarget.style.opacity = 0}>
+                            <span style={{ color: '#fff', fontWeight: 700, fontSize: '0.85rem', background: 'rgba(0,0,0,0.5)', padding: '0.4rem 0.9rem', borderRadius: 6 }}>
+                              Click to enlarge
+                            </span>
+                          </div>
+                          {/* Status badge */}
+                          <div style={{
+                            position: 'absolute', top: 8, right: 8,
+                            padding: '3px 10px', borderRadius: 20, fontSize: '0.72rem', fontWeight: 700,
+                            background: d.result === 'violation' ? '#ef4444' : '#16a34a',
+                            color: '#fff',
+                          }}>
+                            {d.result === 'violation' ? '⚠ Violation' : '✓ Overridden'}
+                          </div>
+                        </div>
+
+                        {/* Info */}
+                        <div style={{ padding: '0.85rem 1rem' }}>
+                          {/* Worker */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.6rem' }}>
+                            <div style={{
+                              width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
+                              background: 'linear-gradient(135deg, #667eea, #764ba2)',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              color: '#fff', fontWeight: 800, fontSize: '0.72rem',
+                            }}>
+                              {d.worker_name ? d.worker_name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0,2) : '?'}
+                            </div>
+                            <div>
+                              <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#1a202c' }}>
+                                {d.worker_name || 'Unknown Worker'}
+                              </div>
+                              <div style={{ fontSize: '0.72rem', color: '#94a3b8', fontFamily: 'monospace' }}>
+                                {d.worker_employee_id || '—'}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Date & station */}
+                          <div style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '0.5rem' }}>
+                            {d.station || 'Unknown Station'} &nbsp;&middot;&nbsp; {d.date} {d.time}
+                          </div>
+
+                          {/* Missing PPE */}
+                          {(d.missing_ppe || []).length > 0 && (
+                            <div style={{ marginBottom: '0.6rem' }}>
+                              <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: '0.3rem' }}>Missing PPE</div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+                                {d.missing_ppe.map(p => <span key={p} className="ins-ppe-tag missing">{p}</span>)}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Override button */}
+                          {d.result === 'violation' && (
+                            <button
+                              onClick={() => handleOverride(d.id)}
+                              style={{
+                                width: '100%', padding: '0.45rem', borderRadius: 6,
+                                border: '1px solid #16a34a', background: '#f0fdf4',
+                                color: '#16a34a', cursor: 'pointer', fontWeight: 700,
+                                fontSize: '0.8rem', marginTop: '0.25rem',
+                              }}>
+                              ✓ Override as Compliant
+                            </button>
+                          )}
+                          {d.result === 'compliant' && (
+                            <div style={{
+                              width: '100%', padding: '0.45rem', borderRadius: 6, textAlign: 'center',
+                              background: '#f0fdf4', color: '#16a34a', fontSize: '0.8rem', fontWeight: 700,
+                              marginTop: '0.25rem',
+                            }}>
+                              ✓ Already overridden
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
           {/* ── ANALYTICS ── */}
           {activeTab === 'analytics' && (
             <div className="ins-analytics-grid">
               <div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
+                  <button
+                    className="ins-btn ins-btn-primary"
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}
+                    onClick={() => setReportModal(true)}
+                    disabled={detections.length === 0}>
+                    📄 Download PDF Report
+                  </button>
+                </div>
                 <div className="ins-panel">
                   <div className="ins-panel-header"><div><div className="ins-panel-title">PPE Compliance Breakdown</div><div className="ins-panel-sub">Detection rate per PPE item — based on your scan data</div></div></div>
                   <div className="ins-chart-bar-wrap">
@@ -499,35 +991,17 @@ export default function InspectorDashboard({ setCurrentPage }) {
           {/* ── PROFILE ── */}
           {activeTab === 'profile' && (
             <div>
-              <div style={{
-                borderRadius: 18, overflow: 'hidden', marginBottom: '1.5rem',
-                background: 'linear-gradient(135deg, #0f766e 0%, #0d9488 50%, #14b8a6 100%)',
-                position: 'relative',
-              }}>
-                <div style={{ position: 'absolute', inset: 0, opacity: 0.06,
-                  backgroundImage: 'repeating-linear-gradient(45deg,#fff 0,#fff 1px,transparent 0,transparent 50%)',
-                  backgroundSize: '8px 8px' }} />
+              <div style={{ borderRadius: 18, overflow: 'hidden', marginBottom: '1.5rem', background: 'linear-gradient(135deg, #0f766e 0%, #0d9488 50%, #14b8a6 100%)', position: 'relative' }}>
+                <div style={{ position: 'absolute', inset: 0, opacity: 0.06, backgroundImage: 'repeating-linear-gradient(45deg,#fff 0,#fff 1px,transparent 0,transparent 50%)', backgroundSize: '8px 8px' }} />
                 <div style={{ position: 'relative', padding: '2rem 2.5rem', display: 'flex', alignItems: 'center', gap: '2rem' }}>
-                  <div style={{
-                    width: 80, height: 80, borderRadius: '50%', flexShrink: 0,
-                    background: 'rgba(255,255,255,0.2)', border: '3px solid rgba(255,255,255,0.4)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: '1.9rem', color: 'white', fontWeight: 800,
-                    boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
-                  }}>
+                  <div style={{ width: 80, height: 80, borderRadius: '50%', flexShrink: 0, background: 'rgba(255,255,255,0.2)', border: '3px solid rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.9rem', color: 'white', fontWeight: 800, boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
                     {initials(displayName)}
                   </div>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'white', marginBottom: '0.2rem', letterSpacing: '-0.3px' }}>
-                      {profileLoad ? '...' : profile?.full_name}
-                    </div>
-                    <div style={{ fontSize: '0.88rem', color: 'rgba(255,255,255,0.75)', marginBottom: '0.75rem' }}>
-                      {profileLoad ? '...' : profile?.email}
-                    </div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'white', marginBottom: '0.2rem', letterSpacing: '-0.3px' }}>{profileLoad ? '...' : profile?.full_name}</div>
+                    <div style={{ fontSize: '0.88rem', color: 'rgba(255,255,255,0.75)', marginBottom: '0.75rem' }}>{profileLoad ? '...' : profile?.email}</div>
                     <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                      <span style={{ background: 'rgba(255,255,255,0.2)', color: 'white', fontSize: '0.72rem', fontWeight: 700, padding: '0.3rem 0.85rem', borderRadius: 20, textTransform: 'uppercase', letterSpacing: '0.08em', border: '1px solid rgba(255,255,255,0.3)' }}>
-                        Inspector
-                      </span>
+                      <span style={{ background: 'rgba(255,255,255,0.2)', color: 'white', fontSize: '0.72rem', fontWeight: 700, padding: '0.3rem 0.85rem', borderRadius: 20, textTransform: 'uppercase', letterSpacing: '0.08em', border: '1px solid rgba(255,255,255,0.3)' }}>Inspector</span>
                       {profile?.created_at && (
                         <span style={{ background: 'rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.85)', fontSize: '0.72rem', fontWeight: 500, padding: '0.3rem 0.85rem', borderRadius: 20, border: '1px solid rgba(255,255,255,0.2)' }}>
                           Member since {new Date(profile.created_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })}
@@ -540,9 +1014,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
                 <div className="ins-panel" style={{ marginBottom: 0 }}>
-                  <div style={{ fontSize: '0.92rem', fontWeight: 800, color: '#1a1a1a', marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <User size={15} color="#0f766e" /> Account Details
-                  </div>
+                  <div style={{ fontSize: '0.92rem', fontWeight: 800, color: '#1a1a1a', marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><User size={15} color="#0f766e" /> Account Details</div>
                   <div style={{ fontSize: '0.78rem', color: '#aaa', marginBottom: '1.25rem' }}>Your current account information</div>
                   <div style={{ height: 1, background: '#f0f0f5', marginBottom: '1.25rem' }} />
                   {profileLoad ? <div className="ins-empty">Loading…</div> : (
@@ -554,9 +1026,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
                         ...(profile?.created_at ? [{ icon: <Clock size={15} color="#f97316" />, bg: 'linear-gradient(135deg,#fff7ed,#ffedd5)', label: 'Member Since', val: new Date(profile.created_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' }) }] : []),
                       ].map(row => (
                         <div key={row.label} style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.85rem 1rem', background: '#f9fafb', borderRadius: 12, border: '1px solid #f0f0f5' }}>
-                          <div style={{ width: 34, height: 34, borderRadius: 9, background: row.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                            {row.icon}
-                          </div>
+                          <div style={{ width: 34, height: 34, borderRadius: 9, background: row.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{row.icon}</div>
                           <div>
                             <div style={{ fontSize: '0.7rem', color: '#aaa', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em' }}>{row.label}</div>
                             <div style={{ fontSize: '0.93rem', fontWeight: 600, color: '#1a1a1a', marginTop: 1 }}>{row.val}</div>
@@ -568,61 +1038,40 @@ export default function InspectorDashboard({ setCurrentPage }) {
                 </div>
 
                 <div className="ins-panel" style={{ marginBottom: 0 }}>
-                  <div style={{ fontSize: '0.92rem', fontWeight: 800, color: '#1a1a1a', marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <KeyRound size={15} color="#0f766e" /> Edit Profile
-                  </div>
+                  <div style={{ fontSize: '0.92rem', fontWeight: 800, color: '#1a1a1a', marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><KeyRound size={15} color="#0f766e" /> Edit Profile</div>
                   <div style={{ fontSize: '0.78rem', color: '#aaa', marginBottom: '1.25rem' }}>Update your name or change your password</div>
                   <div style={{ height: 1, background: '#f0f0f5', marginBottom: '1.25rem' }} />
                   {profileLoad ? <div className="ins-empty">Loading…</div> : (
                     <form className="ins-form" onSubmit={handleSaveProfile}>
-                      {profileMsg.text && (
-                        <div className={profileMsg.type === 'success' ? 'ins-success-msg' : 'ins-error-msg'}>{profileMsg.text}</div>
-                      )}
+                      {profileMsg.text && <div className={profileMsg.type === 'success' ? 'ins-success-msg' : 'ins-error-msg'}>{profileMsg.text}</div>}
                       <div className="ins-form-section">Personal Info</div>
                       <div className="ins-form-field">
                         <label className="ins-form-label">Full Name</label>
-                        <input className="ins-form-input" value={fullName}
-                          onChange={e=>{setFullName(e.target.value);setFieldErrors(p=>({...p,fullName:''}));}}
-                          placeholder="Your full name"
-                          style={fieldErrors.fullName?{borderColor:'#dc2626',background:'#fff5f5'}:{}} />
+                        <input className="ins-form-input" value={fullName} onChange={e=>{setFullName(e.target.value);setFieldErrors(p=>({...p,fullName:''}));}} placeholder="Your full name" style={fieldErrors.fullName?{borderColor:'#dc2626',background:'#fff5f5'}:{}} />
                         {fieldErrors.fullName && <span style={{fontSize:'0.78rem',color:'#dc2626',marginTop:'2px'}}>⚠ {fieldErrors.fullName}</span>}
                       </div>
                       <div className="ins-form-section">Change Password</div>
                       <div style={{fontSize:'0.78rem',color:'#aaa',marginTop:'-0.6rem'}}>Leave blank to keep your current password.</div>
                       <div className="ins-form-field">
                         <label className="ins-form-label">Current Password</label>
-                        <input className="ins-form-input" type="password" value={currPass}
-                          onChange={e=>{setCurrPass(e.target.value);setFieldErrors(p=>({...p,currPass:''}));}}
-                          placeholder="Required to change password"
-                          style={fieldErrors.currPass?{borderColor:'#dc2626',background:'#fff5f5'}:{}} />
+                        <input className="ins-form-input" type="password" value={currPass} onChange={e=>{setCurrPass(e.target.value);setFieldErrors(p=>({...p,currPass:''}));}} placeholder="Required to change password" style={fieldErrors.currPass?{borderColor:'#dc2626',background:'#fff5f5'}:{}} />
                         {fieldErrors.currPass && <span style={{fontSize:'0.78rem',color:'#dc2626',marginTop:'2px'}}>⚠ {fieldErrors.currPass}</span>}
                       </div>
                       <div className="ins-form-field">
                         <label className="ins-form-label">New Password</label>
-                        <input className="ins-form-input" type="password" value={newPass}
-                          onChange={e=>{setNewPass(e.target.value);setFieldErrors(p=>({...p,newPass:'',confirmPass:''}));}}
-                          placeholder="Min. 8 chars, letters and numbers"
-                          style={fieldErrors.newPass?{borderColor:'#dc2626',background:'#fff5f5'}:{}} />
+                        <input className="ins-form-input" type="password" value={newPass} onChange={e=>{setNewPass(e.target.value);setFieldErrors(p=>({...p,newPass:'',confirmPass:''}));}} placeholder="Min. 8 chars, letters and numbers" style={fieldErrors.newPass?{borderColor:'#dc2626',background:'#fff5f5'}:{}} />
                         {fieldErrors.newPass && <span style={{fontSize:'0.78rem',color:'#dc2626',marginTop:'2px'}}>⚠ {fieldErrors.newPass}</span>}
                         {newPass && !fieldErrors.newPass && newPass.length>=8 && <span style={{fontSize:'0.75rem',color:'#16a34a',marginTop:'2px'}}>✓ Looks good</span>}
                       </div>
                       <div className="ins-form-field">
                         <label className="ins-form-label">Confirm New Password</label>
-                        <input className="ins-form-input" type="password" value={confirmPass}
-                          onChange={e=>{setConfirmPass(e.target.value);setFieldErrors(p=>({...p,confirmPass:''}));}}
-                          placeholder="Repeat new password"
-                          style={fieldErrors.confirmPass?{borderColor:'#dc2626',background:'#fff5f5'}:{}} />
+                        <input className="ins-form-input" type="password" value={confirmPass} onChange={e=>{setConfirmPass(e.target.value);setFieldErrors(p=>({...p,confirmPass:''}));}} placeholder="Repeat new password" style={fieldErrors.confirmPass?{borderColor:'#dc2626',background:'#fff5f5'}:{}} />
                         {fieldErrors.confirmPass && <span style={{fontSize:'0.78rem',color:'#dc2626',marginTop:'2px'}}>⚠ {fieldErrors.confirmPass}</span>}
                         {confirmPass && newPass===confirmPass && !fieldErrors.confirmPass && <span style={{fontSize:'0.75rem',color:'#16a34a',marginTop:'2px'}}>✓ Passwords match</span>}
                       </div>
                       <div className="ins-form-footer">
-                        <button type="button" className="ins-btn ins-btn-secondary"
-                          onClick={()=>{setFullName(profile?.full_name||'');setCurrPass('');setNewPass('');setConfirmPass('');setFieldErrors({});setProfileMsg({type:'',text:''});}}>
-                          Cancel
-                        </button>
-                        <button type="submit" className="ins-btn ins-btn-primary" disabled={profileSaving}>
-                          {profileSaving ? <span className="ins-spinner" /> : 'Save Changes'}
-                        </button>
+                        <button type="button" className="ins-btn ins-btn-secondary" onClick={()=>{setFullName(profile?.full_name||'');setCurrPass('');setNewPass('');setConfirmPass('');setFieldErrors({});setProfileMsg({type:'',text:''});}}>Cancel</button>
+                        <button type="submit" className="ins-btn ins-btn-primary" disabled={profileSaving}>{profileSaving ? <span className="ins-spinner" /> : 'Save Changes'}</button>
                       </div>
                     </form>
                   )}
@@ -633,6 +1082,110 @@ export default function InspectorDashboard({ setCurrentPage }) {
 
         </div>
       </main>
+
+      {/* ── Report date range modal ── */}
+      {reportModal && (
+        <div className="ad-modal-overlay" onClick={e => e.target === e.currentTarget && setReportModal(false)}>
+          <div className="ad-modal" style={{ maxWidth: 380 }}>
+            <div className="ad-modal-title">📄 Generate PDF Report</div>
+            <div className="ad-modal-sub">Choose a period or pick a specific date range.</div>
+            <div className="ad-modal-form" style={{ marginTop: '1.25rem' }}>
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Report Period</label>
+                <select
+                  className="ad-modal-select"
+                  value={reportPeriod}
+                  onChange={e => setReportPeriod(e.target.value)}>
+                  <option value="all">All time</option>
+                  <option value="today">Today</option>
+                  <option value="yesterday">Yesterday</option>
+                  <option value="week">This week</option>
+                  <option value="month">This month</option>
+                  <option value="custom">Custom date range</option>
+                </select>
+              </div>
+              {reportPeriod === 'custom' && (
+                <>
+                  <div className="ad-modal-field">
+                    <label className="ad-modal-label">From Date</label>
+                    <input
+                      className="ad-modal-input"
+                      type="date"
+                      value={reportFrom}
+                      onChange={e => setReportFrom(e.target.value)}
+                    />
+                  </div>
+                  <div className="ad-modal-field">
+                    <label className="ad-modal-label">To Date</label>
+                    <input
+                      className="ad-modal-input"
+                      type="date"
+                      value={reportTo}
+                      onChange={e => setReportTo(e.target.value)}
+                    />
+                  </div>
+                </>
+              )}
+              <div style={{ fontSize: '0.78rem', color: '#94a3b8', marginTop: '0.5rem' }}>
+                {(() => {
+                  const today = new Date().toISOString().split('T')[0];
+                  const count = detections.filter(d => {
+                    if (!d.date) return false;
+                    if (reportPeriod === 'all')       return true;
+                    if (reportPeriod === 'today')     return d.date === today;
+                    if (reportPeriod === 'yesterday') { const y = new Date(); y.setDate(y.getDate()-1); return d.date === y.toISOString().split('T')[0]; }
+                    if (reportPeriod === 'week')      { const w = new Date(); w.setDate(w.getDate()-7); return d.date >= w.toISOString().split('T')[0]; }
+                    if (reportPeriod === 'month')     { const m = new Date(); m.setDate(1); return d.date >= m.toISOString().split('T')[0]; }
+                    if (reportPeriod === 'custom')    {
+                      if (reportFrom && d.date < reportFrom) return false;
+                      if (reportTo   && d.date > reportTo)   return false;
+                      return true;
+                    }
+                    return true;
+                  }).length;
+                  return `${count} record${count !== 1 ? 's' : ''} will be included in this report`;
+                })()}
+              </div>
+            </div>
+            <div className="ad-modal-footer" style={{ marginTop: '1.25rem' }}>
+              <button className="ad-btn ad-btn-ghost" onClick={() => setReportModal(false)}>Cancel</button>
+              <button
+                className="ad-btn ad-btn-primary"
+                onClick={() => { setReportModal(false); generateReport(); }}>
+                📄 Generate PDF
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Photo proof modal ── */}
+      {photoModal && (
+        <div
+          onClick={() => setPhotoModal(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, cursor: 'pointer' }}>
+          <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
+            <img src={photoModal} alt="Violation proof" style={{ maxWidth: '80vw', maxHeight: '80vh', borderRadius: 12, border: '3px solid #fca5a5' }} />
+            <div style={{ textAlign: 'center', color: '#fca5a5', fontWeight: 700, marginTop: '0.75rem', fontSize: '0.85rem' }}>
+              Violation Proof Photo &mdash; click outside to close
+            </div>
+            <button
+              onClick={() => setPhotoModal(null)}
+              style={{
+                position: 'absolute', top: -14, right: -14,
+                width: 32, height: 32, borderRadius: '50%',
+                border: '2px solid #fff', background: '#ef4444',
+                color: '#fff', fontWeight: 900, cursor: 'pointer',
+                fontSize: '1.1rem', lineHeight: 1,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+              }}>
+              &times;
+            </button>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

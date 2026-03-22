@@ -32,6 +32,38 @@ router.get('/', requireAuth, requireRole('admin', 'inspector'), async (req, res)
 });
 
 // ══════════════════════════════════════════════════════════════
+//  GET /api/workers/by-employee-id/:employee_id  — NEW
+//  Lookup worker by employee_id (e.g. WA-0001) for QR scanning
+// ══════════════════════════════════════════════════════════════
+router.get('/by-employee-id/:employee_id', requireAuth, requireRole('admin', 'inspector'), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT
+         w.id,
+         w.employee_id,
+         w.full_name,
+         w.position,
+         w.device_id,
+         w.contact_number,
+         w.status,
+         w.created_at,
+         d.label    AS station_label,
+         d.location AS station_location
+       FROM workers w
+       LEFT JOIN devices d ON w.device_id = d.id
+       WHERE w.employee_id = $1`,
+      [req.params.employee_id]
+    );
+    if (!result.rows[0])
+      return res.status(404).json({ error: 'Worker not found.' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('GET /workers/by-employee-id error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch worker.' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
 //  GET /api/workers/:id  — admin + inspector
 // ══════════════════════════════════════════════════════════════
 router.get('/:id', requireAuth, requireRole('admin', 'inspector'), async (req, res) => {
@@ -71,7 +103,6 @@ router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
     return res.status(400).json({ error: 'Full name is required.' });
 
   try {
-    // Auto-generate employee_id as WA-XXXX
     const lastWorker = await pool.query(
       `SELECT employee_id FROM workers
        WHERE employee_id LIKE 'WA-%'
