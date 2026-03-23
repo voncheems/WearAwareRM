@@ -1,0 +1,19 @@
+-- ADMIN DASHBOARD --
+1. Password Reset Requests Tab - In the works
+2. Input Validation
+3.
+
+-- INSPECTOR DASHBOARD -- 
+1. Input Validation
+2.
+3.
+
+-- LANDING PAGE --
+1. Login Page - Forgot Password Implementation (In the works)
+2. UI is still AI Generated - Must be improved
+3. Input Validation
+
+-- ANDROID APP -- 
+1.
+2.
+3.
