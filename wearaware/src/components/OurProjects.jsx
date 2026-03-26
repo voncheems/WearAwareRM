@@ -1,60 +1,68 @@
 import React, { useState, useEffect } from 'react';
 import './OurProjects.css';
 
+// ─── To use your own photos, replace the `image` URLs below ───
+// Put your images in public/projects/ and reference them as '/projects/filename.jpg'
 const projects = [
   {
     id: 1,
     title: 'Metro Construction Site',
     category: 'Construction',
-    description: 'Real-time PPE monitoring across 3 active zones with 99.7% detection accuracy.',
-    tags: ['Helmet Detection', 'Vest Detection', 'Live Monitoring'],
+    description: 'PPE compliance monitoring at the main entrance checkpoint, covering helmet and vest detection for all workers entering the site.',
+    tags: ['Helmet Detection', 'Vest Detection', 'Entrance Checkpoint'],
     icon: '🏗️',
-    stat: '240 Workers Monitored',
+    stat: 'Active Deployment',
+    image: 'https://images.unsplash.com/photo-1590579491624-f98f36d4c763?w=600&auto=format&fit=crop',
   },
   {
     id: 2,
     title: 'Industrial Warehouse A',
     category: 'Warehouse',
-    description: 'Automated violation logging system deployed across 12 camera feeds.',
-    tags: ['Violation Logging', 'Multi-Camera', 'Analytics'],
+    description: 'Automated violation logging at warehouse entry points, tracking compliance per shift and flagging missing PPE before workers enter.',
+    tags: ['Violation Logging', 'Shift Tracking', 'Entry Point'],
     icon: '🏭',
-    stat: '12 Camera Feeds',
+    stat: 'Active Deployment',
+    image: 'https://images.unsplash.com/photo-1553413077-190dd305871c?w=600&auto=format&fit=crop',
   },
   {
     id: 3,
     title: 'Skyline Tower Project',
     category: 'Construction',
-    description: 'High-rise construction safety compliance with mobile dashboard integration.',
-    tags: ['Mobile Integration', 'Compliance Reports', 'Alerts'],
+    description: 'High-rise construction site checkpoint with inspector dashboard for reviewing daily scan logs and compliance summaries.',
+    tags: ['Inspector Dashboard', 'Compliance Reports', 'High-Rise'],
     icon: '🏢',
-    stat: '98.9% Compliance Rate',
+    stat: 'Active Deployment',
+    image: 'https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=600&auto=format&fit=crop',
   },
   {
     id: 4,
     title: 'Port Logistics Facility',
     category: 'Industrial',
-    description: 'PPE detection in low-light conditions using enhanced AI vision models.',
-    tags: ['Low-Light Detection', 'AI Vision', 'Safety Alerts'],
+    description: 'Entrance checkpoint monitoring for port workers, with QR-based worker identification linked to station compliance records.',
+    tags: ['QR Identification', 'Worker Registry', 'Port Safety'],
     icon: '⚓',
-    stat: '24/7 Operations',
+    stat: 'Active Deployment',
+    image: 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?w=600&auto=format&fit=crop',
   },
   {
     id: 5,
     title: 'Steel Manufacturing Plant',
     category: 'Industrial',
-    description: 'Full-coverage monitoring with instant supervisor alerts on violations.',
-    tags: ['Instant Alerts', 'Supervisor Dashboard', 'Full Coverage'],
+    description: 'Multi-station checkpoint setup across plant entry zones, with admin-level reporting across all stations and inspectors.',
+    tags: ['Multi-Station', 'Admin Reports', 'Manufacturing'],
     icon: '⚙️',
-    stat: '0 Incidents This Quarter',
+    stat: 'Active Deployment',
+    image: 'https://images.unsplash.com/photo-1581094794329-c8112a89af12?w=600&auto=format&fit=crop',
   },
   {
     id: 6,
     title: 'Central Depot Warehouse',
     category: 'Warehouse',
-    description: 'Compliance trend analytics helping reduce violations by 67% in 3 months.',
-    tags: ['Trend Analytics', 'Reporting', 'Firebase'],
+    description: 'PDF compliance reports generated weekly from checkpoint scan data, helping supervisors track improvement over time.',
+    tags: ['PDF Reports', 'Weekly Summaries', 'Trend Tracking'],
     icon: '📦',
-    stat: '67% Violation Reduction',
+    stat: 'Active Deployment',
+    image: 'https://images.unsplash.com/photo-1566576912321-d58ddd7a6088?w=600&auto=format&fit=crop',
   },
 ];
 
@@ -91,8 +99,10 @@ export default function OurProjects({ setCurrentPage }) {
       {/* Navigation */}
       <nav className="navbar">
         <div className="logo" onClick={(e) => handleNav(e, 'landing')} style={{ cursor: 'pointer' }}>
-            <div className="logo-icon">🦺</div>
-            <span>WearAware</span>
+          <div className="logo-icon">
+            <img src="/favicon.svg" alt="WearAware logo" style={{ width: 32, height: 32 }} />
+          </div>
+          <span>WearAware</span>
         </div>
         <ul className="nav-links">
           <li><a href="#" onClick={(e) => handleNav(e, 'about')}>ABOUT US</a></li>
@@ -106,11 +116,11 @@ export default function OurProjects({ setCurrentPage }) {
       <section className="projects-hero">
         <div className="projects-hero-overlay" />
         <div className={`projects-hero-content ${visible ? 'visible' : ''}`}>
-          <div className="projects-hero-subtitle">REAL WORLD IMPACT</div>
+          <div className="projects-hero-subtitle">CAPSTONE PROJECT 2025</div>
           <h1 className="projects-hero-title">OUR<br />PROJECTS</h1>
           <p className="projects-hero-desc">
-            Explore how WearAware is protecting workers across construction sites,
-            warehouses, and industrial facilities worldwide.
+            A look at the deployment sites where WearAware's checkpoint-based
+            PPE monitoring is being tested and applied.
           </p>
         </div>
       </section>
@@ -118,14 +128,13 @@ export default function OurProjects({ setCurrentPage }) {
       {/* Filter + Grid */}
       <section className="projects-section fade-in">
         <div className="projects-section-header">
-          <div className="section-subtitle">PORTFOLIO</div>
-          <h2 className="section-title">Deployments & Case Studies</h2>
+          <div className="section-subtitle">DEPLOYMENT SITES</div>
+          <h2 className="section-title">Where WearAware Is Used</h2>
           <p className="section-description">
-            Each deployment is a step toward safer, smarter workplaces.
+            Each site uses entrance checkpoint scanning to log PPE compliance before workers enter.
           </p>
         </div>
 
-        {/* Filter tabs */}
         <div className="projects-filters">
           {categories.map(cat => (
             <button
@@ -138,20 +147,33 @@ export default function OurProjects({ setCurrentPage }) {
           ))}
         </div>
 
-        {/* Cards grid */}
         <div className="projects-grid">
           {filtered.map(project => (
             <div className="project-card" key={project.id}>
-              <div className="project-card-icon">{project.icon}</div>
-              <div className="project-card-category">{project.category}</div>
-              <h3 className="project-card-title">{project.title}</h3>
-              <p className="project-card-desc">{project.description}</p>
-              <div className="project-card-tags">
-                {project.tags.map(tag => (
-                  <span className="project-tag" key={tag}>{tag}</span>
-                ))}
+              <div className="project-card-image">
+                <img
+                  src={project.image}
+                  alt={project.title}
+                  onError={(e) => {
+                    e.target.style.display = 'none';
+                    e.target.nextSibling.style.display = 'flex';
+                  }}
+                />
+                <div className="project-card-image-fallback">
+                  <span>{project.icon}</span>
+                </div>
+                <div className="project-card-category-badge">{project.category}</div>
               </div>
-              <div className="project-card-stat">📊 {project.stat}</div>
+              <div className="project-card-body">
+                <h3 className="project-card-title">{project.title}</h3>
+                <p className="project-card-desc">{project.description}</p>
+                <div className="project-card-tags">
+                  {project.tags.map(tag => (
+                    <span className="project-tag" key={tag}>{tag}</span>
+                  ))}
+                </div>
+                <div className="project-card-stat">📊 {project.stat}</div>
+              </div>
             </div>
           ))}
         </div>
@@ -167,15 +189,11 @@ export default function OurProjects({ setCurrentPage }) {
           position: 'relative',
         }}
       >
-        <div style={{
-          position: 'absolute',
-          inset: 0,
-          background: 'rgba(0, 0, 0, 0.65)',
-        }} />
+        <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.65)' }} />
         <div style={{ position: 'relative', zIndex: 1 }}>
           <h2 className="cta-title">Want WearAware at Your Site?</h2>
           <p className="cta-description">
-            Join the growing list of facilities using AI-powered PPE detection to keep their workforce safe.
+            Get in touch to learn how WearAware can be deployed at your entrance checkpoints.
           </p>
           <a href="#" className="btn btn-primary" onClick={(e) => handleNav(e, 'login')}>
             Get Started Today
@@ -185,44 +203,17 @@ export default function OurProjects({ setCurrentPage }) {
 
       {/* Footer */}
       <footer className="footer">
-        <div className="footer-content">
-          <div>
-            <div className="footer-brand">🦺 WearAware</div>
-            <p className="footer-description">
-              Advanced AI-powered PPE detection system for modern workplace safety management.
-              Built by safety professionals, for safety professionals.
-            </p>
+        <div className="footer-simple">
+          <div className="footer-brand">
+            <img src="/favicon.svg" alt="WearAware logo" style={{ width: 24, height: 24, verticalAlign: 'middle', marginRight: '0.4rem' }} />
+            WearAware
           </div>
-          <div>
-            <h4 className="footer-title">Company</h4>
-            <ul className="footer-links">
-              <li><a href="#" onClick={(e) => handleNav(e, 'about')}>About Us</a></li>
-              <li><a href="#">Careers</a></li>
-              <li><a href="#" onClick={(e) => handleNav(e, 'contact')}>Contact</a></li>
-              <li><a href="#">Blog</a></li>
-            </ul>
+          <p className="footer-description">
+            A Capstone Project by Group 4 - BSIT 2-07
+          </p>
+          <div className="footer-bottom">
+            © 2026 WearAware. All rights reserved. | Built by Group 4 - BSIT2-07
           </div>
-          <div>
-            <h4 className="footer-title">Solutions</h4>
-            <ul className="footer-links">
-              <li><a href="#">Construction</a></li>
-              <li><a href="#">Manufacturing</a></li>
-              <li><a href="#">Warehousing</a></li>
-              <li><a href="#">Enterprise</a></li>
-            </ul>
-          </div>
-          <div>
-            <h4 className="footer-title">Support</h4>
-            <ul className="footer-links">
-              <li><a href="#">Documentation</a></li>
-              <li><a href="#">Help Center</a></li>
-              <li><a href="#">Privacy Policy</a></li>
-              <li><a href="#">Terms of Service</a></li>
-            </ul>
-          </div>
-        </div>
-        <div className="footer-bottom">
-          © 2026 WearAware. All rights reserved. | Built by Group 4 - BSIT2-07
         </div>
       </footer>
 

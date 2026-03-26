@@ -1047,7 +1047,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
                       <div className="ins-form-section">Personal Info</div>
                       <div className="ins-form-field">
                         <label className="ins-form-label">Full Name</label>
-                        <input className="ins-form-input" value={fullName} onChange={e=>{setFullName(e.target.value);setFieldErrors(p=>({...p,fullName:''}));}} placeholder="Your full name" style={fieldErrors.fullName?{borderColor:'#dc2626',background:'#fff5f5'}:{}} />
+                        <input className="ins-form-input" value={fullName} onChange={e=>{const f=e.target.value.replace(/[^A-Za-zÀ-ÖØ-öø-ÿÑñ\s'.\-]/g,'');setFullName(f);setFieldErrors(p=>({...p,fullName:''}));}} placeholder="Your full name" style={fieldErrors.fullName?{borderColor:'#dc2626',background:'#fff5f5'}:{}} />
                         {fieldErrors.fullName && <span style={{fontSize:'0.78rem',color:'#dc2626',marginTop:'2px'}}>⚠ {fieldErrors.fullName}</span>}
                       </div>
                       <div className="ins-form-section">Change Password</div>

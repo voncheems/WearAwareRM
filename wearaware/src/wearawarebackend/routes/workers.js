@@ -32,8 +32,9 @@ router.get('/', requireAuth, requireRole('admin', 'inspector'), async (req, res)
 });
 
 // ══════════════════════════════════════════════════════════════
-//  GET /api/workers/by-employee-id/:employee_id  — NEW
-//  Lookup worker by employee_id (e.g. WA-0001) for QR scanning
+//  GET /api/workers/by-employee-id/:employee_id
+//  Lookup worker by QR scan — inspectors can only scan workers
+//  assigned to their own stations. Admins have no restriction.
 // ══════════════════════════════════════════════════════════════
 router.get('/by-employee-id/:employee_id', requireAuth, requireRole('admin', 'inspector'), async (req, res) => {
   try {
@@ -54,9 +55,32 @@ router.get('/by-employee-id/:employee_id', requireAuth, requireRole('admin', 'in
        WHERE w.employee_id = $1`,
       [req.params.employee_id]
     );
+
     if (!result.rows[0])
       return res.status(404).json({ error: 'Worker not found.' });
-    res.json(result.rows[0]);
+
+    const worker = result.rows[0];
+
+    // ── Inspectors: enforce station ownership ──
+    if (req.user.role === 'inspector') {
+      // Worker must be assigned to a station
+      if (!worker.device_id)
+        return res.status(403).json({ error: 'This worker is not assigned to any station.' });
+
+      // That station must be assigned to this inspector
+      const stationCheck = await pool.query(
+        'SELECT id FROM devices WHERE id = $1 AND inspector_id = $2',
+        [worker.device_id, req.user.id]
+      );
+      if (!stationCheck.rows[0])
+        return res.status(403).json({ error: 'This worker is not assigned to your station.' });
+
+      // Worker must be active
+      if (worker.status !== 'active')
+        return res.status(403).json({ error: `Worker is ${worker.status === 'on_leave' ? 'on leave' : 'terminated'} and cannot be scanned.` });
+    }
+
+    res.json(worker);
   } catch (err) {
     console.error('GET /workers/by-employee-id error:', err.message);
     res.status(500).json({ error: 'Failed to fetch worker.' });

@@ -285,6 +285,17 @@ const loginStyles = `
     animation: loginFadeIn 0.3s ease;
   }
 
+  .login-success {
+    background: #f0fdf4;
+    border: 2px solid #bbf7d0;
+    border-radius: 12px;
+    color: #16a34a;
+    padding: 0.8rem 1.2rem;
+    font-size: 0.88rem;
+    font-weight: 500;
+    animation: loginFadeIn 0.3s ease;
+  }
+
   @keyframes loginFadeIn {
     from { opacity: 0; transform: translateY(-6px); }
     to   { opacity: 1; transform: none; }
@@ -322,6 +333,115 @@ const loginStyles = `
 
   .login-card-footer a:hover { opacity: 0.75; }
 
+  /* Forgot password modal overlay */
+  .fp-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 999;
+    padding: 1rem;
+  }
+
+  .fp-modal {
+    background: #fff;
+    border-radius: 16px;
+    padding: 2rem;
+    width: 100%;
+    max-width: 420px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+  }
+
+  .fp-title {
+    font-size: 1.3rem;
+    font-weight: 800;
+    color: #1a1a1a;
+    margin-bottom: 0.35rem;
+  }
+
+  .fp-sub {
+    font-size: 0.85rem;
+    color: #666;
+    margin-bottom: 1.25rem;
+    line-height: 1.5;
+  }
+
+  .fp-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin-bottom: 1rem;
+  }
+
+  .fp-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #444;
+  }
+
+  .fp-input {
+    border: 1.5px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    font-family: inherit;
+    font-size: 0.92rem;
+    outline: none;
+    transition: border-color 0.2s;
+    width: 100%;
+  }
+
+  .fp-input:focus { border-color: #667eea; }
+
+  .fp-textarea {
+    border: 1.5px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    font-family: inherit;
+    font-size: 0.92rem;
+    outline: none;
+    resize: vertical;
+    min-height: 80px;
+    width: 100%;
+    transition: border-color 0.2s;
+  }
+
+  .fp-textarea:focus { border-color: #667eea; }
+
+  .fp-footer {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+    margin-top: 1.25rem;
+  }
+
+  .fp-btn-ghost {
+    padding: 0.6rem 1.25rem;
+    border-radius: 8px;
+    border: 1.5px solid #e2e8f0;
+    background: #fff;
+    color: #666;
+    font-family: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 0.88rem;
+  }
+
+  .fp-btn-primary {
+    padding: 0.6rem 1.5rem;
+    border-radius: 8px;
+    border: none;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: #fff;
+    font-family: inherit;
+    font-weight: 700;
+    cursor: pointer;
+    font-size: 0.88rem;
+  }
+
+  .fp-btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+
   @media (max-width: 900px) {
     .login-hero-content {
       flex-direction: column;
@@ -349,49 +469,62 @@ export default function LoginPage({ setCurrentPage }) {
   const [loading,  setLoading]  = useState(false);
   const [error,    setError]    = useState('');
 
+  // Forgot password state
+  const [showFP,    setShowFP]    = useState(false);
+  const [fpEmail,   setFpEmail]   = useState('');
+  const [fpReason,  setFpReason]  = useState('');
+  const [fpLoading, setFpLoading] = useState(false);
+  const [fpMsg,     setFpMsg]     = useState({ type: '', text: '' });
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!email || !password) { setError('Please fill in all fields.'); return; }
-
     setError('');
     setLoading(true);
-
     try {
       const response = await fetch('http://localhost:5000/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
-
       const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Login failed. Please try again.');
-      }
-
-      // Store token and user in localStorage
+      if (!response.ok) throw new Error(data.error || 'Login failed. Please try again.');
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
-
-      // Route to the correct dashboard based on role
       switch (data.user.role) {
-        case 'admin':
-          setCurrentPage('admin');
-          break;
-        case 'inspector':
-          setCurrentPage('inspector');
-          break;
-        case 'scanner':
-          setCurrentPage('scanner');
-          break;
-        default:
-          throw new Error('Unknown role. Please contact your administrator.');
+        case 'admin':     setCurrentPage('admin');     break;
+        case 'inspector': setCurrentPage('inspector'); break;
+        case 'scanner':   setCurrentPage('scanner');   break;
+        default: throw new Error('Unknown role. Please contact your administrator.');
       }
-
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleForgotSubmit = async (e) => {
+    e.preventDefault();
+    if (!fpEmail.trim()) { setFpMsg({ type: 'error', text: 'Email is required.' }); return; }
+    setFpLoading(true);
+    setFpMsg({ type: '', text: '' });
+    try {
+      const res  = await fetch('http://localhost:5000/api/auth/forgot-password', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ email: fpEmail.trim(), reason: fpReason.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setFpMsg({ type: 'success', text: 'Request submitted! Your admin will reset your password shortly.' });
+      setFpEmail('');
+      setFpReason('');
+      setTimeout(() => setShowFP(false), 3000);
+    } catch (err) {
+      setFpMsg({ type: 'error', text: err.message });
+    } finally {
+      setFpLoading(false);
     }
   };
 
@@ -428,10 +561,7 @@ export default function LoginPage({ setCurrentPage }) {
 
             <div className="login-card">
               <div className="login-card-header">
-                <button
-                  className="login-card-logo"
-                  onClick={() => setCurrentPage('landing')}
-                >
+                <button className="login-card-logo" onClick={() => setCurrentPage('landing')}>
                   <span className="login-card-logo-icon">🦺</span>
                 </button>
                 <h2 className="login-card-title">Sign In</h2>
@@ -444,33 +574,20 @@ export default function LoginPage({ setCurrentPage }) {
                 <div className="login-field">
                   <label className="login-label">Email Address</label>
                   <div className="login-input-wrap">
-                    <input
-                      className="login-input"
-                      type="email"
-                      placeholder="you@company.com"
-                      value={email}
-                      onChange={e => setEmail(e.target.value)}
-                      autoComplete="email"
-                    />
+                    <input className="login-input" type="email" placeholder="you@company.com"
+                      value={email} onChange={e => setEmail(e.target.value)} autoComplete="email" />
                   </div>
                 </div>
 
                 <div className="login-field">
                   <label className="login-label">Password</label>
                   <div className="login-input-wrap">
-                    <input
-                      className="login-input login-input-pass"
+                    <input className="login-input login-input-pass"
                       type={showPass ? 'text' : 'password'}
                       placeholder="Enter your password"
-                      value={password}
-                      onChange={e => setPassword(e.target.value)}
-                      autoComplete="current-password"
-                    />
-                    <button
-                      type="button"
-                      className="login-show-pass"
-                      onClick={() => setShowPass(p => !p)}
-                    >
+                      value={password} onChange={e => setPassword(e.target.value)}
+                      autoComplete="current-password" />
+                    <button type="button" className="login-show-pass" onClick={() => setShowPass(p => !p)}>
                       {showPass ? '🙈' : '👁'}
                     </button>
                   </div>
@@ -478,28 +595,22 @@ export default function LoginPage({ setCurrentPage }) {
 
                 <div className="login-row">
                   <label className="login-remember">
-                    <input
-                      type="checkbox"
-                      checked={remember}
-                      onChange={e => setRemember(e.target.checked)}
-                    />
+                    <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />
                     Remember me
                   </label>
-                  <button type="button" className="login-forgot">
+                  <button type="button" className="login-forgot" onClick={() => { setShowFP(true); setFpMsg({ type: '', text: '' }); }}>
                     Forgot password?
                   </button>
                 </div>
 
                 <button className="login-btn" type="submit" disabled={loading}>
-                  {loading
-                    ? <><span className="login-spinner" /> Signing in...</>
-                    : 'Get Started →'}
+                  {loading ? <><span className="login-spinner" /> Signing in...</> : 'Get Started →'}
                 </button>
 
                 <div className="login-divider">or</div>
 
                 <div className="login-card-footer">
-                  Don't have an account?{' '}
+                  Don&apos;t have an account?{' '}
                   <a href="#">Contact your administrator</a>
                 </div>
               </form>
@@ -508,6 +619,41 @@ export default function LoginPage({ setCurrentPage }) {
           </div>
         </section>
       </div>
+
+      {/* ── Forgot Password Modal ── */}
+      {showFP && (
+        <div className="fp-overlay" onClick={e => e.target === e.currentTarget && setShowFP(false)}>
+          <div className="fp-modal">
+            <div className="fp-title">🔑 Forgot Password</div>
+            <div className="fp-sub">
+              Submit a reset request. Your admin will set a temporary password and notify you.
+            </div>
+            <form onSubmit={handleForgotSubmit}>
+              {fpMsg.text && (
+                <div className={fpMsg.type === 'success' ? 'login-success' : 'login-error'} style={{ marginBottom: '1rem' }}>
+                  {fpMsg.text}
+                </div>
+              )}
+              <div className="fp-field">
+                <label className="fp-label">Your Email Address</label>
+                <input className="fp-input" type="email" placeholder="you@wearaware.ph"
+                  value={fpEmail} onChange={e => setFpEmail(e.target.value)} />
+              </div>
+              <div className="fp-field">
+                <label className="fp-label">Reason (optional)</label>
+                <textarea className="fp-textarea" placeholder="e.g. Forgot my password after being on leave..."
+                  value={fpReason} onChange={e => setFpReason(e.target.value)} />
+              </div>
+              <div className="fp-footer">
+                <button type="button" className="fp-btn-ghost" onClick={() => setShowFP(false)}>Cancel</button>
+                <button type="submit" className="fp-btn-primary" disabled={fpLoading}>
+                  {fpLoading ? 'Submitting...' : 'Submit Request'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </>
   );
 }

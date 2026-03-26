@@ -3,7 +3,7 @@ import './AdminDashboard.css';
 import ComplianceLineGraph from './ComplianceLineGraph';
 import QRCode from 'qrcode';
 import {
-  LayoutDashboard, Users, HardHat, MapPin, ScanLine, Clock,
+  LayoutDashboard, Users, HardHat, MapPin, ScanLine, Clock, KeyRound,
   ClipboardList, AlertTriangle, RefreshCw, QrCode, Download, Printer
 } from 'lucide-react';
 import WearAwareLogo from './Wearawarelogo';
@@ -75,13 +75,10 @@ function QRModal({ worker, onClose }) {
   return (
     <div className="ad-modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="ad-modal" style={{ maxWidth: 380, textAlign: 'center' }}>
-
         <div className="ad-modal-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
           <QrCode size={20} /> Worker QR Code
         </div>
         <div className="ad-modal-sub">Scan this code at the checkpoint scanner</div>
-
-        {/* Worker info */}
         <div style={{
           display: 'flex', alignItems: 'center', gap: '0.85rem',
           background: '#f8fafc', border: '1px solid #e2e8f0',
@@ -102,8 +99,6 @@ function QRModal({ worker, onClose }) {
             <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{worker.position || 'No position'}</div>
           </div>
         </div>
-
-        {/* QR canvas */}
         <div style={{
           display: 'inline-flex', padding: '1rem',
           background: '#fff', borderRadius: 12,
@@ -113,16 +108,11 @@ function QRModal({ worker, onClose }) {
         }}>
           <canvas ref={canvasRef} />
         </div>
-
         <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: '1.25rem' }}>
           QR encodes: <code style={{ background: '#f1f5f9', padding: '2px 6px', borderRadius: 4, fontWeight: 700, color: '#334155' }}>{worker.employee_id}</code>
         </div>
-
-        {/* Actions */}
         <div style={{ display: 'flex', gap: '0.65rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-          <button className="ad-btn ad-btn-ghost" onClick={onClose}>
-            Close
-          </button>
+          <button className="ad-btn ad-btn-ghost" onClick={onClose}>Close</button>
           <button className="ad-btn ad-btn-primary"
             style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
             onClick={handleDownload} disabled={!dataUrl}>
@@ -200,7 +190,6 @@ function BulkQRModal({ workers, onClose }) {
           <QrCode size={20} /> Bulk QR Print
         </div>
         <div className="ad-modal-sub">Print QR ID cards for all {workers.length} workers in current filter</div>
-
         <div style={{
           background: '#f8fafc', border: '1px solid #e2e8f0',
           borderRadius: 10, padding: '1rem', margin: '1.25rem 0',
@@ -224,7 +213,6 @@ function BulkQRModal({ workers, onClose }) {
             </div>
           ))}
         </div>
-
         <div className="ad-modal-footer">
           <button className="ad-btn ad-btn-ghost" onClick={onClose}>Cancel</button>
           <button className="ad-btn ad-btn-primary"
@@ -254,7 +242,13 @@ export default function AdminDashboard({ setCurrentPage }) {
   const [formMsg,       setFormMsg]       = useState({ type: '', text: '' });
   const [fieldErrors,   setFieldErrors]   = useState({});
   const [submitting,    setSubmitting]    = useState(false);
-  const [newUser,       setNewUser]       = useState({ full_name: '', email: '', password: '', role: 'inspector' });
+  const [newUser,       setNewUser]       = useState({ full_name: '', email: '', password: '', role: 'inspector', gmail: '' });
+  const [editingUser,   setEditingUser]   = useState(null);
+  const [showEditUserModal, setShowEditUserModal] = useState(false);
+  const [editUserForm,  setEditUserForm]  = useState({ full_name: '', gmail: '', role: 'inspector', is_active: true });
+  const [editUserMsg,   setEditUserMsg]   = useState({ type: '', text: '' });
+  const [editUserErrors, setEditUserErrors] = useState({});
+  const [editUserSubmitting, setEditUserSubmitting] = useState(false);
   const [filterStation,   setFilterStation]   = useState('All Stations');
   const [filterInspector, setFilterInspector] = useState('All Inspectors');
   const [filterDate,      setFilterDate]      = useState('');
@@ -274,20 +268,25 @@ export default function AdminDashboard({ setCurrentPage }) {
   const [workerFilterStatus,  setWorkerFilterStatus]  = useState('All Statuses');
 
   /* ── QR state ── */
-  const [qrWorker,       setQrWorker]       = useState(null);   // single QR modal
-  const [showBulkQR,     setShowBulkQR]     = useState(false);  // bulk QR modal
+  const [qrWorker,   setQrWorker]   = useState(null);
+  const [showBulkQR, setShowBulkQR] = useState(false);
 
   /* ── Station state ── */
-  const [showStationModal,    setShowStationModal]    = useState(false);
-  const [stationFormMsg,      setStationFormMsg]      = useState({ type: '', text: '' });
-  const [stationErrors,       setStationErrors]       = useState({});
-  const [stationSubmitting,   setStationSubmitting]   = useState(false);
-  const [editingStation,      setEditingStation]      = useState(null);
-  const [newStation,          setNewStation]          = useState({ label: '', location: '', required_ppe: 'helmet,vest', inspector_id: '', is_active: true });
+  const [showStationModal,  setShowStationModal]  = useState(false);
+  const [stationFormMsg,    setStationFormMsg]    = useState({ type: '', text: '' });
+  const [stationErrors,     setStationErrors]     = useState({});
+  const [stationSubmitting, setStationSubmitting] = useState(false);
+  const [editingStation,    setEditingStation]    = useState(null);
+  const [newStation,        setNewStation]        = useState({ label: '', location: '', required_ppe: 'helmet,vest', inspector_id: '', is_active: true });
 
   const user = JSON.parse(localStorage.getItem('user') || '{}');
 
-  useEffect(() => { fetchUsers(); fetchDetections(); fetchActivity(); fetchWorkers(); fetchDevices(); }, []);
+  /* ── Password reset requests ── */
+  const [pwRequests,     setPwRequests]     = useState([]);
+  const [pwLoading,      setPwLoading]      = useState(false);
+  const [tempPassInputs, setTempPassInputs] = useState({});
+
+  useEffect(() => { fetchUsers(); fetchDetections(); fetchActivity(); fetchWorkers(); fetchDevices(); fetchPwRequests(); }, []);
 
   const fetchUsers = async () => {
     setLoadingUsers(true);
@@ -321,7 +320,6 @@ export default function AdminDashboard({ setCurrentPage }) {
     finally { setActLoading(false); }
   };
 
-  /* ── Worker helpers ── */
   const fetchWorkers = async () => {
     setLoadingWorkers(true);
     try {
@@ -338,14 +336,61 @@ export default function AdminDashboard({ setCurrentPage }) {
     } catch (err) { console.error('Failed to load devices:', err); }
   };
 
+  const fetchPwRequests = async () => {
+    setPwLoading(true);
+    try {
+      const res = await fetch(`${API}/admin/password-requests`, { headers: getAuthHeaders() });
+      if (res.ok) setPwRequests(await res.json());
+    } catch (err) { console.error('Failed to load password requests:', err); }
+    finally { setPwLoading(false); }
+  };
+
+  const handleResetPassword = async (id, email) => {
+    const temp = tempPassInputs[id];
+    if (!temp || temp.length < 6) { alert('Enter at least 6 characters for the temp password.'); return; }
+    if (!window.confirm(`Reset password for ${email} to "${temp}"?`)) return;
+    try {
+      const res  = await fetch(`${API}/admin/password-requests/${id}/reset`, {
+        method: 'PATCH', headers: getAuthHeaders(),
+        body: JSON.stringify({ temp_password: temp }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      if (data.emailed) {
+        alert(`Password reset! An email has been sent to the user's Gmail with their temp password.`);
+      } else {
+        alert(`Password reset! No Gmail on file — please tell ${email} their temp password is: ${temp}`);
+      }
+
+      setTempPassInputs(p => ({ ...p, [id]: '' }));
+      fetchPwRequests();
+    } catch (err) { alert(err.message); }
+  };
+
+  const handleDeletePwRequest = async (id) => {
+    if (!window.confirm('Delete this request?')) return;
+    try {
+      await fetch(`${API}/admin/password-requests/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+      fetchPwRequests();
+    } catch (err) { alert(err.message); }
+  };
+
   const validateWorker = () => {
     const errs = {};
-    if (!newWorker.full_name.trim())   errs.full_name = 'Full name is required.';
+    if (!newWorker.full_name.trim())                errs.full_name = 'Full name is required.';
     else if (newWorker.full_name.trim().length < 2) errs.full_name = 'Must be at least 2 characters.';
+    else if (newWorker.full_name.trim().length > 100) errs.full_name = 'Name is too long (max 100 characters).';
     else if (!/^[A-Za-zÀ-ÖØ-öø-ÿÑñ\s'.\-]+$/.test(newWorker.full_name.trim()))
       errs.full_name = 'Name can only contain letters, spaces, hyphens, and apostrophes.';
-    if (newWorker.contact_number && !/^[0-9+\-\s()]+$/.test(newWorker.contact_number))
-      errs.contact_number = 'Enter a valid contact number.';
+    if (newWorker.position && newWorker.position.trim().length > 80)
+      errs.position = 'Position is too long (max 80 characters).';
+    if (newWorker.contact_number) {
+      const cleaned = newWorker.contact_number.replace(/\s/g, '');
+      if (!/^[0-9+\-()]+$/.test(cleaned))    errs.contact_number = 'Enter a valid contact number.';
+      else if (cleaned.replace(/[^0-9]/g, '').length < 7)  errs.contact_number = 'Contact number is too short.';
+      else if (cleaned.replace(/[^0-9]/g, '').length > 15) errs.contact_number = 'Contact number is too long.';
+    }
     return errs;
   };
 
@@ -391,10 +436,20 @@ export default function AdminDashboard({ setCurrentPage }) {
     finally { setWorkerSubmitting(false); }
   };
 
-  const handleDeleteWorker = async (id, name) => {
-    if (!window.confirm(`Permanently delete worker "${name}"? This cannot be undone.`)) return;
+  const handleDeactivateWorker = async (id, name) => {
+    if (!window.confirm(`Deactivate worker "${name}"?`)) return;
     try {
-      const res  = await fetch(`${API}/workers/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+      const res  = await fetch(`${API}/workers/${id}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ status: 'terminated' }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      fetchWorkers();
+    } catch (err) { alert(err.message); }
+  };
+
+  const handleReactivateWorker = async (id, name) => {
+    if (!window.confirm(`Reactivate worker "${name}"?`)) return;
+    try {
+      const res  = await fetch(`${API}/workers/${id}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ status: 'active' }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       fetchWorkers();
@@ -434,7 +489,14 @@ export default function AdminDashboard({ setCurrentPage }) {
 
   const validateStation = () => {
     const errs = {};
-    if (!newStation.label.trim()) errs.label = 'Station name is required.';
+    if (!newStation.label.trim())                    errs.label = 'Station name is required.';
+    else if (newStation.label.trim().length < 2)     errs.label = 'Station name must be at least 2 characters.';
+    else if (newStation.label.trim().length > 80)    errs.label = 'Station name is too long (max 80 characters).';
+    if (newStation.location && newStation.location.trim().length > 120)
+      errs.location = 'Location is too long (max 120 characters).';
+    const ppeItems = newStation.required_ppe.split(',').map(p => p.trim()).filter(Boolean);
+    if (ppeItems.length === 0) errs.required_ppe = 'At least one PPE item is required.';
+    else if (ppeItems.some(p => p.length > 40)) errs.required_ppe = 'Each PPE item must be under 40 characters.';
     return errs;
   };
 
@@ -488,6 +550,8 @@ export default function AdminDashboard({ setCurrentPage }) {
     else if (newUser.password.length < 8)    errs.password = 'Password must be at least 8 characters.';
     else if (!/[A-Za-z]/.test(newUser.password) || !/[0-9]/.test(newUser.password))
       errs.password = 'Must contain both letters and numbers.';
+    if (newUser.gmail && !/^[^\s@]+@gmail\.com$/.test(newUser.gmail.trim()))
+      errs.gmail = 'Must be a valid @gmail.com address.';
     return errs;
   };
 
@@ -503,16 +567,16 @@ export default function AdminDashboard({ setCurrentPage }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setFormMsg({ type: 'success', text: `User "${newUser.full_name}" created successfully!` });
-      setNewUser({ full_name: '', email: '', password: '', role: 'inspector' });
+      setNewUser({ full_name: '', email: '', password: '', role: 'inspector', gmail: '' });
       setFieldErrors({});
       fetchUsers();
     } catch (err) { setFormMsg({ type: 'error', text: err.message }); }
     finally { setSubmitting(false); }
   };
 
-  const handleDeactivate  = async (id, name) => { if (!window.confirm(`Deactivate ${name}?`)) return; await fetch(`${API}/users/${id}/deactivate`, { method: 'PATCH', headers: getAuthHeaders() }); fetchUsers(); };
-  const handleReactivate  = async (id, name) => { if (!window.confirm(`Reactivate ${name}?`)) return; await fetch(`${API}/users/${id}/reactivate`, { method: 'PATCH', headers: getAuthHeaders() }); fetchUsers(); };
-  const handleDelete      = async (id, name) => {
+  const handleDeactivate = async (id, name) => { if (!window.confirm(`Deactivate ${name}?`)) return; await fetch(`${API}/users/${id}/deactivate`, { method: 'PATCH', headers: getAuthHeaders() }); fetchUsers(); };
+  const handleReactivate = async (id, name) => { if (!window.confirm(`Reactivate ${name}?`)) return; await fetch(`${API}/users/${id}/reactivate`, { method: 'PATCH', headers: getAuthHeaders() }); fetchUsers(); };
+  const handleDelete     = async (id, name) => {
     if (!window.confirm(`Permanently delete ${name}? This cannot be undone.`)) return;
     try {
       const res  = await fetch(`${API}/users/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
@@ -522,7 +586,156 @@ export default function AdminDashboard({ setCurrentPage }) {
     } catch (err) { alert(err.message); }
   };
 
+  const openEditUser = (u) => {
+    setEditingUser(u);
+    setEditUserForm({ full_name: u.full_name, gmail: u.gmail || '', role: u.role, is_active: u.is_active });
+    setEditUserMsg({ type: '', text: '' });
+    setEditUserErrors({});
+    setShowEditUserModal(true);
+  };
+
+  const validateEditUser = () => {
+    const errs = {};
+    if (!editUserForm.full_name.trim()) errs.full_name = 'Full name is required.';
+    else if (editUserForm.full_name.trim().length < 2) errs.full_name = 'Must be at least 2 characters.';
+    else if (!/^[A-Za-zÀ-ÖØ-öø-ÿÑñ\s'.\-]+$/.test(editUserForm.full_name.trim()))
+      errs.full_name = 'Name can only contain letters, spaces, hyphens, and apostrophes.';
+    if (editUserForm.gmail && !/^[^\s@]+@gmail\.com$/.test(editUserForm.gmail.trim()))
+      errs.gmail = 'Must be a valid @gmail.com address.';
+    return errs;
+  };
+
+  const handleEditUser = async (e) => {
+    e.preventDefault();
+    setEditUserMsg({ type: '', text: '' });
+    const errs = validateEditUser();
+    setEditUserErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+    setEditUserSubmitting(true);
+    try {
+      const res  = await fetch(`${API}/users/${editingUser.id}`, {
+        method: 'PUT', headers: getAuthHeaders(),
+        body: JSON.stringify({
+          full_name: editUserForm.full_name.trim(),
+          gmail: editUserForm.gmail.trim() || null,
+          role: editUserForm.role,
+          is_active: editUserForm.is_active,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setEditUserMsg({ type: 'success', text: 'User updated successfully!' });
+      fetchUsers();
+    } catch (err) { setEditUserMsg({ type: 'error', text: err.message }); }
+    finally { setEditUserSubmitting(false); }
+  };
+
   const handleLogout = () => { localStorage.removeItem('token'); localStorage.removeItem('user'); setCurrentPage('landing'); };
+
+  const [reportModal,  setReportModal]  = useState(false);
+  const [adminPhoto,   setAdminPhoto]   = useState(null);
+  const [reportPeriod, setReportPeriod] = useState('all');
+  const [reportFrom,   setReportFrom]   = useState('');
+  const [reportTo,     setReportTo]     = useState('');
+
+  const generateAdminReport = () => {
+    const today = new Date().toISOString().split('T')[0];
+    const filtered = detections.filter(d => {
+      if (!d.date) return false;
+      if (reportPeriod === 'today')     return d.date === today;
+      if (reportPeriod === 'yesterday') { const y = new Date(); y.setDate(y.getDate()-1); return d.date === y.toISOString().split('T')[0]; }
+      if (reportPeriod === 'week')      { const w = new Date(); w.setDate(w.getDate()-7); return d.date >= w.toISOString().split('T')[0]; }
+      if (reportPeriod === 'month')     { const m = new Date(); m.setDate(1); return d.date >= m.toISOString().split('T')[0]; }
+      if (reportPeriod === 'custom')    { if (reportFrom && d.date < reportFrom) return false; if (reportTo && d.date > reportTo) return false; }
+      return true;
+    });
+
+    const fTotal      = filtered.length;
+    const fViolations = filtered.filter(d => d.result === 'violation').length;
+    const fCompliant  = filtered.filter(d => d.result === 'compliant').length;
+    const fRate       = fTotal === 0 ? 100 : Math.round(((fTotal - fViolations) / fTotal) * 100);
+    const periodLabels = { all: 'All time', today: 'Today', yesterday: 'Yesterday', week: 'This week', month: 'This month', custom: `${reportFrom || 'start'} to ${reportTo || 'today'}` };
+    const periodLabel  = periodLabels[reportPeriod] || 'All time';
+    const now          = new Date();
+    const reportDate   = now.toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
+    const reportTime   = now.toLocaleTimeString('en-PH');
+
+    const byInspector = {};
+    filtered.forEach(d => {
+      const key = d.inspector || 'Unknown';
+      if (!byInspector[key]) byInspector[key] = { total: 0, violations: 0, compliant: 0 };
+      byInspector[key].total++;
+      if (d.result === 'violation') byInspector[key].violations++;
+      else byInspector[key].compliant++;
+    });
+    const inspectorRows = Object.entries(byInspector).map(([name, c]) => `
+      <tr>
+        <td>${name}</td><td>${c.total}</td>
+        <td style="color:#dc2626">${c.violations}</td>
+        <td style="color:#16a34a">${c.compliant}</td>
+        <td style="font-weight:700;color:${Math.round(((c.total-c.violations)/c.total)*100)>=80?'#16a34a':'#dc2626'}">${Math.round(((c.total-c.violations)/c.total)*100)}%</td>
+      </tr>`).join('');
+
+    const logRows = filtered.map(d => `
+      <tr>
+        <td>${d.worker_name || '—'}</td>
+        <td style="font-family:monospace;font-size:11px">${d.worker_employee_id || '—'}</td>
+        <td>${d.station || '—'}</td><td>${d.inspector || '—'}</td>
+        <td>${d.date} ${d.time}</td>
+        <td style="color:${d.result==='violation'?'#dc2626':'#16a34a'};font-weight:700">${d.result==='violation'?'⚠ Violation':'✓ Compliant'}</td>
+        <td>${(d.missing_ppe||[]).join(', ')||'—'}</td>
+      </tr>`).join('');
+
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
+<title>WearAware Admin Report — ${periodLabel}</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:Arial,sans-serif;color:#1a202c;font-size:13px;padding:32px}
+  h1{font-size:22px;font-weight:800;color:#0f766e}
+  h2{font-size:15px;font-weight:700;color:#0f766e;margin:24px 0 10px;border-bottom:2px solid #e2e8f0;padding-bottom:6px}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px}
+  .header-meta{font-size:11px;color:#64748b;text-align:right;line-height:1.8}
+  .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:8px}
+  .stat-box{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px;text-align:center}
+  .stat-val{font-size:26px;font-weight:800;color:#0f766e}
+  .stat-label{font-size:11px;color:#94a3b8;margin-top:2px;text-transform:uppercase;letter-spacing:.05em}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{background:#f1f5f9;padding:8px 10px;text-align:left;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#64748b}
+  td{padding:7px 10px;border-bottom:1px solid #f1f5f9}
+  @media print{@page{margin:1cm;size:A4}}
+</style></head><body>
+  <div class="header">
+    <div><h1>🦺 WearAware</h1><div style="font-size:14px;font-weight:700;margin-top:4px">Admin Compliance Report</div></div>
+    <div class="header-meta">
+      <div><strong>Period:</strong> ${periodLabel}</div>
+      <div><strong>Generated:</strong> ${reportDate} ${reportTime}</div>
+      <div><strong>Total Records:</strong> ${fTotal}</div>
+    </div>
+  </div>
+  <h2>Overall Summary</h2>
+  <div class="stats-grid">
+    <div class="stat-box"><div class="stat-val">${fTotal}</div><div class="stat-label">Total Scans</div></div>
+    <div class="stat-box"><div class="stat-val" style="color:#dc2626">${fViolations}</div><div class="stat-label">Violations</div></div>
+    <div class="stat-box"><div class="stat-val" style="color:#16a34a">${fCompliant}</div><div class="stat-label">Compliant</div></div>
+    <div class="stat-box"><div class="stat-val" style="color:${fRate>=80?'#16a34a':'#dc2626'}">${fRate}%</div><div class="stat-label">Compliance Rate</div></div>
+  </div>
+  <h2>By Inspector</h2>
+  <table><thead><tr><th>Inspector</th><th>Total</th><th>Violations</th><th>Compliant</th><th>Rate</th></tr></thead>
+  <tbody>${inspectorRows || '<tr><td colspan="5" style="color:#aaa;text-align:center">No data</td></tr>'}</tbody></table>
+  <h2>Detection Log</h2>
+  <table><thead><tr><th>Worker</th><th>ID</th><th>Station</th><th>Inspector</th><th>Date & Time</th><th>Status</th><th>Missing PPE</th></tr></thead>
+  <tbody>${logRows || '<tr><td colspan="7" style="color:#aaa;text-align:center">No data</td></tr>'}</tbody></table>
+  <div style="margin-top:32px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:10px;color:#94a3b8;text-align:center">
+    WearAware PPE Compliance Monitoring System &mdash; Admin Report &mdash; ${reportDate}
+  </div>
+</body></html>`;
+
+    const win = window.open('', '_blank');
+    win.document.write(html);
+    win.document.close();
+    win.onload = () => win.print();
+  };
+
   const resetFilters = () => { setFilterStation('All Stations'); setFilterInspector('All Inspectors'); setFilterDate(''); setFilterViolation('All Types'); };
 
   const stationOptions   = ['All Stations',   ...new Set(detections.map(d => d.station).filter(Boolean))];
@@ -540,12 +753,13 @@ export default function AdminDashboard({ setCurrentPage }) {
   const initials = (name) => name ? name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'A';
 
   const navItems = [
-    { id: 'overview',   icon: <LayoutDashboard size={18} />, label: 'Overview'        },
-    { id: 'users',      icon: <Users size={18} />,           label: 'User Management'  },
-    { id: 'workers',    icon: <HardHat size={18} />,         label: 'Worker Registry'  },
-    { id: 'stations',   icon: <MapPin size={18} />,          label: 'Stations'         },
-    { id: 'detections', icon: <ScanLine size={18} />,        label: 'Detection Log'    },
-    { id: 'activity',   icon: <Clock size={18} />,           label: 'Activity Log'     },
+    { id: 'overview',   icon: <LayoutDashboard size={18} />, label: 'Overview'          },
+    { id: 'users',      icon: <Users size={18} />,           label: 'User Management'    },
+    { id: 'workers',    icon: <HardHat size={18} />,         label: 'Worker Registry'    },
+    { id: 'stations',   icon: <MapPin size={18} />,          label: 'Stations'           },
+    { id: 'detections', icon: <ScanLine size={18} />,        label: 'Detection Log'      },
+    { id: 'activity',   icon: <Clock size={18} />,           label: 'Activity Log'       },
+    { id: 'pwrequests', icon: <KeyRound size={18} />,        label: `Password Requests${pwRequests.filter(r=>r.status==='pending').length > 0 ? ` (${pwRequests.filter(r=>r.status==='pending').length})` : ''}` },
   ];
 
   const getDeviceLabel = (deviceId) => {
@@ -602,6 +816,7 @@ export default function AdminDashboard({ setCurrentPage }) {
               {activeTab === 'stations'   && 'Station Management'}
               {activeTab === 'detections' && 'Detection Log'}
               {activeTab === 'activity'   && 'Activity Log'}
+              {activeTab === 'pwrequests' && 'Password Reset Requests'}
             </div>
             <div className="ad-topbar-sub">Welcome back, {user.full_name || 'Admin'} 👋</div>
           </div>
@@ -718,12 +933,13 @@ export default function AdminDashboard({ setCurrentPage }) {
                 </div>
                 {loadingUsers ? <div className="ad-empty">Loading users...</div> : (
                   <table className="ad-table">
-                    <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+                    <thead><tr><th>Name</th><th>Login Email</th><th>Gmail</th><th>Role</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
                     <tbody>
                       {users.map(u => (
                         <tr key={u.id}>
                           <td style={{ fontWeight: 600 }}>{u.full_name}</td>
-                          <td style={{ color: '#666' }}>{u.email}</td>
+                          <td style={{ color: '#666', fontSize: '0.85rem' }}>{u.email}</td>
+                          <td style={{ color: '#666', fontSize: '0.85rem' }}>{u.gmail || <span style={{ color: '#ccc' }}>—</span>}</td>
                           <td><span className={`ad-role-badge ad-role-${u.role}`}>{u.role}</span></td>
                           <td><span className={`ad-status ${u.is_active ? 'active' : 'inactive'}`}><span className="ad-status-dot" />{u.is_active ? 'Active' : 'Inactive'}</span></td>
                           <td style={{ color: '#aaa', fontSize: '0.82rem' }}>{new Date(u.created_at).toLocaleDateString()}</td>
@@ -733,13 +949,13 @@ export default function AdminDashboard({ setCurrentPage }) {
                                 {u.is_active
                                   ? <button className="ad-btn-deactivate" onClick={() => handleDeactivate(u.id, u.full_name)}>Deactivate</button>
                                   : <button className="ad-btn-reactivate" onClick={() => handleReactivate(u.id, u.full_name)}>Reactivate</button>}
-                                <button className="ad-btn-delete" onClick={() => handleDelete(u.id, u.full_name)}>Delete</button>
+                                <button className="ad-btn-reactivate" onClick={() => openEditUser(u)}>Edit</button>
                               </div>
                             )}
                           </td>
                         </tr>
                       ))}
-                      {users.length === 0 && <tr><td colSpan={6} className="ad-empty">No users found</td></tr>}
+                      {users.length === 0 && <tr><td colSpan={7} className="ad-empty">No users found</td></tr>}
                     </tbody>
                   </table>
                 )}
@@ -756,7 +972,6 @@ export default function AdminDashboard({ setCurrentPage }) {
                     <div className="ad-panel-title">Worker Registry</div>
                     <div className="ad-panel-sub">{workers.length} workers on record &nbsp;<span className="ad-log-count">— {filteredWorkers.length} shown</span></div>
                   </div>
-                  {/* ── Action buttons row ── */}
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <button
                       className="ad-btn ad-btn-ghost"
@@ -769,7 +984,6 @@ export default function AdminDashboard({ setCurrentPage }) {
                     <button className="ad-btn ad-btn-primary" onClick={() => openWorkerModal()}>+ Add Worker</button>
                   </div>
                 </div>
-
                 <div className="ad-filters">
                   <div className="ad-filter-group">
                     <div className="ad-filter-label">Station</div>
@@ -785,7 +999,6 @@ export default function AdminDashboard({ setCurrentPage }) {
                   </div>
                   <button className="ad-filter-reset" onClick={() => { setWorkerFilterStation('All Stations'); setWorkerFilterStatus('All Statuses'); }}>Reset Filters</button>
                 </div>
-
                 {loadingWorkers ? <div className="ad-empty">Loading workers…</div> : (
                   <table className="ad-table">
                     <thead>
@@ -809,7 +1022,6 @@ export default function AdminDashboard({ setCurrentPage }) {
                           </td>
                           <td>
                             <div className="ad-action-btns">
-                              {/* ── QR button ── */}
                               <button
                                 className="ad-btn-reactivate"
                                 style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', background: '#eef2ff', color: '#4f5fb3', borderColor: '#c7d2fe' }}
@@ -819,7 +1031,9 @@ export default function AdminDashboard({ setCurrentPage }) {
                                 <QrCode size={13} /> QR
                               </button>
                               <button className="ad-btn-reactivate" onClick={() => openWorkerModal(w)}>Edit</button>
-                              <button className="ad-btn-delete" onClick={() => handleDeleteWorker(w.id, w.full_name)}>Delete</button>
+                              {w.status === 'terminated'
+                                ? <button className="ad-btn-reactivate" onClick={() => handleReactivateWorker(w.id, w.full_name)}>Reactivate</button>
+                                : <button className="ad-btn-deactivate" onClick={() => handleDeactivateWorker(w.id, w.full_name)}>Deactivate</button>}
                             </div>
                           </td>
                         </tr>
@@ -889,7 +1103,15 @@ export default function AdminDashboard({ setCurrentPage }) {
                     <div className="ad-panel-title">Detection Log</div>
                     <div className="ad-panel-sub">All PPE detections across all stations &nbsp;<span className="ad-log-count">— {filteredDetections.length} of {detections.length} records</span></div>
                   </div>
-                  <button className="ad-refresh-btn" onClick={fetchDetections} disabled={detLoading}>{detLoading ? '…' : '↻ Refresh'}</button>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button className="ad-btn ad-btn-primary"
+                      style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+                      onClick={() => setReportModal(true)}
+                      disabled={detections.length === 0}>
+                      📄 PDF Report
+                    </button>
+                    <button className="ad-refresh-btn" onClick={fetchDetections} disabled={detLoading}>{detLoading ? '…' : '↻ Refresh'}</button>
+                  </div>
                 </div>
                 <div className="ad-filters">
                   <div className="ad-filter-group"><div className="ad-filter-label">Station</div>
@@ -903,13 +1125,27 @@ export default function AdminDashboard({ setCurrentPage }) {
                   <button className="ad-filter-reset" onClick={resetFilters}>Reset Filters</button>
                 </div>
                 <table className="ad-table">
-                  <thead><tr><th>#</th><th>Station</th><th>Inspector</th><th>Date & Time</th><th>Status</th><th>Missing PPE</th><th>Present PPE</th></tr></thead>
+                  <thead><tr><th>Photo</th><th>#</th><th>Worker</th><th>Station</th><th>Inspector</th><th>Date & Time</th><th>Status</th><th>Missing PPE</th><th>Present PPE</th></tr></thead>
                   <tbody>
-                    {detLoading ? <tr><td colSpan={7} className="ad-empty">Loading detections…</td></tr>
-                    : filteredDetections.length === 0 ? <tr><td colSpan={7} className="ad-empty">No detections match your filters</td></tr>
+                    {detLoading ? <tr><td colSpan={9} className="ad-empty">Loading detections…</td></tr>
+                    : filteredDetections.length === 0 ? <tr><td colSpan={9} className="ad-empty">No detections match your filters</td></tr>
                     : filteredDetections.map(d => (
                       <tr key={d.id}>
+                        <td>
+                          {d.photo_url
+                            ? <img src={d.photo_url} alt="Proof" onClick={() => setAdminPhoto(d.photo_url)}
+                                style={{ width: 44, height: 44, objectFit: 'cover', borderRadius: 6, cursor: 'pointer', border: '2px solid #fca5a5' }} />
+                            : <div style={{ width: 44, height: 44, borderRadius: 6, background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <span style={{ fontSize: '1.1rem' }}>{d.result === 'violation' ? '⚠️' : '✓'}</span>
+                              </div>}
+                        </td>
                         <td style={{ color: '#ccc', fontSize: '0.8rem' }}>{d.id}</td>
+                        <td>
+                          {d.worker_name
+                            ? <><div style={{ fontWeight: 600, fontSize: '0.88rem' }}>{d.worker_name}</div>
+                                <div style={{ color: '#aaa', fontSize: '0.75rem', fontFamily: 'monospace' }}>{d.worker_employee_id}</div></>
+                            : <span style={{ color: '#ccc', fontSize: '0.78rem' }}>—</span>}
+                        </td>
                         <td style={{ fontWeight: 600 }}>{d.station || '—'}</td>
                         <td style={{ color: '#555' }}>{d.inspector || '—'}</td>
                         <td style={{ fontSize: '0.85rem' }}><div style={{ color: '#444' }}>{d.date}</div><div style={{ color: '#bbb' }}>{d.time}</div></td>
@@ -920,6 +1156,72 @@ export default function AdminDashboard({ setCurrentPage }) {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          )}
+
+          {/* ── PASSWORD REQUESTS ── */}
+          {activeTab === 'pwrequests' && (
+            <div className="ad-grid-full">
+              <div className="ad-panel">
+                <div className="ad-panel-header">
+                  <div>
+                    <div className="ad-panel-title">Password Reset Requests</div>
+                    <div className="ad-panel-sub">
+                      {pwRequests.filter(r => r.status === 'pending').length} pending &nbsp;
+                      <span className="ad-log-count">— temp password will be emailed if Gmail is on file</span>
+                    </div>
+                  </div>
+                  <button className="ad-refresh-btn" onClick={fetchPwRequests} disabled={pwLoading}>
+                    {pwLoading ? '…' : '↻ Refresh'}
+                  </button>
+                </div>
+                {pwLoading ? <div className="ad-empty">Loading requests…</div>
+                : pwRequests.length === 0 ? <div className="ad-empty">No password reset requests yet</div>
+                : (
+                  <table className="ad-table">
+                    <thead>
+                      <tr><th>Email</th><th>Reason</th><th>Status</th><th>Submitted</th><th>Temp Password</th><th>Actions</th></tr>
+                    </thead>
+                    <tbody>
+                      {pwRequests.map(r => (
+                        <tr key={r.id}>
+                          <td style={{ fontWeight: 600 }}>{r.email}</td>
+                          <td style={{ color: '#555', fontSize: '0.85rem' }}>{r.reason || '—'}</td>
+                          <td>
+                            <span className={`ad-status ${r.status === 'pending' ? 'inactive' : 'active'}`}>
+                              <span className="ad-status-dot" />
+                              {r.status === 'pending' ? 'Pending' : 'Resolved'}
+                            </span>
+                          </td>
+                          <td style={{ color: '#aaa', fontSize: '0.82rem' }}>
+                            {new Date(r.created_at).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </td>
+                          <td>
+                            {r.status === 'resolved'
+                              ? <code style={{ background: '#f1f5f9', padding: '2px 8px', borderRadius: 4, fontSize: '0.82rem', color: '#334155' }}>{r.temp_password}</code>
+                              : <input
+                                  style={{ border: '1px solid #e2e8f0', borderRadius: 6, padding: '0.35rem 0.65rem', fontSize: '0.82rem', width: 140 }}
+                                  placeholder="Set temp password"
+                                  value={tempPassInputs[r.id] || ''}
+                                  onChange={e => setTempPassInputs(p => ({ ...p, [r.id]: e.target.value }))}
+                                />}
+                          </td>
+                          <td>
+                            <div className="ad-action-btns">
+                              {r.status === 'pending' && (
+                                <button className="ad-btn-reactivate" onClick={() => handleResetPassword(r.id, r.email)}>
+                                  Reset Password
+                                </button>
+                              )}
+                              <button className="ad-btn-delete" onClick={() => handleDeletePwRequest(r.id)}>Delete</button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
             </div>
           )}
@@ -957,10 +1259,7 @@ export default function AdminDashboard({ setCurrentPage }) {
 
       {/* ── Modals ── */}
 
-      {/* QR single worker modal */}
       {qrWorker && <QRModal worker={qrWorker} onClose={() => setQrWorker(null)} />}
-
-      {/* Bulk QR modal */}
       {showBulkQR && <BulkQRModal workers={filteredWorkers} onClose={() => setShowBulkQR(false)} />}
 
       {/* Add User Modal */}
@@ -978,10 +1277,16 @@ export default function AdminDashboard({ setCurrentPage }) {
                 {fieldErrors.full_name && <span className="ad-field-error">⚠ {fieldErrors.full_name}</span>}
               </div>
               <div className="ad-modal-field">
-                <label className="ad-modal-label">Email Address</label>
+                <label className="ad-modal-label">Login Email</label>
                 <input className={`ad-modal-input${fieldErrors.email ? ' error' : ''}`} type="email" placeholder="username@wearaware.ph" value={newUser.email}
                   onChange={e => { setNewUser({ ...newUser, email: e.target.value }); setFieldErrors(p => ({ ...p, email: '' })); }} />
                 {fieldErrors.email && <span className="ad-field-error">⚠ {fieldErrors.email}</span>}
+              </div>
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Gmail <span style={{ color: '#94a3b8', fontWeight: 400 }}>(optional — for password reset notifications)</span></label>
+                <input className={`ad-modal-input${fieldErrors.gmail ? ' error' : ''}`} type="email" placeholder="juan@gmail.com" value={newUser.gmail}
+                  onChange={e => { setNewUser({ ...newUser, gmail: e.target.value }); setFieldErrors(p => ({ ...p, gmail: '' })); }} />
+                {fieldErrors.gmail && <span className="ad-field-error">⚠ {fieldErrors.gmail}</span>}
               </div>
               <div className="ad-modal-field">
                 <label className="ad-modal-label">Password</label>
@@ -998,7 +1303,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                 </select>
               </div>
               <div className="ad-modal-footer">
-                <button type="button" className="ad-btn ad-btn-ghost" onClick={() => { setShowModal(false); setNewUser({ full_name: '', email: '', password: '', role: 'inspector' }); setFieldErrors({}); setFormMsg({ type: '', text: '' }); }}>Cancel</button>
+                <button type="button" className="ad-btn ad-btn-ghost" onClick={() => { setShowModal(false); setNewUser({ full_name: '', email: '', password: '', role: 'inspector', gmail: '' }); setFieldErrors({}); setFormMsg({ type: '', text: '' }); }}>Cancel</button>
                 <button type="submit" className="ad-btn ad-btn-primary" disabled={submitting}>{submitting ? 'Creating…' : 'Create User'}</button>
               </div>
             </form>
@@ -1022,7 +1327,9 @@ export default function AdminDashboard({ setCurrentPage }) {
               </div>
               <div className="ad-modal-field">
                 <label className="ad-modal-label">Position</label>
-                <input className="ad-modal-input" placeholder="e.g. Electrician, Welder" value={newWorker.position} onChange={e => setNewWorker({ ...newWorker, position: e.target.value })} />
+                <input className={`ad-modal-input${workerErrors.position ? ' error' : ''}`} placeholder="e.g. Electrician, Welder" value={newWorker.position}
+                  onChange={e => { setNewWorker({ ...newWorker, position: e.target.value }); setWorkerErrors(p => ({ ...p, position: '' })); }} />
+                {workerErrors.position && <span className="ad-field-error">⚠ {workerErrors.position}</span>}
               </div>
               <div className="ad-modal-field">
                 <label className="ad-modal-label">Assigned Station</label>
@@ -1034,7 +1341,7 @@ export default function AdminDashboard({ setCurrentPage }) {
               <div className="ad-modal-field">
                 <label className="ad-modal-label">Contact Number</label>
                 <input className={`ad-modal-input${workerErrors.contact_number ? ' error' : ''}`} placeholder="e.g. 0917-123-4567" value={newWorker.contact_number}
-                  onChange={e => { setNewWorker({ ...newWorker, contact_number: e.target.value }); setWorkerErrors(p => ({ ...p, contact_number: '' })); }} />
+                  onChange={e => { const f = e.target.value.replace(/[^0-9+\-\s()]/g, ''); setNewWorker({ ...newWorker, contact_number: f }); setWorkerErrors(p => ({ ...p, contact_number: '' })); }} />
                 {workerErrors.contact_number && <span className="ad-field-error">⚠ {workerErrors.contact_number}</span>}
               </div>
               {editingWorker && (
@@ -1050,6 +1357,80 @@ export default function AdminDashboard({ setCurrentPage }) {
                 <button type="submit" className="ad-btn ad-btn-primary" disabled={workerSubmitting}>{workerSubmitting ? 'Saving…' : editingWorker ? 'Update Worker' : 'Add Worker'}</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Admin photo viewer */}
+      {adminPhoto && (
+        <div onClick={() => setAdminPhoto(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, cursor: 'pointer' }}>
+          <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
+            <img src={adminPhoto} alt="Violation proof" style={{ maxWidth: '80vw', maxHeight: '80vh', borderRadius: 12, border: '3px solid #fca5a5' }} />
+            <div style={{ textAlign: 'center', color: '#fca5a5', fontWeight: 700, marginTop: '0.75rem', fontSize: '0.85rem' }}>
+              Violation Proof Photo &mdash; read only &mdash; click outside to close
+            </div>
+            <button onClick={() => setAdminPhoto(null)}
+              style={{ position: 'absolute', top: -14, right: -14, width: 32, height: 32, borderRadius: '50%', border: '2px solid #fff', background: '#ef4444', color: '#fff', fontWeight: 900, cursor: 'pointer', fontSize: '1.1rem', lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.3)' }}>
+              &times;
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Report modal */}
+      {reportModal && (
+        <div className="ad-modal-overlay" onClick={e => e.target === e.currentTarget && setReportModal(false)}>
+          <div className="ad-modal" style={{ maxWidth: 380 }}>
+            <div className="ad-modal-title">📄 Generate Admin PDF Report</div>
+            <div className="ad-modal-sub">Select the period to include — covers all inspectors and stations.</div>
+            <div className="ad-modal-form" style={{ marginTop: '1.25rem' }}>
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Report Period</label>
+                <select className="ad-modal-select" value={reportPeriod} onChange={e => setReportPeriod(e.target.value)}>
+                  <option value="all">All time</option>
+                  <option value="today">Today</option>
+                  <option value="yesterday">Yesterday</option>
+                  <option value="week">This week</option>
+                  <option value="month">This month</option>
+                  <option value="custom">Custom date range</option>
+                </select>
+              </div>
+              {reportPeriod === 'custom' && (
+                <>
+                  <div className="ad-modal-field">
+                    <label className="ad-modal-label">From Date</label>
+                    <input className="ad-modal-input" type="date" value={reportFrom} onChange={e => setReportFrom(e.target.value)} />
+                  </div>
+                  <div className="ad-modal-field">
+                    <label className="ad-modal-label">To Date</label>
+                    <input className="ad-modal-input" type="date" value={reportTo} onChange={e => setReportTo(e.target.value)} />
+                  </div>
+                </>
+              )}
+              <div style={{ fontSize: '0.78rem', color: '#94a3b8', marginTop: '0.5rem' }}>
+                {(() => {
+                  const today = new Date().toISOString().split('T')[0];
+                  const count = detections.filter(d => {
+                    if (!d.date) return false;
+                    if (reportPeriod === 'all')       return true;
+                    if (reportPeriod === 'today')     return d.date === today;
+                    if (reportPeriod === 'yesterday') { const y = new Date(); y.setDate(y.getDate()-1); return d.date === y.toISOString().split('T')[0]; }
+                    if (reportPeriod === 'week')      { const w = new Date(); w.setDate(w.getDate()-7); return d.date >= w.toISOString().split('T')[0]; }
+                    if (reportPeriod === 'month')     { const m = new Date(); m.setDate(1); return d.date >= m.toISOString().split('T')[0]; }
+                    if (reportPeriod === 'custom')    { if (reportFrom && d.date < reportFrom) return false; if (reportTo && d.date > reportTo) return false; return true; }
+                    return true;
+                  }).length;
+                  return `${count} record${count !== 1 ? 's' : ''} will be included`;
+                })()}
+              </div>
+            </div>
+            <div className="ad-modal-footer" style={{ marginTop: '1.25rem' }}>
+              <button className="ad-btn ad-btn-ghost" onClick={() => setReportModal(false)}>Cancel</button>
+              <button className="ad-btn ad-btn-primary" onClick={() => { setReportModal(false); generateAdminReport(); }}>
+                📄 Generate PDF
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1070,12 +1451,16 @@ export default function AdminDashboard({ setCurrentPage }) {
               </div>
               <div className="ad-modal-field">
                 <label className="ad-modal-label">Location</label>
-                <input className="ad-modal-input" placeholder="e.g. Building 1 — East Wing" value={newStation.location} onChange={e => setNewStation({ ...newStation, location: e.target.value })} />
+                <input className={`ad-modal-input${stationErrors.location ? ' error' : ''}`} placeholder="e.g. Building 1 — East Wing" value={newStation.location}
+                  onChange={e => { setNewStation({ ...newStation, location: e.target.value }); setStationErrors(p => ({ ...p, location: '' })); }} />
+                {stationErrors.location && <span className="ad-field-error">⚠ {stationErrors.location}</span>}
               </div>
               <div className="ad-modal-field">
                 <label className="ad-modal-label">Required PPE</label>
-                <input className="ad-modal-input" placeholder="e.g. helmet,vest" value={newStation.required_ppe} onChange={e => setNewStation({ ...newStation, required_ppe: e.target.value })} />
+                <input className={`ad-modal-input${stationErrors.required_ppe ? ' error' : ''}`} placeholder="e.g. helmet,vest" value={newStation.required_ppe}
+                  onChange={e => { setNewStation({ ...newStation, required_ppe: e.target.value }); setStationErrors(p => ({ ...p, required_ppe: '' })); }} />
                 <span style={{ fontSize: '0.75rem', color: '#aaa' }}>Comma-separated list</span>
+                {stationErrors.required_ppe && <span className="ad-field-error">⚠ {stationErrors.required_ppe}</span>}
               </div>
               <div className="ad-modal-field">
                 <label className="ad-modal-label">Assign Inspector</label>
@@ -1095,6 +1480,57 @@ export default function AdminDashboard({ setCurrentPage }) {
               <div className="ad-modal-footer">
                 <button type="button" className="ad-btn ad-btn-ghost" onClick={() => { setShowStationModal(false); setEditingStation(null); setNewStation({ label: '', location: '', required_ppe: 'helmet,vest', inspector_id: '', is_active: true }); setStationErrors({}); setStationFormMsg({ type: '', text: '' }); }}>Cancel</button>
                 <button type="submit" className="ad-btn ad-btn-primary" disabled={stationSubmitting}>{stationSubmitting ? 'Saving…' : editingStation ? 'Update Station' : 'Create Station'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit User Modal */}
+      {showEditUserModal && editingUser && (
+        <div className="ad-modal-overlay" onClick={(e) => e.target === e.currentTarget && setShowEditUserModal(false)}>
+          <div className="ad-modal">
+            <div className="ad-modal-title">Edit User</div>
+            <div className="ad-modal-sub">Update details for {editingUser.full_name}</div>
+            <form className="ad-modal-form" onSubmit={handleEditUser}>
+              {editUserMsg.text && <div className={editUserMsg.type === 'success' ? 'ad-success-msg' : 'ad-error-msg'}>{editUserMsg.text}</div>}
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Full Name</label>
+                <input className={`ad-modal-input${editUserErrors.full_name ? ' error' : ''}`}
+                  placeholder="Juan dela Cruz" value={editUserForm.full_name}
+                  onChange={e => { const f = e.target.value.replace(/[^A-Za-zÀ-ÖØ-öø-ÿÑñ\s'.\-]/g, ''); setEditUserForm(p => ({ ...p, full_name: f })); setEditUserErrors(p => ({ ...p, full_name: '' })); }} />
+                {editUserErrors.full_name && <span className="ad-field-error">⚠ {editUserErrors.full_name}</span>}
+              </div>
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Login Email</label>
+                <input className="ad-modal-input" value={editingUser.email} disabled
+                  style={{ background: '#f1f5f9', color: '#94a3b8', cursor: 'not-allowed' }} />
+                <span style={{ fontSize: '0.75rem', color: '#aaa' }}>Login email cannot be changed</span>
+              </div>
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Gmail <span style={{ color: '#94a3b8', fontWeight: 400 }}>(optional — for password reset notifications)</span></label>
+                <input className={`ad-modal-input${editUserErrors.gmail ? ' error' : ''}`}
+                  type="email" placeholder="juan@gmail.com" value={editUserForm.gmail}
+                  onChange={e => { setEditUserForm(p => ({ ...p, gmail: e.target.value })); setEditUserErrors(p => ({ ...p, gmail: '' })); }} />
+                {editUserErrors.gmail && <span className="ad-field-error">⚠ {editUserErrors.gmail}</span>}
+              </div>
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Role</label>
+                <select className="ad-modal-select" value={editUserForm.role} onChange={e => setEditUserForm(p => ({ ...p, role: e.target.value }))}>
+                  <option value="inspector">Inspector</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Status</label>
+                <select className="ad-modal-select" value={editUserForm.is_active} onChange={e => setEditUserForm(p => ({ ...p, is_active: e.target.value === 'true' }))}>
+                  <option value="true">Active</option>
+                  <option value="false">Inactive</option>
+                </select>
+              </div>
+              <div className="ad-modal-footer">
+                <button type="button" className="ad-btn ad-btn-ghost" onClick={() => { setShowEditUserModal(false); setEditingUser(null); }}>Cancel</button>
+                <button type="submit" className="ad-btn ad-btn-primary" disabled={editUserSubmitting}>{editUserSubmitting ? 'Saving…' : 'Save Changes'}</button>
               </div>
             </form>
           </div>

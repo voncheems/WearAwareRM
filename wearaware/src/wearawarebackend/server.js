@@ -1,8 +1,11 @@
+require('dotenv').config();
+
 const express  = require('express');
 const cors     = require('cors');
 const bcrypt   = require('bcrypt');
 const jwt      = require('jsonwebtoken');
 const WebSocket = require('ws');
+const nodemailer = require('nodemailer');
 
 const { pool, JWT_SECRET, requireAuth, requireRole } = require('./middleware');
 
@@ -10,7 +13,21 @@ const app = express();
 
 // ── Middleware ──────────────────────────────────────────────
 app.use(cors({ origin: 'http://localhost:5173' }));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+
+// ── Nodemailer Transporter ──────────────────────────────────
+// Add to your .env:
+//   EMAIL_USER=your_gmail@gmail.com
+//   EMAIL_PASS=your_gmail_app_password
+// Generate an App Password at: https://myaccount.google.com/apppasswords
+// (Requires 2-Step Verification enabled on the Gmail account)
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
 
 // ── WebSocket Server for Android Alerts ──────────────────────
 const wss = new WebSocket.Server({ port: 8080 });
@@ -25,6 +42,96 @@ app.use('/api/admin',     require('./routes/admin'));
 app.use('/api/workers',   require('./routes/workers'));
 app.use('/api/devices',   require('./routes/devices'));
 app.use('/api/inspector', require('./Inspector'));
+
+// ══════════════════════════════════════════════════════════════
+//  PUT /api/users/:id  — admin only
+// ══════════════════════════════════════════════════════════════
+app.put('/api/users/:id', requireAuth, requireRole('admin'), async (req, res) => {
+  const { full_name, gmail, role, is_active } = req.body;
+  if (!full_name) return res.status(400).json({ error: 'Full name is required.' });
+  try {
+    const roleResult = await pool.query('SELECT id FROM roles WHERE name = $1', [role]);
+    if (!roleResult.rows[0]) return res.status(400).json({ error: 'Invalid role.' });
+
+    await pool.query(
+      `UPDATE users SET full_name = $1, gmail = $2, role_id = $3, is_active = $4 WHERE id = $5`,
+      [full_name.trim(), gmail || null, roleResult.rows[0].id, is_active ?? true, req.params.id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('PUT /api/users/:id error:', err.message);
+    res.status(500).json({ error: 'Failed to update user.' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  POST /api/contact  — public, no auth needed
+// ══════════════════════════════════════════════════════════════
+app.post('/api/contact', async (req, res) => {
+  const { name, email, company, subject, message } = req.body;
+
+  if (!name || !email || !subject || !message)
+    return res.status(400).json({ error: 'Please fill in all required fields.' });
+
+  const subjectLabels = {
+    inquiry: 'General Inquiry',
+    demo:    'Request a Demo',
+    support: 'Technical Support',
+    other:   'Other',
+  };
+
+  const mailOptions = {
+    from:    `"WearAware Contact Form" <${process.env.EMAIL_USER}>`,
+    to:      'wearawareph@gmail.com',
+    replyTo: email,
+    subject: `[WearAware] ${subjectLabels[subject] || subject} — from ${name}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1a202c;">
+        <div style="background: linear-gradient(135deg, #667eea, #764ba2); padding: 24px 32px; border-radius: 12px 12px 0 0;">
+          <h2 style="color: white; margin: 0; font-size: 1.3rem;">🦺 WearAware — New Contact Message</h2>
+        </div>
+        <div style="background: #f8fafc; padding: 32px; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 12px 12px;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 0.95rem;">
+            <tr>
+              <td style="padding: 10px 0; font-weight: 700; color: #64748b; width: 140px;">Name</td>
+              <td style="padding: 10px 0; color: #1a202c;">${name}</td>
+            </tr>
+            <tr>
+              <td style="padding: 10px 0; font-weight: 700; color: #64748b;">Email</td>
+              <td style="padding: 10px 0;"><a href="mailto:${email}" style="color: #667eea;">${email}</a></td>
+            </tr>
+            ${company ? `
+            <tr>
+              <td style="padding: 10px 0; font-weight: 700; color: #64748b;">Company</td>
+              <td style="padding: 10px 0; color: #1a202c;">${company}</td>
+            </tr>` : ''}
+            <tr>
+              <td style="padding: 10px 0; font-weight: 700; color: #64748b;">Subject</td>
+              <td style="padding: 10px 0; color: #1a202c;">${subjectLabels[subject] || subject}</td>
+            </tr>
+          </table>
+
+          <div style="margin-top: 24px; padding: 20px; background: white; border-radius: 8px; border: 1px solid #e2e8f0;">
+            <div style="font-weight: 700; color: #64748b; font-size: 0.85rem; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.05em;">Message</div>
+            <p style="color: #334155; line-height: 1.75; margin: 0; white-space: pre-wrap;">${message}</p>
+          </div>
+
+          <p style="margin-top: 24px; font-size: 0.8rem; color: #94a3b8;">
+            Reply directly to this email to respond to ${name}.
+          </p>
+        </div>
+      </div>
+    `,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    res.json({ success: true, message: 'Message sent successfully.' });
+  } catch (err) {
+    console.error('Nodemailer error:', err);
+    res.status(500).json({ error: 'Failed to send message. Please try again later.' });
+  }
+});
 
 // ══════════════════════════════════════════════════════════════
 //  POST /api/auth/login
@@ -103,7 +210,7 @@ app.get('/api/auth/me', requireAuth, async (req, res) => {
 app.get('/api/users', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.id, u.full_name, u.email, r.name AS role, u.is_active, u.created_at
+      `SELECT u.id, u.full_name, u.email, u.gmail, r.name AS role, u.is_active, u.created_at
        FROM   users u
        JOIN   roles r ON u.role_id = r.id
        ORDER  BY u.id`
@@ -118,7 +225,7 @@ app.get('/api/users', requireAuth, requireRole('admin'), async (req, res) => {
 //  POST /api/users  — admin only
 // ══════════════════════════════════════════════════════════════
 app.post('/api/users', requireAuth, requireRole('admin'), async (req, res) => {
-  const { full_name, email, password, role } = req.body;
+  const { full_name, email, password, role, gmail } = req.body;
 
   if (!full_name || !email || !password || !role)
     return res.status(400).json({ error: 'All fields are required.' });
@@ -131,10 +238,10 @@ app.post('/api/users', requireAuth, requireRole('admin'), async (req, res) => {
     const hash = await bcrypt.hash(password, 10);
 
     const result = await pool.query(
-      `INSERT INTO users (role_id, full_name, email, password_hash)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO users (role_id, full_name, email, password_hash, gmail)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING id, full_name, email, created_at`,
-      [roleResult.rows[0].id, full_name, email, hash]
+      [roleResult.rows[0].id, full_name, email, hash, gmail || null]
     );
 
     res.status(201).json({ success: true, user: result.rows[0] });
@@ -253,7 +360,7 @@ app.post('/api/detections', requireAuth, requireRole('inspector'), async (req, r
     detected_ppe    = [],
     confidence_score,
     worker_id,
-    photo_url       = null,   // base64 snapshot for violations
+    photo_url       = null,
   } = req.body;
 
   if (!device_uuid || !result)
@@ -263,7 +370,6 @@ app.post('/api/detections', requireAuth, requireRole('inspector'), async (req, r
     return res.status(400).json({ error: 'result must be compliant or violation.' });
 
   try {
-    // Auto-register device if new
     let deviceResult = await pool.query(
       'SELECT id FROM devices WHERE device_id = $1',
       [device_uuid]
@@ -281,7 +387,6 @@ app.post('/api/detections', requireAuth, requireRole('inspector'), async (req, r
       deviceDbId = deviceResult.rows[0].id;
     }
 
-    // Save detection with worker_id and photo
     const det = await pool.query(
       `INSERT INTO detections
          (device_id, inspector_id, result, missing_ppe, detected_ppe, confidence_score, worker_id, photo_url)
@@ -291,16 +396,43 @@ app.post('/api/detections', requireAuth, requireRole('inspector'), async (req, r
     );
     const detectionId = det.rows[0].id;
 
-    // Notify inspector of violations + broadcast to Android
     if (result === 'violation') {
       await pool.query(
         'INSERT INTO notifications (detection_id, inspector_id) VALUES ($1, $2)',
         [detectionId, req.user.id]
       );
 
+      // ── Look up worker name and employee ID ──
+      let workerName = null;
+      let workerEmployeeId = null;
+      if (worker_id) {
+        const workerRow = await pool.query(
+          'SELECT full_name, employee_id FROM workers WHERE id = $1',
+          [worker_id]
+        );
+        if (workerRow.rows[0]) {
+          workerName       = workerRow.rows[0].full_name;
+          workerEmployeeId = workerRow.rows[0].employee_id;
+        }
+      }
+
+      // ── Look up station label and location ──
+      const deviceRow = await pool.query(
+        'SELECT label, location FROM devices WHERE id = $1',
+        [deviceDbId]
+      );
+      const stationLabel    = deviceRow.rows[0]?.label    || 'Site Entrance';
+      const stationLocation = deviceRow.rows[0]?.location || null;
+
       const alertPayload = JSON.stringify({
-        title:   'PPE VIOLATION DETECTED',
-        message: `Missing: ${missing_ppe.join(', ') || 'PPE'} at Site Entrance`,
+        title:              'PPE VIOLATION DETECTED',
+        message:            `Missing: ${missing_ppe.join(', ') || 'PPE'} at ${stationLabel}`,
+        missing_ppe,
+        worker_name:        workerName,
+        worker_employee_id: workerEmployeeId,
+        station:            stationLabel,
+        location:           stationLocation,
+        detection_id:       detectionId,
       });
 
       wss.clients.forEach((client) => {
@@ -391,6 +523,120 @@ app.get('/api/notifications/count', requireAuth, requireRole('inspector'), async
     res.json({ unread: parseInt(result.rows[0].unread) || 0 });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch notification count.' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  POST /api/auth/forgot-password  — public, no auth needed
+// ══════════════════════════════════════════════════════════════
+app.post('/api/auth/forgot-password', async (req, res) => {
+  const { email, reason } = req.body;
+  if (!email) return res.status(400).json({ error: 'Email is required.' });
+  try {
+    const user = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (!user.rows[0])
+      return res.status(404).json({ error: 'No account found with that email.' });
+
+    const existing = await pool.query(
+      "SELECT id FROM password_reset_requests WHERE email = $1 AND status = 'pending'",
+      [email]
+    );
+    if (existing.rows[0])
+      return res.status(409).json({ error: 'A reset request is already pending for this email.' });
+
+    await pool.query(
+      'INSERT INTO password_reset_requests (email, reason) VALUES ($1, $2)',
+      [email, reason || null]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('POST /api/auth/forgot-password error:', err.message);
+    res.status(500).json({ error: 'Failed to submit request.' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  GET /api/admin/password-requests  — admin only
+// ══════════════════════════════════════════════════════════════
+app.get('/api/admin/password-requests', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, email, reason, status, temp_password, created_at
+       FROM password_reset_requests
+       ORDER BY created_at DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch requests.' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  PATCH /api/admin/password-requests/:id/reset  — admin only
+// ══════════════════════════════════════════════════════════════
+app.patch('/api/admin/password-requests/:id/reset', requireAuth, requireRole('admin'), async (req, res) => {
+  const { temp_password } = req.body;
+  if (!temp_password || temp_password.length < 6)
+    return res.status(400).json({ error: 'Temp password must be at least 6 characters.' });
+  try {
+    const reqRow = await pool.query(
+      'SELECT email FROM password_reset_requests WHERE id = $1',
+      [req.params.id]
+    );
+    if (!reqRow.rows[0]) return res.status(404).json({ error: 'Request not found.' });
+
+    const { email } = reqRow.rows[0];
+    const hash = await require('bcrypt').hash(temp_password, 10);
+
+    const userRow  = await pool.query('SELECT gmail, full_name FROM users WHERE email = $1', [email]);
+    const gmail    = userRow.rows[0]?.gmail;
+    const fullName = userRow.rows[0]?.full_name || 'Inspector';
+
+    await pool.query('UPDATE users SET password_hash = $1 WHERE email = $2', [hash, email]);
+    await pool.query(
+      "UPDATE password_reset_requests SET status = 'resolved', temp_password = $1 WHERE id = $2",
+      [temp_password, req.params.id]
+    );
+
+    if (gmail) {
+      await transporter.sendMail({
+        from:    `"WearAware" <${process.env.EMAIL_USER}>`,
+        to:      gmail,
+        subject: 'WearAware — Your Temporary Password',
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto;">
+            <div style="background: linear-gradient(135deg, #667eea, #764ba2); padding: 24px 32px; border-radius: 12px 12px 0 0;">
+              <h2 style="color: white; margin: 0;">🦺 WearAware</h2>
+            </div>
+            <div style="padding: 32px; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 12px 12px; background: #f8fafc;">
+              <p style="color: #334155;">Hi ${fullName},</p>
+              <p style="color: #334155;">Your password has been reset by an administrator. Your temporary password is:</p>
+              <div style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; text-align: center; font-size: 1.4rem; font-weight: 800; letter-spacing: 4px; color: #667eea; margin: 20px 0;">
+                ${temp_password}
+              </div>
+              <p style="color: #64748b; font-size: 0.9rem;">Please log in and change your password immediately.</p>
+            </div>
+          </div>
+        `,
+      });
+    }
+
+    res.json({ success: true, email, gmail, emailed: !!gmail });
+  } catch (err) {
+    console.error('PATCH /api/admin/password-requests/:id/reset error:', err.message);
+    res.status(500).json({ error: 'Failed to reset password.' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  DELETE /api/admin/password-requests/:id  — admin only
+// ══════════════════════════════════════════════════════════════
+app.delete('/api/admin/password-requests/:id', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    await pool.query('DELETE FROM password_reset_requests WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete request.' });
   }
 });
 

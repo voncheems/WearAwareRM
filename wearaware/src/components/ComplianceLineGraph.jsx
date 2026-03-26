@@ -39,10 +39,16 @@ export default function ComplianceLineGraph({ detections }) {
   const maxRate = Math.min(100, Math.max(...data.map(d => d.rate)) + 5);
   const range   = maxRate - minRate || 10;
 
-  const xOf = (i) => padL + (i / (data.length - 1 || 1)) * innerW;
+  const isSingle = data.length === 1;
+
+  // Center the dot if only one point, otherwise spread across chart
+  const xOf = (i) => isSingle
+    ? padL + innerW / 2
+    : padL + (i / (data.length - 1)) * innerW;
+
   const yOf = (r) => padT + innerH - ((r - minRate) / range) * innerH;
 
-  const points  = data.map((d, i) => `${xOf(i)},${yOf(d.rate)}`);
+  const points   = data.map((d, i) => `${xOf(i)},${yOf(d.rate)}`);
   const linePath = `M ${points.join(' L ')}`;
   const areaPath = `M ${xOf(0)},${padT + innerH} L ${points.join(' L ')} L ${xOf(data.length - 1)},${padT + innerH} Z`;
 
@@ -71,18 +77,27 @@ export default function ComplianceLineGraph({ detections }) {
           </g>
         ))}
 
-        <path d={areaPath} fill="url(#compGrad)" />
-        <path d={linePath} fill="none" stroke="url(#lineGrad)" strokeWidth="2.5"
-          strokeLinecap="round" strokeLinejoin="round" />
+        {/* Only draw area/line if more than 1 point */}
+        {!isSingle && <path d={areaPath} fill="url(#compGrad)" />}
+        {!isSingle && (
+          <path d={linePath} fill="none" stroke="url(#lineGrad)" strokeWidth="2.5"
+            strokeLinecap="round" strokeLinejoin="round" />
+        )}
 
         {data.map((d, i) => (
           <g key={i}>
-            {(data.length <= 7 || i % 2 === 0) && (
-              <text x={xOf(i)} y={H - 4} textAnchor="middle" fontSize="9.5" fill="#bbb" fontFamily="inherit">
-                {d.label}
+            <text x={xOf(i)} y={H - 4} textAnchor="middle" fontSize="9.5" fill="#bbb" fontFamily="inherit">
+              {d.label}
+            </text>
+
+            {/* Rate label above dot for single point */}
+            {isSingle && (
+              <text x={xOf(i)} y={yOf(d.rate) - 10} textAnchor="middle" fontSize="11" fill="#667eea" fontWeight="700" fontFamily="inherit">
+                {d.rate}%
               </text>
             )}
-            <circle cx={xOf(i)} cy={yOf(d.rate)} r="4" fill="white" stroke="#667eea" strokeWidth="2.5" />
+
+            <circle cx={xOf(i)} cy={yOf(d.rate)} r="5" fill="white" stroke="#667eea" strokeWidth="2.5" />
             <rect
               x={xOf(i) - 18} y={padT} width="36" height={innerH + padB}
               fill="transparent"

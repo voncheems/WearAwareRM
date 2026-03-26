@@ -3,11 +3,11 @@ const jwt       = require('jsonwebtoken');
 
 // ── PostgreSQL ──────────────────────────────────────────────
 const pool = new Pool({
-  host:     'localhost',
-  port:     5432,
-  database: 'wearaware',
-  user:     'postgres',
-  password: '123123',
+  host:     process.env.DB_HOST,
+  port:     process.env.DB_PORT,
+  database: process.env.DB_NAME,
+  user:     process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
 });
 
 pool.connect((err) => {
@@ -16,7 +16,7 @@ pool.connect((err) => {
 });
 
 // ── JWT Secret ───────────────────────────────────────────────
-const JWT_SECRET = 'wearaware_secret_change_me';
+const JWT_SECRET = process.env.JWT_SECRET;
 
 // ── Auth Middleware ─────────────────────────────────────────
 async function requireAuth(req, res, next) {
@@ -38,7 +38,7 @@ async function requireAuth(req, res, next) {
     const user = result.rows[0];
     if (!user) return res.status(401).json({ error: 'User not found.' });
 
-    const tokenIssuedAt  = new Date(decoded.iat * 1000); // JWT iat is in seconds
+    const tokenIssuedAt   = new Date(decoded.iat * 1000); // JWT iat is in seconds
     const passwordChanged = new Date(user.updated_at);
 
     if (passwordChanged > tokenIssuedAt) {

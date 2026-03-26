@@ -3,7 +3,6 @@ import './AboutUs.css';
 
 function AboutUs({ setCurrentPage }) {
   useEffect(() => {
-    // Navbar scroll effect
     const handleScroll = () => {
       const navbar = document.querySelector('.navbar');
       if (!navbar) return;
@@ -16,7 +15,6 @@ function AboutUs({ setCurrentPage }) {
 
     window.addEventListener('scroll', handleScroll);
 
-    // Scroll animation
     const observerOptions = {
       threshold: 0.1,
       rootMargin: '0px 0px -100px 0px'
@@ -46,9 +44,11 @@ function AboutUs({ setCurrentPage }) {
     <div className="about-page">
       {/* Navigation */}
       <nav className="navbar">
-<div className="logo" onClick={(e) => handleNav(e, 'landing')} style={{ cursor: 'pointer' }}>
-            <div className="logo-icon">🦺</div>
-            <span>WearAware</span>
+        <div className="logo" onClick={(e) => handleNav(e, 'landing')} style={{ cursor: 'pointer' }}>
+          <div className="logo-icon">
+            <img src="/favicon.svg" alt="WearAware logo" style={{ width: 32, height: 32 }} />
+          </div>
+          <span>WearAware</span>
         </div>
         <ul className="nav-links">
           <li><a href="#" onClick={(e) => handleNav(e, 'about')}>ABOUT US</a></li>
@@ -65,7 +65,7 @@ function AboutUs({ setCurrentPage }) {
           <div className="hero-subtitle">GROUP 4 - BSIT 2-07</div>
           <h1 className="hero-title">MEET THE<br/>DEVELOPERS</h1>
           <p className="hero-description">
-            Six passionate IT students bringing AI-powered safety solutions to life
+            Three IT students building an AI-assisted PPE compliance system for workplace safety.
           </p>
         </div>
       </section>
@@ -79,22 +79,25 @@ function AboutUs({ setCurrentPage }) {
             BSIT 2-07 • Capstone Project 2025
           </p>
         </div>
-        
+
         <div className="team-grid">
-          <TeamMember 
-            name="Member 1"
-            role="Project Lead"
-            description="Responsible for project coordination, system architecture, and ensuring all components work together seamlessly."
+          <TeamMember
+            photo="./team/chen.jpg"
+            name="Ivan Miguel F. Chen"
+            role="Fullstack Developer & Project Manager"
+            description="Leads the project from concept to deployment — handling both frontend and backend development while overseeing overall system design and user experience."
           />
-          <TeamMember 
-            name="Member 2"
-            role="AI Developer"
-            description="Building and training the machine learning models for PPE detection using computer vision technology."
+          <TeamMember
+            photo="/team/cervantes.jpg"
+            name="Brenan Josh Cervantes"
+            role="QA & Documentation"
+            description="Ensures system reliability through thorough testing and maintains comprehensive project documentation throughout the development lifecycle."
           />
-          <TeamMember 
-            name="Member 3"
-            role="Frontend Developer"
-            description="Creating the user interface and designing the user experience for the web application."
+          <TeamMember
+            photo="/team/tercero.png"
+            name="John Nathaniel T. Tercero"
+            role="Database Administrator"
+            description="Designs and manages the database architecture, ensuring data integrity and optimal performance across all system operations."
           />
         </div>
       </section>
@@ -105,13 +108,14 @@ function AboutUs({ setCurrentPage }) {
           <div className="section-subtitle">ABOUT THE PROJECT</div>
           <h2 className="section-title">WearAware System</h2>
         </div>
-        
+
         <div className="project-content">
           <div className="project-card">
             <h3>🎯 Project Goal</h3>
             <p>
-              Develop an AI-powered PPE detection system that can automatically identify and log safety violations 
-              in real-time, helping construction sites and industrial facilities maintain compliance and protect workers.
+              Develop an AI-assisted PPE detection system that flags non-compliant workers at entrance
+              checkpoints before they enter the worksite — with organized logs, inspector dashboards,
+              and admin-level reporting to support safety compliance.
             </p>
           </div>
 
@@ -120,21 +124,26 @@ function AboutUs({ setCurrentPage }) {
             <div className="tech-tags">
               <span className="tech-tag">React</span>
               <span className="tech-tag">Python</span>
-              <span className="tech-tag">TensorFlow</span>
-              <span className="tech-tag">Firebase</span>
+              <span className="tech-tag">Flask</span>
+              <span className="tech-tag">PostgreSQL</span>
+              <span className="tech-tag">YOLO</span>
               <span className="tech-tag">Computer Vision</span>
-              <span className="tech-tag">Node.js</span>
+              <span className="tech-tag">JWT Auth</span>
+              <span className="tech-tag">QR Code</span>
+              <span className="tech-tag">ZXing</span>
+              <span className="tech-tag">jsQR</span>
             </div>
           </div>
 
           <div className="project-card">
             <h3>🔑 Key Features</h3>
             <ul className="feature-list">
-              <li>Real-time PPE detection (helmets, vests, safety gear)</li>
-              <li>Automated violation logging and reporting</li>
-              <li>Live monitoring dashboard</li>
-              <li>Historical data analytics</li>
-              <li>Mobile-responsive interface</li>
+              <li>AI-assisted PPE detection at entrance checkpoints</li>
+              <li>QR code-based worker identification</li>
+              <li>Automated violation logging per inspector and station</li>
+              <li>Role-based access — Admin and Inspector accounts</li>
+              <li>PDF compliance report export</li>
+              <li>Admin dashboard with cross-station analytics</li>
             </ul>
           </div>
 
@@ -152,7 +161,10 @@ function AboutUs({ setCurrentPage }) {
       {/* Footer */}
       <footer className="footer">
         <div className="footer-simple">
-          <div className="footer-brand">🦺 WearAware</div>
+          <div className="footer-brand">
+            <img src="/favicon.svg" alt="WearAware logo" style={{ width: 24, height: 24, verticalAlign: 'middle', marginRight: '0.4rem' }} />
+            WearAware
+          </div>
           <p className="footer-description">
             A Capstone Project by Group 4 - BSIT 2-07
           </p>
@@ -165,10 +177,22 @@ function AboutUs({ setCurrentPage }) {
   );
 }
 
-function TeamMember({ name, role, description }) {
+function TeamMember({ photo, name, role, description }) {
   return (
     <div className="team-member">
-      <div className="member-avatar">👤</div>
+      <div className="member-avatar">
+        <img
+          src={photo}
+          alt={name}
+          onError={(e) => {
+            e.target.style.display = 'none';
+            e.target.nextSibling.style.display = 'flex';
+          }}
+        />
+        <div className="member-avatar-fallback">
+          {name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+        </div>
+      </div>
       <h3 className="member-name">{name}</h3>
       <div className="member-role">{role}</div>
       <p className="member-description">{description}</p>
