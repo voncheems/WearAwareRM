@@ -1,29 +1,14 @@
 const express = require('express');
 const router  = express.Router();
 
-const { pool, requireAuth, requireRole } = require('../middleware');
+const { data, requireAuth, requireRole } = require('../middleware');
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/workers  — admin + inspector
 // ══════════════════════════════════════════════════════════════
 router.get('/', requireAuth, requireRole('admin', 'inspector'), async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT
-         w.id,
-         w.employee_id,
-         w.full_name,
-         w.position,
-         w.device_id,
-         w.contact_number,
-         w.status,
-         w.created_at,
-         d.label    AS station_label,
-         d.location AS station_location
-       FROM workers w
-       LEFT JOIN devices d ON w.device_id = d.id
-       ORDER BY w.full_name ASC`
-    );
+    const result = await data.workers({});
     res.json(result.rows);
   } catch (err) {
     console.error('GET /workers error:', err.message);
@@ -38,23 +23,7 @@ router.get('/', requireAuth, requireRole('admin', 'inspector'), async (req, res)
 // ══════════════════════════════════════════════════════════════
 router.get('/by-employee-id/:employee_id', requireAuth, requireRole('admin', 'inspector'), async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT
-         w.id,
-         w.employee_id,
-         w.full_name,
-         w.position,
-         w.device_id,
-         w.contact_number,
-         w.status,
-         w.created_at,
-         d.label    AS station_label,
-         d.location AS station_location
-       FROM workers w
-       LEFT JOIN devices d ON w.device_id = d.id
-       WHERE w.employee_id = $1`,
-      [req.params.employee_id]
-    );
+    const result = await data.workers({ employee_id: req.params.employee_id });
 
     if (!result.rows[0])
       return res.status(404).json({ error: 'Worker not found.' });
@@ -68,10 +37,7 @@ router.get('/by-employee-id/:employee_id', requireAuth, requireRole('admin', 'in
         return res.status(403).json({ error: 'This worker is not assigned to any station.' });
 
       // That station must be assigned to this inspector
-      const stationCheck = await pool.query(
-        'SELECT id FROM devices WHERE id = $1 AND inspector_id = $2',
-        [worker.device_id, req.user.id]
-      );
+      const stationCheck = await data.find('devices', { id: worker.device_id, inspector_id: req.user.id }, "id", {});
       if (!stationCheck.rows[0])
         return res.status(403).json({ error: 'This worker is not assigned to your station.' });
 
@@ -92,23 +58,7 @@ router.get('/by-employee-id/:employee_id', requireAuth, requireRole('admin', 'in
 // ══════════════════════════════════════════════════════════════
 router.get('/:id', requireAuth, requireRole('admin', 'inspector'), async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT
-         w.id,
-         w.employee_id,
-         w.full_name,
-         w.position,
-         w.device_id,
-         w.contact_number,
-         w.status,
-         w.created_at,
-         d.label    AS station_label,
-         d.location AS station_location
-       FROM workers w
-       LEFT JOIN devices d ON w.device_id = d.id
-       WHERE w.id = $1`,
-      [req.params.id]
-    );
+    const result = await data.workers({ id: req.params.id });
     if (!result.rows[0]) return res.status(404).json({ error: 'Worker not found.' });
     res.json(result.rows[0]);
   } catch (err) {
@@ -127,35 +77,14 @@ router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
     return res.status(400).json({ error: 'Full name is required.' });
 
   try {
-    const lastWorker = await pool.query(
-      `SELECT employee_id FROM workers
-       WHERE employee_id LIKE 'WA-%'
-       ORDER BY employee_id DESC LIMIT 1`
-    );
-    let nextNum = 1;
-    if (lastWorker.rows[0]) {
-      const lastNum = parseInt(lastWorker.rows[0].employee_id.replace('WA-', ''), 10);
-      if (!isNaN(lastNum)) nextNum = lastNum + 1;
-    }
+    const nextNum = await data.nextId('employee_id');
     const employee_id = `WA-${String(nextNum).padStart(4, '0')}`;
 
-    const result = await pool.query(
-      `INSERT INTO workers (employee_id, full_name, position, device_id, contact_number, status)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, employee_id, full_name, position, device_id, contact_number, status, created_at`,
-      [
-        employee_id,
-        full_name.trim(),
-        position?.trim() || null,
-        device_id || null,
-        contact_number?.trim() || null,
-        status || 'active',
-      ]
-    );
+    const result = await data.insert('workers', { employee_id: employee_id, full_name: full_name.trim(), position: position?.trim() || null, device_id: device_id || null, contact_number: contact_number?.trim() || null, status: status || 'active' }, "id employee_id full_name position device_id contact_number status created_at");
 
     res.status(201).json({ success: true, worker: result.rows[0] });
   } catch (err) {
-    if (err.code === '23505')
+    if (err.code === 11000)
       return res.status(409).json({ error: 'Employee ID already exists.' });
     console.error('POST /workers error:', err.message);
     res.status(500).json({ error: 'Failed to create worker.' });
@@ -172,24 +101,7 @@ router.put('/:id', requireAuth, requireRole('admin'), async (req, res) => {
     return res.status(400).json({ error: 'Full name is required.' });
 
   try {
-    const result = await pool.query(
-      `UPDATE workers
-       SET full_name      = $1,
-           position       = $2,
-           device_id      = $3,
-           contact_number = $4,
-           status         = $5
-       WHERE id = $6
-       RETURNING id, employee_id, full_name, position, device_id, contact_number, status`,
-      [
-        full_name.trim(),
-        position?.trim() || null,
-        device_id || null,
-        contact_number?.trim() || null,
-        status || 'active',
-        req.params.id,
-      ]
-    );
+    const result = await data.update('workers', { id: req.params.id }, { full_name: full_name.trim(), position: position?.trim() || null, device_id: device_id || null, contact_number: contact_number?.trim() || null, status: status || 'active' }, "id employee_id full_name position device_id contact_number status");
 
     if (!result.rows[0]) return res.status(404).json({ error: 'Worker not found.' });
     res.json({ success: true, worker: result.rows[0] });
@@ -204,10 +116,7 @@ router.put('/:id', requireAuth, requireRole('admin'), async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 router.delete('/:id', requireAuth, requireRole('admin'), async (req, res) => {
   try {
-    const result = await pool.query(
-      'DELETE FROM workers WHERE id = $1 RETURNING id',
-      [req.params.id]
-    );
+    const result = await data.remove('workers', { id: req.params.id });
     if (!result.rows[0]) return res.status(404).json({ error: 'Worker not found.' });
     res.json({ success: true });
   } catch (err) {

@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 
 const express  = require('express');
 const cors     = require('cors');
@@ -7,7 +7,8 @@ const jwt      = require('jsonwebtoken');
 const WebSocket = require('ws');
 const nodemailer = require('nodemailer');
 
-const { pool, JWT_SECRET, requireAuth, requireRole } = require('./middleware');
+const { data, JWT_SECRET, requireAuth, requireRole } = require('./middleware');
+const { connectDatabase, closeDatabase, ensureIndexes } = require('./database');
 
 const app = express();
 
@@ -30,12 +31,7 @@ const transporter = nodemailer.createTransport({
 });
 
 // ── WebSocket Server for Android Alerts ──────────────────────
-const wss = new WebSocket.Server({ port: 8080 });
-console.log('🚀 WebSocket Server listening on port 8080 for Android');
-
-wss.on('connection', (ws) => {
-  console.log('📱 Android App Connected');
-});
+let wss;
 
 // ── Routes ──────────────────────────────────────────────────
 app.use('/api/admin',     require('./routes/admin'));
@@ -50,13 +46,10 @@ app.put('/api/users/:id', requireAuth, requireRole('admin'), async (req, res) =>
   const { full_name, gmail, role, is_active } = req.body;
   if (!full_name) return res.status(400).json({ error: 'Full name is required.' });
   try {
-    const roleResult = await pool.query('SELECT id FROM roles WHERE name = $1', [role]);
+    const roleResult = await data.find('roles', { name: role }, "id", {});
     if (!roleResult.rows[0]) return res.status(400).json({ error: 'Invalid role.' });
 
-    await pool.query(
-      `UPDATE users SET full_name = $1, gmail = $2, role_id = $3, is_active = $4 WHERE id = $5`,
-      [full_name.trim(), gmail || null, roleResult.rows[0].id, is_active ?? true, req.params.id]
-    );
+    await data.update('users', { id: req.params.id }, { full_name: full_name.trim(), gmail: gmail || null, role_id: roleResult.rows[0].id, is_active: is_active ?? true }, "*");
     res.json({ success: true });
   } catch (err) {
     console.error('PUT /api/users/:id error:', err.message);
@@ -143,14 +136,7 @@ app.post('/api/auth/login', async (req, res) => {
     return res.status(400).json({ error: 'Email and password are required.' });
 
   try {
-    const result = await pool.query(
-      `SELECT u.id, u.full_name, u.email, u.password_hash, u.is_active,
-              r.name AS role
-       FROM   users u
-       JOIN   roles r ON u.role_id = r.id
-       WHERE  u.email = $1`,
-      [email]
-    );
+    const result = await data.users({ email: email }, "id full_name email password_hash is_active role", {});
 
     const user = result.rows[0];
 
@@ -180,7 +166,10 @@ app.post('/api/auth/login', async (req, res) => {
       },
     });
   } catch (err) {
-    console.error(err.message);
+    console.error('POST /api/auth/login error:', err.code, err.message);
+    if (err.code === '42P01') {
+      return res.status(503).json({ error: 'Database setup is incomplete. Please contact your administrator.' });
+    }
     res.status(500).json({ error: 'Server error.' });
   }
 });
@@ -190,13 +179,7 @@ app.post('/api/auth/login', async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 app.get('/api/auth/me', requireAuth, async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT u.id, u.full_name, u.email, r.name AS role, u.is_active
-       FROM users u
-       JOIN roles r ON u.role_id = r.id
-       WHERE u.id = $1`,
-      [req.user.id]
-    );
+    const result = await data.users({ id: req.user.id }, "id full_name email role is_active", {});
     if (!result.rows[0]) return res.status(404).json({ error: 'User not found.' });
     res.json({ user: result.rows[0] });
   } catch (err) {
@@ -209,12 +192,7 @@ app.get('/api/auth/me', requireAuth, async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 app.get('/api/users', requireAuth, requireRole('admin'), async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT u.id, u.full_name, u.email, u.gmail, r.name AS role, u.is_active, u.created_at
-       FROM   users u
-       JOIN   roles r ON u.role_id = r.id
-       ORDER  BY u.id`
-    );
+    const result = await data.users({}, "id full_name email gmail role is_active created_at", { sort: { id: 1 } });
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch users.' });
@@ -231,22 +209,17 @@ app.post('/api/users', requireAuth, requireRole('admin'), async (req, res) => {
     return res.status(400).json({ error: 'All fields are required.' });
 
   try {
-    const roleResult = await pool.query('SELECT id FROM roles WHERE name = $1', [role]);
+    const roleResult = await data.find('roles', { name: role }, "id", {});
     if (!roleResult.rows[0])
       return res.status(400).json({ error: 'Invalid role.' });
 
     const hash = await bcrypt.hash(password, 10);
 
-    const result = await pool.query(
-      `INSERT INTO users (role_id, full_name, email, password_hash, gmail)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, full_name, email, created_at`,
-      [roleResult.rows[0].id, full_name, email, hash, gmail || null]
-    );
+    const result = await data.insert('users', { role_id: roleResult.rows[0].id, full_name: full_name, email: email, password_hash: hash, gmail: gmail || null }, "id full_name email created_at");
 
     res.status(201).json({ success: true, user: result.rows[0] });
   } catch (err) {
-    if (err.code === '23505')
+    if (err.code === 11000)
       return res.status(409).json({ error: 'Email already exists.' });
     res.status(500).json({ error: 'Failed to create user.' });
   }
@@ -257,7 +230,7 @@ app.post('/api/users', requireAuth, requireRole('admin'), async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 app.patch('/api/users/:id/deactivate', requireAuth, requireRole('admin'), async (req, res) => {
   try {
-    await pool.query('UPDATE users SET is_active = FALSE WHERE id = $1', [req.params.id]);
+    await data.update('users', { id: req.params.id }, { is_active: false }, "*");
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to deactivate user.' });
@@ -269,7 +242,7 @@ app.patch('/api/users/:id/deactivate', requireAuth, requireRole('admin'), async 
 // ══════════════════════════════════════════════════════════════
 app.patch('/api/users/:id/reactivate', requireAuth, requireRole('admin'), async (req, res) => {
   try {
-    await pool.query('UPDATE users SET is_active = TRUE WHERE id = $1', [req.params.id]);
+    await data.update('users', { id: req.params.id }, { is_active: true }, "*");
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to reactivate user.' });
@@ -281,14 +254,11 @@ app.patch('/api/users/:id/reactivate', requireAuth, requireRole('admin'), async 
 // ══════════════════════════════════════════════════════════════
 app.delete('/api/users/:id', requireAuth, requireRole('admin'), async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT r.name AS role FROM users u JOIN roles r ON u.role_id = r.id WHERE u.id = $1`,
-      [req.params.id]
-    );
+    const result = await data.users({ id: req.params.id }, "role", {});
     if (result.rows[0]?.role === 'admin')
       return res.status(403).json({ error: 'Cannot delete an admin account.' });
 
-    await pool.query('DELETE FROM users WHERE id = $1', [req.params.id]);
+    await data.remove('users', { id: req.params.id });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete user.' });
@@ -300,11 +270,7 @@ app.delete('/api/users/:id', requireAuth, requireRole('admin'), async (req, res)
 // ══════════════════════════════════════════════════════════════
 app.get('/api/inspector/profile', requireAuth, requireRole('inspector'), async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT u.id, u.full_name, u.email, r.name AS role, u.created_at
-       FROM users u JOIN roles r ON u.role_id = r.id WHERE u.id = $1`,
-      [req.user.id]
-    );
+    const result = await data.users({ id: req.user.id }, "id full_name email role created_at", {});
     if (!result.rows[0]) return res.status(404).json({ error: 'User not found.' });
     res.json(result.rows[0]);
   } catch (err) {
@@ -318,7 +284,7 @@ app.get('/api/inspector/profile', requireAuth, requireRole('inspector'), async (
 app.patch('/api/inspector/profile', requireAuth, requireRole('inspector'), async (req, res) => {
   const { full_name, current_password, new_password } = req.body;
   try {
-    const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [req.user.id]);
+    const userResult = await data.find('users', { id: req.user.id }, "*", {});
     const user = userResult.rows[0];
     if (!user) return res.status(404).json({ error: 'User not found.' });
 
@@ -331,18 +297,14 @@ app.patch('/api/inspector/profile', requireAuth, requireRole('inspector'), async
       if (new_password.length < 8)
         return res.status(400).json({ error: 'New password must be at least 8 characters.' });
       const newHash = await bcrypt.hash(new_password, 10);
-      await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, req.user.id]);
+      await data.update('users', { id: req.user.id }, { password_hash: newHash }, "*");
     }
 
     if (full_name) {
-      await pool.query('UPDATE users SET full_name = $1 WHERE id = $2', [full_name.trim(), req.user.id]);
+      await data.update('users', { id: req.user.id }, { full_name: full_name.trim() }, "*");
     }
 
-    const updated = await pool.query(
-      `SELECT u.id, u.full_name, u.email, r.name AS role, u.created_at
-       FROM users u JOIN roles r ON u.role_id = r.id WHERE u.id = $1`,
-      [req.user.id]
-    );
+    const updated = await data.users({ id: req.user.id }, "id full_name email role created_at", {});
     res.json({ success: true, user: updated.rows[0] });
   } catch (err) {
     res.status(500).json({ error: 'Failed to update profile.' });
@@ -370,46 +332,27 @@ app.post('/api/detections', requireAuth, requireRole('inspector'), async (req, r
     return res.status(400).json({ error: 'result must be compliant or violation.' });
 
   try {
-    let deviceResult = await pool.query(
-      'SELECT id FROM devices WHERE device_id = $1',
-      [device_uuid]
-    );
+    let deviceResult = await data.find('devices', { device_id: device_uuid }, "id", {});
 
     let deviceDbId;
     if (deviceResult.rows.length === 0) {
-      const inserted = await pool.query(
-        `INSERT INTO devices (device_id, label, location, required_ppe)
-         VALUES ($1, $2, $3, $4) RETURNING id`,
-        [device_uuid, 'Checkpoint Scanner', 'Site Entrance', ['helmet', 'vest']]
-      );
+      const inserted = await data.insert('devices', { device_id: device_uuid, label: 'Checkpoint Scanner', location: 'Site Entrance', required_ppe: ['helmet', 'vest'] }, "id");
       deviceDbId = inserted.rows[0].id;
     } else {
       deviceDbId = deviceResult.rows[0].id;
     }
 
-    const det = await pool.query(
-      `INSERT INTO detections
-         (device_id, inspector_id, result, missing_ppe, detected_ppe, confidence_score, worker_id, photo_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING id`,
-      [deviceDbId, req.user.id, result, missing_ppe, detected_ppe, confidence_score || null, worker_id || null, photo_url || null]
-    );
+    const det = await data.insert('detections', { device_id: deviceDbId, inspector_id: req.user.id, result: result, missing_ppe: missing_ppe, detected_ppe: detected_ppe, confidence_score: confidence_score || null, worker_id: worker_id || null, photo_url: photo_url || null }, "id");
     const detectionId = det.rows[0].id;
 
     if (result === 'violation') {
-      await pool.query(
-        'INSERT INTO notifications (detection_id, inspector_id) VALUES ($1, $2)',
-        [detectionId, req.user.id]
-      );
+      await data.insert('notifications', { detection_id: detectionId, inspector_id: req.user.id }, "*");
 
       // ── Look up worker name and employee ID ──
       let workerName = null;
       let workerEmployeeId = null;
       if (worker_id) {
-        const workerRow = await pool.query(
-          'SELECT full_name, employee_id FROM workers WHERE id = $1',
-          [worker_id]
-        );
+        const workerRow = await data.find('workers', { id: worker_id }, "full_name employee_id", {});
         if (workerRow.rows[0]) {
           workerName       = workerRow.rows[0].full_name;
           workerEmployeeId = workerRow.rows[0].employee_id;
@@ -417,10 +360,7 @@ app.post('/api/detections', requireAuth, requireRole('inspector'), async (req, r
       }
 
       // ── Look up station label and location ──
-      const deviceRow = await pool.query(
-        'SELECT label, location FROM devices WHERE id = $1',
-        [deviceDbId]
-      );
+      const deviceRow = await data.find('devices', { id: deviceDbId }, "label location", {});
       const stationLabel    = deviceRow.rows[0]?.label    || 'Site Entrance';
       const stationLocation = deviceRow.rows[0]?.location || null;
 
@@ -454,25 +394,7 @@ app.post('/api/detections', requireAuth, requireRole('inspector'), async (req, r
 // ══════════════════════════════════════════════════════════════
 app.get('/api/detections', requireAuth, requireRole('inspector'), async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT
-         det.id,
-         det.result,
-         det.missing_ppe,
-         det.detected_ppe,
-         det.confidence_score,
-         det.detected_at,
-         TO_CHAR(det.detected_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD') AS date,
-         TO_CHAR(det.detected_at AT TIME ZONE 'Asia/Manila', 'HH12:MI AM')  AS time,
-         dev.label    AS station,
-         dev.location
-       FROM detections det
-       LEFT JOIN devices dev ON det.device_id = dev.id
-       WHERE det.inspector_id = $1
-       ORDER BY det.detected_at DESC
-       LIMIT 200`,
-      [req.user.id]
-    );
+    const result = await data.detections({ inspector_id: req.user.id }, 'legacy', 200);
     res.json(result.rows);
   } catch (err) {
     console.error('GET /api/detections error:', err.message);
@@ -485,25 +407,13 @@ app.get('/api/detections', requireAuth, requireRole('inspector'), async (req, re
 // ══════════════════════════════════════════════════════════════
 app.get('/api/detections/stats', requireAuth, requireRole('inspector'), async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT
-         COUNT(*)                                                AS total,
-         COUNT(*) FILTER (WHERE result = 'violation')           AS violations,
-         COUNT(*) FILTER (WHERE result = 'compliant')           AS compliant,
-         ROUND(
-           COUNT(*) FILTER (WHERE result = 'compliant')::NUMERIC
-           / NULLIF(COUNT(*), 0) * 100, 1
-         )                                                      AS compliance_rate
-       FROM detections
-       WHERE inspector_id = $1`,
-      [req.user.id]
-    );
+    const result = await data.stats({ inspector_id: req.user.id });
     const row = result.rows[0];
     res.json({
       total          : parseInt(row.total)             || 0,
       violations     : parseInt(row.violations)        || 0,
       compliant      : parseInt(row.compliant)         || 0,
-      compliance_rate: parseFloat(row.compliance_rate) || 100,
+      compliance_rate: Number(row.compliance_rate ?? 100),
     });
   } catch (err) {
     console.error('GET /api/detections/stats error:', err.message);
@@ -516,10 +426,7 @@ app.get('/api/detections/stats', requireAuth, requireRole('inspector'), async (r
 // ══════════════════════════════════════════════════════════════
 app.get('/api/notifications/count', requireAuth, requireRole('inspector'), async (req, res) => {
   try {
-    const result = await pool.query(
-      'SELECT COUNT(*) AS unread FROM notifications WHERE inspector_id = $1 AND is_read = FALSE',
-      [req.user.id]
-    );
+    const result = await data.count('notifications', { inspector_id: req.user.id, is_read: false }, 'unread');
     res.json({ unread: parseInt(result.rows[0].unread) || 0 });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch notification count.' });
@@ -533,21 +440,15 @@ app.post('/api/auth/forgot-password', async (req, res) => {
   const { email, reason } = req.body;
   if (!email) return res.status(400).json({ error: 'Email is required.' });
   try {
-    const user = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    const user = await data.find('users', { email: email }, "id", {});
     if (!user.rows[0])
       return res.status(404).json({ error: 'No account found with that email.' });
 
-    const existing = await pool.query(
-      "SELECT id FROM password_reset_requests WHERE email = $1 AND status = 'pending'",
-      [email]
-    );
+    const existing = await data.find('password_reset_requests', { email: email, status: "pending" }, "id", {});
     if (existing.rows[0])
       return res.status(409).json({ error: 'A reset request is already pending for this email.' });
 
-    await pool.query(
-      'INSERT INTO password_reset_requests (email, reason) VALUES ($1, $2)',
-      [email, reason || null]
-    );
+    await data.insert('password_reset_requests', { email: email, reason: reason || null }, "*");
     res.json({ success: true });
   } catch (err) {
     console.error('POST /api/auth/forgot-password error:', err.message);
@@ -560,11 +461,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 app.get('/api/admin/password-requests', requireAuth, requireRole('admin'), async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT id, email, reason, status, temp_password, created_at
-       FROM password_reset_requests
-       ORDER BY created_at DESC`
-    );
+    const result = await data.find('password_reset_requests', {}, "id email reason status temp_password created_at", { sort: { created_at: -1 } });
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch requests.' });
@@ -579,24 +476,18 @@ app.patch('/api/admin/password-requests/:id/reset', requireAuth, requireRole('ad
   if (!temp_password || temp_password.length < 6)
     return res.status(400).json({ error: 'Temp password must be at least 6 characters.' });
   try {
-    const reqRow = await pool.query(
-      'SELECT email FROM password_reset_requests WHERE id = $1',
-      [req.params.id]
-    );
+    const reqRow = await data.find('password_reset_requests', { id: req.params.id }, "email", {});
     if (!reqRow.rows[0]) return res.status(404).json({ error: 'Request not found.' });
 
     const { email } = reqRow.rows[0];
     const hash = await require('bcrypt').hash(temp_password, 10);
 
-    const userRow  = await pool.query('SELECT gmail, full_name FROM users WHERE email = $1', [email]);
+    const userRow  = await data.find('users', { email: email }, "gmail full_name", {});
     const gmail    = userRow.rows[0]?.gmail;
     const fullName = userRow.rows[0]?.full_name || 'Inspector';
 
-    await pool.query('UPDATE users SET password_hash = $1 WHERE email = $2', [hash, email]);
-    await pool.query(
-      "UPDATE password_reset_requests SET status = 'resolved', temp_password = $1 WHERE id = $2",
-      [temp_password, req.params.id]
-    );
+    await data.update('users', { email: email }, { password_hash: hash }, "*");
+    await data.update('password_reset_requests', { id: req.params.id }, { status: "resolved", temp_password: temp_password }, "*");
 
     if (gmail) {
       await transporter.sendMail({
@@ -633,7 +524,7 @@ app.patch('/api/admin/password-requests/:id/reset', requireAuth, requireRole('ad
 // ══════════════════════════════════════════════════════════════
 app.delete('/api/admin/password-requests/:id', requireAuth, requireRole('admin'), async (req, res) => {
   try {
-    await pool.query('DELETE FROM password_reset_requests WHERE id = $1', [req.params.id]);
+    await data.remove('password_reset_requests', { id: req.params.id });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete request.' });
@@ -642,4 +533,28 @@ app.delete('/api/admin/password-requests/:id', requireAuth, requireRole('admin')
 
 // ── Start ───────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server running at http://localhost:${PORT}`));
+async function start() {
+  if (!JWT_SECRET) throw new Error('JWT_SECRET is required in the backend .env');
+  const db = await connectDatabase();
+  const migration = await db.collection('_migration').findOne({ _id: 'postgres-v1' });
+  if (migration?.status !== 'complete') throw new Error('Run and verify the PostgreSQL migration before starting the MongoDB backend.');
+  await ensureIndexes(db);
+  wss = new WebSocket.Server({ port: Number(process.env.WS_PORT || 8080) });
+  const server = app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT} using MongoDB`));
+  const shutdown = () => {
+    for (const client of wss.clients) client.terminate();
+    wss.close();
+    server.close(() => closeDatabase().finally(() => process.exit(0)));
+  };
+  process.once('SIGINT', shutdown);
+  process.once('SIGTERM', shutdown);
+  return server;
+}
+if (require.main === module) {
+  start().catch(async () => {
+    console.error('Backend startup failed. Check database connectivity, migration status, and required .env settings.');
+    await closeDatabase();
+    process.exitCode = 1;
+  });
+}
+module.exports = { app, start };

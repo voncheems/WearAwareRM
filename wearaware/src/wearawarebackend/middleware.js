@@ -1,19 +1,5 @@
-const { Pool } = require('pg');
-const jwt       = require('jsonwebtoken');
-
-// ── PostgreSQL ──────────────────────────────────────────────
-const pool = new Pool({
-  host:     process.env.DB_HOST,
-  port:     process.env.DB_PORT,
-  database: process.env.DB_NAME,
-  user:     process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-});
-
-pool.connect((err) => {
-  if (err) console.error('❌ PostgreSQL connection failed:', err.message);
-  else     console.log('✅ Connected to PostgreSQL');
-});
+const jwt = require('jsonwebtoken');
+const { data } = require('./repository');
 
 // ── JWT Secret ───────────────────────────────────────────────
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -28,20 +14,18 @@ async function requireAuth(req, res, next) {
     const decoded = jwt.verify(token, JWT_SECRET);
 
     // Check if the password was changed after this token was issued.
-    // users.updated_at is auto-bumped by trg_users_updated_at on every UPDATE,
+    // users.updated_at is updated by the repository on every update,
     // including password changes. If updated_at > token iat, the token is stale.
-    const result = await pool.query(
-      'SELECT updated_at FROM users WHERE id = $1',
-      [decoded.id]
-    );
+    const result = await data.find('users', { id: decoded.id }, "updated_at is_active", {});
 
     const user = result.rows[0];
     if (!user) return res.status(401).json({ error: 'User not found.' });
+    if (!user.is_active) return res.status(403).json({ error: 'Account is deactivated.' });
 
     const tokenIssuedAt   = new Date(decoded.iat * 1000); // JWT iat is in seconds
     const passwordChanged = new Date(user.updated_at);
 
-    if (passwordChanged > tokenIssuedAt) {
+    if (Math.floor(passwordChanged.getTime() / 1000) > Math.floor(tokenIssuedAt.getTime() / 1000)) {
       return res.status(401).json({ error: 'Session expired. Please log in again.' });
     }
 
@@ -60,4 +44,4 @@ function requireRole(...roles) {
   };
 }
 
-module.exports = { pool, JWT_SECRET, requireAuth, requireRole };
+module.exports = { data, JWT_SECRET, requireAuth, requireRole };
