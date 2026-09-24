@@ -410,14 +410,16 @@ app.use(safeErrors);
 // ── Start ───────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 function startupFailureMessage(err) {
-  const message = String(err?.message || '');
+  const message = [err?.message, err?.cause?.message, err?.reason?.message].filter(Boolean).join(' ');
   if (err?.code === 'EADDRINUSE') return `Port ${PORT} is already in use.`;
   if (/Production requires an AI_API_KEY/.test(message)) return 'Startup configuration error: set AI_API_KEY to a random value of at least 32 characters.';
   if (/JWT_SECRET/.test(message)) return 'Startup configuration error: set a strong JWT_SECRET of at least 32 characters.';
   if (/CORS_ORIGINS|FRONTEND_URL/.test(message)) return 'Startup configuration error: FRONTEND_URL and CORS_ORIGINS must be the HTTPS Vercel URL.';
   if (/Production MongoDB/.test(message)) return 'Startup configuration error: MONGODB_URI must be an Atlas URI with credentials and TLS.';
   if (/Database initialization is incomplete/.test(message)) return 'Database initialization is incomplete. Use the Atlas database containing the WearAware migration and data.';
-  if (err?.name === 'MongoServerSelectionError' || /authentication failed|bad auth|ECONNREFUSED|timed out/i.test(message)) return 'Database connection failed. Check the Atlas URI, database-user password, and Atlas Network Access rule.';
+  if (/authentication failed|bad auth|auth failed|code 18/i.test(message)) return 'Database authentication failed. Reset the Atlas database-user password and update MONGODB_URI in Render.';
+  if (/ENOTFOUND|querySrv|DNS/i.test(message)) return 'Database address could not be resolved. Copy the Atlas Driver URI again and keep the cluster hostname unchanged.';
+  if (err?.name === 'MongoServerSelectionError' || /ECONNREFUSED|timed out|network/i.test(message)) return 'Atlas could not be reached. In Atlas Network Access, add and activate the 0.0.0.0/0 rule for this demo.';
   return 'Backend startup failed. Check the required Render environment variables and Atlas connection.';
 }
 async function start() {
