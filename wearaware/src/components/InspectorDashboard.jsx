@@ -1,14 +1,17 @@
+import { escapeHtml, printDocument, safePhoto } from '../utils/print';
+import { lazy, Suspense } from 'react';
 import React, { useState, useEffect, useMemo } from 'react';
 import './InspectorDashboard.css';
-import PPEDetectionTab from './PPEDetectionTab';
+import './InspectorTheme.css';
+const PPEDetectionTab = lazy(() => import('./PPEDetectionTab'));
 import {
   AlertTriangle, ScanLine, MapPin, TrendingUp, User,
   ClipboardList, CheckCircle, BarChart3, HardHat, Radio, Calendar,
-  Phone, ChevronUp, ChevronDown, X, Mail, Shield, Clock, KeyRound
+  Phone, ChevronUp, ChevronDown, X, Mail, Shield, Clock, KeyRound, ArrowUpRight
 } from 'lucide-react';
 import WearAwareLogo from './Wearawarelogo';
 
-const API = 'http://localhost:5000/api';
+import { API } from '../config/api';
 
 function getAuthHeaders() {
   const token = localStorage.getItem('token');
@@ -132,6 +135,8 @@ export default function InspectorDashboard({ setCurrentPage }) {
       const res  = await authFetch(`${API}/inspector/profile`, { method: 'PATCH', body: JSON.stringify(body) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
+      if (newPass) { localStorage.removeItem('token'); localStorage.removeItem('user'); setCurrentPage('login'); return; }
+      if (data.token) localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify({ ...storedUser, full_name: data.user.full_name }));
       setProfile(data.user);
       setFullName(data.user.full_name);
@@ -161,10 +166,27 @@ export default function InspectorDashboard({ setCurrentPage }) {
   };
 
   const [photoModal,   setPhotoModal]   = useState(null);
+  const [photoCache,   setPhotoCache]   = useState({});
   const [reportModal,  setReportModal]  = useState(false);
   const [reportPeriod, setReportPeriod] = useState('all');
   const [reportFrom,   setReportFrom]   = useState('');
   const [reportTo,     setReportTo]     = useState('');
+
+  const openInspectorPhoto = async (detectionId) => {
+    if (photoCache[detectionId]) {
+      setPhotoModal(photoCache[detectionId]);
+      return;
+    }
+    try {
+      const res = await authFetch(`${API}/inspector/detections/${detectionId}/photo`);
+      const data = await res.json();
+      if (!res.ok || !data.photo_url) throw new Error(data.error || 'No camera photo is available for this detection.');
+      setPhotoCache(prev => ({ ...prev, [detectionId]: data.photo_url }));
+      setPhotoModal(data.photo_url);
+    } catch (err) {
+      if (err.message !== 'Session expired') alert(err.message);
+    }
+  };
 
   const generateReport = () => {
     // Compute date range from selected period
@@ -285,21 +307,21 @@ export default function InspectorDashboard({ setCurrentPage }) {
     // ── Build detection log rows (filtered) ──
     const logRows = filtered.map(d => `
       <tr>
-        <td>${d.worker_name || '—'}</td>
-        <td style="font-family:monospace;font-size:11px">${d.worker_employee_id || '—'}</td>
-        <td>${d.station || '—'}</td>
-        <td>${d.date} ${d.time}</td>
+        <td>${escapeHtml(d.worker_name || '—')}</td>
+        <td style="font-family:monospace;font-size:11px">${escapeHtml(d.worker_employee_id || '—')}</td>
+        <td>${escapeHtml(d.station || '—')}</td>
+        <td>${escapeHtml(d.date)} ${escapeHtml(d.time)}</td>
         <td style="color:${d.result === 'violation' ? '#dc2626' : '#16a34a'};font-weight:700">
           ${d.result === 'violation' ? '⚠ Violation' : '✓ Compliant'}
         </td>
-        <td>${(d.missing_ppe || []).join(', ') || '—'}</td>
-        <td>${(d.detected_ppe || []).join(', ') || '—'}</td>
+        <td>${escapeHtml((d.missing_ppe || []).join(', ') || '—')}</td>
+        <td>${escapeHtml((d.detected_ppe || []).join(', ') || '—')}</td>
       </tr>`).join('');
 
     // ── Build PPE breakdown rows ──
     const ppeRows = filteredPPE.map(item => `
       <tr>
-        <td>${item.label}</td>
+        <td>${escapeHtml(item.label)}</td>
         <td>${item.present}</td>
         <td>${item.total}</td>
         <td>
@@ -315,7 +337,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
     // ── Build station compliance rows ──
     const stationRows = filteredStations.map(s => `
       <tr>
-        <td>${s.station}</td>
+        <td>${escapeHtml(s.station)}</td>
         <td>${s.compliant}</td>
         <td>${s.total - s.compliant}</td>
         <td>${s.total}</td>
@@ -325,7 +347,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
     // ── Build daily trend rows ──
     const trendRows = filteredTrends.map(t => `
       <tr>
-        <td>${t.dateLabel}</td>
+        <td>${escapeHtml(t.dateLabel)}</td>
         <td>${t.total}</td>
         <td>${t.compliant}</td>
         <td>${t.violations}</td>
@@ -333,13 +355,13 @@ export default function InspectorDashboard({ setCurrentPage }) {
       </tr>`).join('');
 
     // ── Build violation photos ──
-    const photoSection = filtered.filter(d => d.photo_url).map(d => `
+    const photoSection = filtered.filter(d => photoCache[d.id]).map(d => `
       <div style="break-inside:avoid;display:inline-block;width:280px;margin:8px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;vertical-align:top">
-        <img src="${d.photo_url}" style="width:100%;height:160px;object-fit:cover;display:block"/>
+        <img src="${safePhoto(photoCache[d.id])}" style="width:100%;height:160px;object-fit:cover;display:block"/>
         <div style="padding:10px;font-size:12px">
-          <div style="font-weight:700">${d.worker_name || 'Unknown'} <span style="font-family:monospace;color:#94a3b8">${d.worker_employee_id || ''}</span></div>
-          <div style="color:#64748b">${d.station || ''} &middot; ${d.date} ${d.time}</div>
-          <div style="color:#dc2626;margin-top:4px">${(d.missing_ppe||[]).join(', ') || '—'}</div>
+          <div style="font-weight:700">${escapeHtml(d.worker_name || 'Unknown')} <span style="font-family:monospace;color:#94a3b8">${escapeHtml(d.worker_employee_id || '')}</span></div>
+          <div style="color:#64748b">${escapeHtml(d.station || '')} &middot; ${escapeHtml(d.date)} ${escapeHtml(d.time)}</div>
+          <div style="color:#dc2626;margin-top:4px">${escapeHtml((d.missing_ppe||[]).join(', ') || '—')}</div>
           <div style="margin-top:4px;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;display:inline-block;background:${d.result==='violation'?'#fee2e2':'#dcfce7'};color:${d.result==='violation'?'#dc2626':'#16a34a'}">
             ${d.result === 'violation' ? '⚠ Violation' : '✓ Overridden'}
           </div>
@@ -350,7 +372,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
 <html>
 <head>
   <meta charset="UTF-8"/>
-  <title>WearAware Compliance Report — ${periodLabel}</title>
+  <title>WearAware Compliance Report — ${escapeHtml(periodLabel)}</title>
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
     body { font-family: Arial, sans-serif; color: #1a202c; font-size: 13px; padding: 32px; }
@@ -380,9 +402,9 @@ export default function InspectorDashboard({ setCurrentPage }) {
       <div style="font-size:14px;font-weight:700;margin-top:4px">PPE Compliance Report</div>
     </div>
     <div class="header-meta">
-      <div><strong>Inspector:</strong> ${inspector}</div>
+      <div><strong>Inspector:</strong> ${escapeHtml(inspector)}</div>
       <div><strong>Generated:</strong> ${reportDate} ${reportTime}</div>
-      <div><strong>Period:</strong> ${periodLabel}</div>
+      <div><strong>Period:</strong> ${escapeHtml(periodLabel)}</div>
       <div><strong>Total Records:</strong> ${filteredTotal}</div>
     </div>
   </div>
@@ -422,15 +444,12 @@ export default function InspectorDashboard({ setCurrentPage }) {
   ${photoSection ? `<h2>Violation Proof Photos</h2><div class="photos-wrap">${photoSection}</div>` : ''}
 
   <div style="margin-top:32px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:10px;color:#94a3b8;text-align:center">
-    WearAware PPE Compliance Monitoring System &mdash; Generated by ${inspector} on ${reportDate}
+    WearAware PPE Compliance Monitoring System &mdash; Generated by ${escapeHtml(inspector)} on ${reportDate}
   </div>
 </body>
 </html>`;
 
-    const win = window.open('', '_blank');
-    win.document.write(html);
-    win.document.close();
-    win.onload = () => win.print();
+    printDocument(html);
   };
   const resetFilters = () => { setFilterStation('All Stations'); setFilterDate(''); setFilterViolation('All Types'); };
 
@@ -531,13 +550,13 @@ export default function InspectorDashboard({ setCurrentPage }) {
     <div className="ins-page">
 
       <aside className="ins-sidebar">
-        <div className="ins-logo" onClick={() => setActiveTab('violations')}>
-          <span className="ins-logo-icon"><WearAwareLogo size={30} /></span> WearAware
-        </div>
-        <nav className="ins-nav">
-          <div className="ins-nav-label">Inspector Menu</div>
+        <button className="ins-logo" onClick={() => setActiveTab('violations')} aria-label="WearAware inspector overview">
+          <span className="ins-logo-icon"><WearAwareLogo size={30} /></span> WearAware<span className="ins-brand-dot">.</span>
+        </button>
+        <nav className="ins-nav" aria-label="Inspector navigation">
+          <div className="ins-nav-label">Your workspace</div>
           {navItems.map(item => (
-            <button key={item.id} className={`ins-nav-item ${activeTab === item.id ? 'active' : ''}`} onClick={() => setActiveTab(item.id)}>
+            <button key={item.id} aria-current={activeTab === item.id ? 'page' : undefined} className={`ins-nav-item ${activeTab === item.id ? 'active' : ''}`} onClick={() => setActiveTab(item.id)}>
               <span className="ins-nav-icon">{item.icon}</span> {item.label}
             </button>
           ))}
@@ -565,16 +584,28 @@ export default function InspectorDashboard({ setCurrentPage }) {
               {activeTab === 'analytics'  && 'Analytics'}
               {activeTab === 'profile'    && 'My Profile'}
             </div>
-            <div className="ins-topbar-sub">Welcome back, {displayName} 👋</div>
+            <div className="ins-topbar-sub">Welcome back, {displayName}</div>
           </div>
           <span className="ins-badge">INSPECTOR</span>
         </div>
 
-        <div className="ins-content">
+        <div className="ins-content" key={activeTab}>
 
           {/* ── VIOLATION HISTORY ── */}
           {activeTab === 'violations' && (
             <>
+              <section className="ins-welcome" aria-labelledby="ins-welcome-title">
+                <div className="ins-welcome-copy">
+                  <div className="ins-eyebrow">SAFETY STARTS WITH YOU</div>
+                  <h1 id="ins-welcome-title">Every check.<br /><span>A safer start.</span></h1>
+                  <p>Your checkpoint activity, records, and insights. All in one place.</p>
+                  <div className="ins-welcome-actions">
+                    <button className="ins-btn ins-welcome-primary" onClick={() => setActiveTab('ppe')}>Start an inspection <ArrowUpRight size={17} /></button>
+                    <button className="ins-btn ins-welcome-secondary" onClick={() => setActiveTab('stations')}>View my stations</button>
+                  </div>
+                </div>
+                <div className="ins-welcome-mark" aria-hidden="true"><Shield size={64} strokeWidth={1} /><span>AWARENESS IN ACTION</span></div>
+              </section>
               <div className="ins-stats">
                 {[
                   { icon: <ClipboardList size={20} />, val: detStats.total,                          label: 'Total Detections', sub: 'All time'    },
@@ -623,7 +654,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
                 </div>
 
                 {/* ✅ UPDATED: added Worker column */}
-                <table className="ins-table">
+                <div className="ins-table-scroll" tabIndex={0} role="region" aria-label="Scrollable inspection records"><table className="ins-table">
                   <thead>
                     <tr>
                       <th>Photo</th>
@@ -658,13 +689,9 @@ export default function InspectorDashboard({ setCurrentPage }) {
                           )}
                           <tr>
                             <td>
-                              {d.photo_url
-                                ? <img
-                                    src={d.photo_url}
-                                    alt="Violation proof"
-                                    onClick={() => setPhotoModal(d.photo_url)}
-                                    style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 6, cursor: 'pointer', border: '2px solid #fca5a5' }}
-                                  />
+                              {d.has_photo
+                                ? <button type="button" onClick={() => openInspectorPhoto(d.id)} aria-label="Open violation proof photo"
+                                    style={{ width: 48, height: 48, borderRadius: 6, cursor: 'pointer', border: '2px solid #fca5a5', background: '#fff1f2', fontSize: '1.1rem' }}>📷</button>
                                 : <div className="ins-photo">
                                     {d.result === 'violation'
                                       ? <AlertTriangle size={18} color="#e53e3e" />
@@ -716,18 +743,18 @@ export default function InspectorDashboard({ setCurrentPage }) {
                       );
                     })}
                   </tbody>
-                </table>
+                </table></div>
               </div>
             </>
           )}
 
           {/* ── PPE DETECTION ── */}
-          {activeTab === 'ppe' && <PPEDetectionTab onScanComplete={fetchDetections} />}
+          {activeTab === 'ppe' && <Suspense fallback={<p>Opening scanner…</p>}><PPEDetectionTab onScanComplete={fetchDetections} /></Suspense>}
 
           {/* ── MY STATIONS ── */}
           {activeTab === 'stations' && (
             <>
-              <div className="ins-stats" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+              <div className="ins-stats ins-stats-three">
                 <div className="ins-stat-card"><div className="ins-stat-icon"><MapPin size={20} /></div><div className="ins-stat-number">{stationsLoading ? '…' : stations.length}</div><div className="ins-stat-label">Assigned Stations</div><div className="ins-stat-sub">Your area</div></div>
                 <div className="ins-stat-card"><div className="ins-stat-icon"><Radio size={20} /></div><div className="ins-stat-number">{stationsLoading ? '…' : stations.filter(s => s.is_active).length}</div><div className="ins-stat-label">Active Now</div><div className="ins-stat-sub">Online stations</div></div>
                 <div className="ins-stat-card"><div className="ins-stat-icon"><HardHat size={20} /></div><div className="ins-stat-number">{stationsLoading ? '…' : stations.reduce((a, s) => a + parseInt(s.total_workers || 0), 0)}</div><div className="ins-stat-label">Total Workers</div><div className="ins-stat-sub">Across all stations</div></div>
@@ -741,7 +768,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
                   <div className="ins-stations-grid">
                     {stations.map(s => (
                       <div className="ins-station-card" key={s.id}
-                        style={{ cursor: 'pointer', outline: expandedStation === s.id ? '2px solid #667eea' : 'none', boxShadow: expandedStation === s.id ? '0 0 0 4px rgba(102,126,234,0.15)' : undefined, transition: 'outline 0.2s, box-shadow 0.2s' }}
+                        style={{ cursor: 'pointer', outline: expandedStation === s.id ? '2px solid #789167' : 'none', boxShadow: expandedStation === s.id ? '0 0 0 4px rgba(120,145,103,0.15)' : undefined, transition: 'outline 0.2s, box-shadow 0.2s' }}
                         onClick={() => toggleStationWorkers(s.id)}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
                           <div className="ins-station-name" style={{ margin: 0 }}>{s.label}</div>
@@ -811,7 +838,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
                   <div>
                     <div className="ins-panel-title">Violation Proof Photos</div>
                     <div className="ins-panel-sub">
-                      {detections.filter(d => d.photo_url).length} photos on record &nbsp;
+                      {detections.filter(d => d.has_photo).length} photos on record &nbsp;
                       <span className="ins-log-count">— violations with captured proof</span>
                     </div>
                   </div>
@@ -824,23 +851,21 @@ export default function InspectorDashboard({ setCurrentPage }) {
 
                 {detLoading ? (
                   <div className="ins-empty">Loading photos…</div>
-                ) : detections.filter(d => d.photo_url).length === 0 ? (
+                ) : detections.filter(d => d.has_photo).length === 0 ? (
                   <div className="ins-empty">No proof photos yet — violation snapshots will appear here after checkpoint scans</div>
                 ) : (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.25rem', padding: '0.5rem 0' }}>
-                    {detections.filter(d => d.photo_url).map(d => (
+                    {detections.filter(d => d.has_photo).map(d => (
                       <div key={d.id} style={{
                         background: '#fff', border: '1px solid #e2e8f0',
                         borderRadius: 12, overflow: 'hidden',
                         boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
                       }}>
                         {/* Photo */}
-                        <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => setPhotoModal(d.photo_url)}>
-                          <img
-                            src={d.photo_url}
-                            alt="Violation proof"
-                            style={{ width: '100%', height: 180, objectFit: 'cover', display: 'block' }}
-                          />
+                        <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => openInspectorPhoto(d.id)}>
+                          {photoCache[d.id]
+                            ? <img src={photoCache[d.id]} alt="Violation proof" style={{ width: '100%', height: 180, objectFit: 'cover', display: 'block' }} />
+                            : <div style={{ width: '100%', height: 180, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fff1f2', color: '#be123c', fontWeight: 700 }}>📷 Click to load photo</div>}
                           <div style={{
                             position: 'absolute', inset: 0,
                             background: 'rgba(0,0,0,0.25)',
@@ -991,9 +1016,9 @@ export default function InspectorDashboard({ setCurrentPage }) {
           {/* ── PROFILE ── */}
           {activeTab === 'profile' && (
             <div>
-              <div style={{ borderRadius: 18, overflow: 'hidden', marginBottom: '1.5rem', background: 'linear-gradient(135deg, #0f766e 0%, #0d9488 50%, #14b8a6 100%)', position: 'relative' }}>
+              <div className="ins-account-banner">
                 <div style={{ position: 'absolute', inset: 0, opacity: 0.06, backgroundImage: 'repeating-linear-gradient(45deg,#fff 0,#fff 1px,transparent 0,transparent 50%)', backgroundSize: '8px 8px' }} />
-                <div style={{ position: 'relative', padding: '2rem 2.5rem', display: 'flex', alignItems: 'center', gap: '2rem' }}>
+                <div className="ins-account-banner-content">
                   <div style={{ width: 80, height: 80, borderRadius: '50%', flexShrink: 0, background: 'rgba(255,255,255,0.2)', border: '3px solid rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.9rem', color: 'white', fontWeight: 800, boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
                     {initials(displayName)}
                   </div>
@@ -1012,15 +1037,15 @@ export default function InspectorDashboard({ setCurrentPage }) {
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+              <div className="ins-account-grid">
                 <div className="ins-panel" style={{ marginBottom: 0 }}>
-                  <div style={{ fontSize: '0.92rem', fontWeight: 800, color: '#1a1a1a', marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><User size={15} color="#0f766e" /> Account Details</div>
+                  <div style={{ fontSize: '0.92rem', fontWeight: 800, color: '#1a1a1a', marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><User size={15} color="#526f43" /> Account Details</div>
                   <div style={{ fontSize: '0.78rem', color: '#aaa', marginBottom: '1.25rem' }}>Your current account information</div>
                   <div style={{ height: 1, background: '#f0f0f5', marginBottom: '1.25rem' }} />
                   {profileLoad ? <div className="ins-empty">Loading…</div> : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                       {[
-                        { icon: <User size={15} color="#0f766e" />,   bg: 'linear-gradient(135deg,#f0fdf4,#dcfce7)', label: 'Full Name',     val: profile?.full_name },
+                        { icon: <User size={15} color="#526f43" />,   bg: 'linear-gradient(135deg,#f0fdf4,#dcfce7)', label: 'Full Name',     val: profile?.full_name },
                         { icon: <Mail size={15} color="#3b82f6" />,   bg: 'linear-gradient(135deg,#eff6ff,#dbeafe)', label: 'Email Address', val: profile?.email },
                         { icon: <Shield size={15} color="#9333ea" />, bg: 'linear-gradient(135deg,#fdf4ff,#f3e8ff)', label: 'Role',          val: 'Inspector' },
                         ...(profile?.created_at ? [{ icon: <Clock size={15} color="#f97316" />, bg: 'linear-gradient(135deg,#fff7ed,#ffedd5)', label: 'Member Since', val: new Date(profile.created_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' }) }] : []),
@@ -1038,7 +1063,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
                 </div>
 
                 <div className="ins-panel" style={{ marginBottom: 0 }}>
-                  <div style={{ fontSize: '0.92rem', fontWeight: 800, color: '#1a1a1a', marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><KeyRound size={15} color="#0f766e" /> Edit Profile</div>
+                  <div style={{ fontSize: '0.92rem', fontWeight: 800, color: '#1a1a1a', marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><KeyRound size={15} color="#526f43" /> Edit Profile</div>
                   <div style={{ fontSize: '0.78rem', color: '#aaa', marginBottom: '1.25rem' }}>Update your name or change your password</div>
                   <div style={{ height: 1, background: '#f0f0f5', marginBottom: '1.25rem' }} />
                   {profileLoad ? <div className="ins-empty">Loading…</div> : (
@@ -1047,7 +1072,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
                       <div className="ins-form-section">Personal Info</div>
                       <div className="ins-form-field">
                         <label className="ins-form-label">Full Name</label>
-                        <input className="ins-form-input" value={fullName} onChange={e=>{const f=e.target.value.replace(/[^A-Za-zÀ-ÖØ-öø-ÿÑñ\s'.\-]/g,'');setFullName(f);setFieldErrors(p=>({...p,fullName:''}));}} placeholder="Your full name" style={fieldErrors.fullName?{borderColor:'#dc2626',background:'#fff5f5'}:{}} />
+                        <input className="ins-form-input" value={fullName} onChange={e=>{const f=e.target.value.replace(/[^A-Za-zÀ-ÖØ-öø-ÿÑñ\s'.-]/g,'');setFullName(f);setFieldErrors(p=>({...p,fullName:''}));}} placeholder="Your full name" style={fieldErrors.fullName?{borderColor:'#dc2626',background:'#fff5f5'}:{}} />
                         {fieldErrors.fullName && <span style={{fontSize:'0.78rem',color:'#dc2626',marginTop:'2px'}}>⚠ {fieldErrors.fullName}</span>}
                       </div>
                       <div className="ins-form-section">Change Password</div>

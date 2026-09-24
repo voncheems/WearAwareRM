@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: wearaware-api
+    runtime: node
+    rootDir: src/wearawarebackend
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY
+        value: "1"
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB
+        value: wearaware
+      - key: JWT_SECRET
+        sync: false
+      - key: FRONTEND_URL
+        value: https://wearaware-demo.vercel.app
+      - key: CORS_ORIGINS
+        value: https://wearaware-demo.vercel.app
+      - key: AI_API_KEY
+        sync: false
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASS
+        sync: false
+      - key: CONTACT_EMAIL
+        sync: false

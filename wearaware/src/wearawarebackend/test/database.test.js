@@ -91,7 +91,7 @@ test('HTTP login, authorization and user responses work against MongoDB', async 
     assert.equal((await fetch(base + '/api/inspector/stations', { headers })).status, 200);
     assert.equal((await fetch(base + '/api/inspector/stations')).status, 401);
     await db.collection('users').updateOne({ id: 20 }, { $set: { is_active: false } });
-    assert.equal((await fetch(base + '/api/auth/me', { headers })).status, 403);
+    assert.equal((await fetch(base + '/api/auth/me', { headers })).status, 401);
   } finally {
     await new Promise(resolve => http.close(resolve));
     await closeDatabase();

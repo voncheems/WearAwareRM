@@ -1,0 +1,20 @@
+.user-page .user-header-actions { display: flex; align-items: center; gap: 12px; }
+.user-page .ins-welcome { background-image: linear-gradient(100deg, #23341eea, #23341ead), url('https://images.unsplash.com/photo-1581094794329-c8112a89af12?auto=format&fit=crop&w=1600&q=80'); }
+.user-page .ins-welcome h2 { font-size: clamp(30px, 3.2vw, 46px); font-weight: 500; letter-spacing: -.055em; line-height: 1.08; }
+.user-page .ins-welcome h2 span { color: #c6d8b3; }
+.user-page .user-eyebrow { font-size: 10px; letter-spacing: 1.6px; color: #718461; margin-bottom: 15px; }
+.user-page .user-qr-card { max-width: 600px; margin: auto; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 40px 24px; }
+.user-page :is(.user-qr-card, .user-profile) h2 { font-size: clamp(28px, 3vw, 38px); letter-spacing: -.045em; font-weight: 550; margin-bottom: 12px; }
+.user-page .user-qr-card p { color: #727c6a; font-size: 13px; line-height: 1.8; }
+.user-page .user-qr-image { display: block; width: min(320px, 100%); height: auto; margin: 20px 0; border: 1px solid #e1e7da; border-radius: 16px; }
+.user-page .user-employee-id { color: #637657; font-size: 13px; margin: 7px 0 24px; }
+.user-page .user-helper { color: #727c6a; font-size: 12px; line-height: 1.8; margin: 20px 0; max-width: 440px; }
+.user-page .user-profile dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 28px; }
+.user-page .user-profile dl > div { padding: 20px; background: #f5f8ef; border: 1px solid #e1e7da; border-radius: 13px; }
+.user-page .user-profile dt { font-size: 11px; color: #738267; margin-bottom: 7px; }
+.user-page .user-profile dd { font-size: 14px; color: #34482a; overflow-wrap: anywhere; }
+.user-page .user-pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 24px; font-size: 12px; color: #727c6a; }
+.user-page .ins-btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+.user-page .user-station { font-size: 22px; letter-spacing: -.5px; margin: 18px 0 10px; }
+.user-page .user-loading { padding: 60px 24px; text-align: center; color: #727c6a; }
+@media (max-width: 600px) { .user-page .user-profile dl { grid-template-columns: 1fr; } }

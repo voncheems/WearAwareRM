@@ -1,16 +1,19 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import * as ZXingBrowser from '@zxing/browser';
+import jsQRDecoder from 'jsqr';
 
-const PPE_API = 'http://localhost:8000';
-const API     = 'http://localhost:5000/api';
+import { API } from '../config/api';
 
-// ── jsQR loaded from CDN — add this to your index.html <head>:
-// <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+// QR decoders are bundled locally so no third-party scripts run on login/reset pages.
 
 const SCAN_INTERVAL_MS     = 1500;   // PPE detection every 1.5s
 const COMPLIANT_STREAK_REQ = 3;      // consecutive compliant scans needed to PASS
 const PPE_TIMEOUT_SEC      = 15;     // seconds before forced verdict
 const RESET_DELAY_MS       = 10000;  // ms to show result before auto-reset
 const MISS_THRESHOLD       = 5;      // consecutive empty scans before clearing display
+const DETECTION_TIMEOUT_MS = 35000;  // includes Vercel-to-tunnel round trip on demo deployments
+const WORKER_LOOKUP_TIMEOUT_MS = 30000;
+const SAVE_DETECTION_TIMEOUT_MS = 30000;
 
 const PHASE = { QR: 'qr', PPE: 'ppe', DONE: 'done' };
 
@@ -37,6 +40,8 @@ export default function PPEDetectionTab({ onScanComplete }) {
   const [verdict,         setVerdict]         = useState(null);
   const [resetCountdown,  setResetCountdown]  = useState(0);
   const [sessionLog,      setSessionLog]      = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
 
   const videoRef       = useRef(null);
   const streamRef      = useRef(null);
@@ -50,30 +55,38 @@ export default function PPEDetectionTab({ onScanComplete }) {
   const phaseRef        = useRef(PHASE.QR);
   const workerRef       = useRef(null);
   const finishCalledRef = useRef(false);
+  const onScanCompleteRef = useRef(onScanComplete);
+  const mountedRef = useRef(false);
   const lastResultRef   = useRef(null);   // tracks last non-empty detection result
 
+  useEffect(() => { onScanCompleteRef.current = onScanComplete; }, [onScanComplete]);
   useEffect(() => { phaseRef.current = phase; }, [phase]);
   useEffect(() => { workerRef.current = worker; }, [worker]);
 
   // ── Start camera once on mount ────────────────────────────────
   useEffect(() => {
+    let cancelled = false;
+    mountedRef.current = true;
     const start = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'environment' }
         });
+        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
         streamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           await videoRef.current.play().catch(() => {});
         }
-        runningRef.current = true;
+        if (!cancelled) { runningRef.current = true; setCameraReady(true); }
       } catch (err) {
-        alert('Could not access camera: ' + err.message);
+        if (!cancelled) setQrError('Could not access camera: ' + err.message);
       }
     };
     start();
     return () => {
+      cancelled = true;
+      mountedRef.current = false;
       runningRef.current = false;
       if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
       clearInterval(qrLoopRef.current);
@@ -84,7 +97,7 @@ export default function PPEDetectionTab({ onScanComplete }) {
 
   // ── PHASE 1: QR scan loop ─────────────────────────────────────
   useEffect(() => {
-    if (phase !== PHASE.QR) {
+    if (phase !== PHASE.QR || !cameraReady) {
       clearInterval(qrLoopRef.current);
       return;
     }
@@ -92,10 +105,53 @@ export default function PPEDetectionTab({ onScanComplete }) {
     setQrScanning(true);
     setQrError('');
 
+    let stopped = false;
+    let lookingUp = false;
+    const lookupWorker = async (employeeId) => {
+      if (stopped || lookingUp || phaseRef.current !== PHASE.QR) return;
+      lookingUp = true;
+      setQrScanning(false);
+      try {
+        let res;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          try {
+            res = await fetch(`${API}/workers/by-employee-id/${encodeURIComponent(employeeId)}`, {
+              headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+              signal: AbortSignal.timeout(WORKER_LOOKUP_TIMEOUT_MS),
+            });
+            break;
+          } catch (err) {
+            if (attempt === 0 && ['TimeoutError', 'TypeError'].includes(err.name) && !stopped) continue;
+            throw err;
+          }
+        }
+        if (!res.ok) throw new Error(res.status === 404
+          ? `Worker "${employeeId}" not found. Try a registered ID.`
+          : 'Unable to look up this worker. Check your connection and access.');
+        const data = await res.json();
+        if (stopped) return;
+        workerRef.current = data;
+        finishCalledRef.current = false;
+        phaseRef.current = PHASE.PPE;
+        setWorker(data);
+        setQrError('');
+        setPhase(PHASE.PPE);
+      } catch (err) {
+        if (!stopped) {
+          setQrError(err.name === 'TimeoutError'
+            ? 'Worker lookup took too long. Check the backend tunnel and scan the QR code again.'
+            : err.name === 'AbortError'
+              ? 'The connection was interrupted. Scan the QR code again.'
+            : err.message);
+          setQrScanning(true);
+        }
+      } finally { lookingUp = false; }
+    };
+
     // ZXing handles screen glare much better than jsQR
     // Falls back to jsQR if ZXing isn't available
-    const ZXing = window.ZXingBrowser;
-    const jsQR  = window.jsQR;
+    const ZXing = ZXingBrowser;
+    const jsQR  = jsQRDecoder;
 
     if (!ZXing && !jsQR) {
       setQrError('QR library not loaded — check your index.html script tags.');
@@ -105,15 +161,13 @@ export default function PPEDetectionTab({ onScanComplete }) {
     // ZXing continuously decodes from video element
     if (ZXing?.BrowserQRCodeReader) {
       const zxReader = new ZXing.BrowserQRCodeReader();
-      let stopped = false;
-      zxReader.decodeFromVideoElement(videoRef.current, (result, err) => {
+      let controls;
+      zxReader.decodeFromVideoElement(videoRef.current, (result) => {
         if (stopped || !result || phaseRef.current !== PHASE.QR) return;
-        stopped = true;
-        setQrScanning(false);
-        handleQRDetected(result.getText().trim());
-      }).catch(() => {});
+        lookupWorker(result.getText().trim());
+      }).then(value => { controls = value; if (stopped) controls.stop(); }).catch(() => { if (!stopped) setQrError('Unable to start the QR scanner. Please retry.'); });
       qrLoopRef.current = null;
-      return () => { stopped = true; try { zxReader.reset(); } catch {} };
+      return () => { stopped = true; controls?.stop(); };
     }
 
     // jsQR fallback — faster interval + both inversion modes for screen glare
@@ -128,38 +182,102 @@ export default function PPEDetectionTab({ onScanComplete }) {
       const img  = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const code = jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' });
       if (code?.data) {
-        clearInterval(qrLoopRef.current);
-        setQrScanning(false);
-        handleQRDetected(code.data.trim());
+        lookupWorker(code.data.trim());
       }
     }, 300);
 
-    return () => clearInterval(qrLoopRef.current);
-  }, [phase]);
+    return () => { stopped = true; clearInterval(qrLoopRef.current); };
+  }, [phase, cameraReady]);
 
-  const handleQRDetected = async (employeeId) => {
+  // ── PHASE 3: Finish & log ─────────────────────────────────────
+  const finishScan = useCallback(async (passed, lastData) => {
+    if (finishCalledRef.current) return;
+    finishCalledRef.current = true;
+    phaseRef.current = PHASE.DONE;
+    setScanning(false);
+
+    const missing  = lastData?.violations || [];
+    const detected = lastData?.compliant  || [];
+    const w        = workerRef.current;
+
+    // If FAIL but no missing PPE detected (bad scan / no one in frame)
+    // show rescan prompt instead of logging a false violation
+    const isNoDetection = !passed && missing.length === 0;
+    if (isNoDetection) {
+      setVerdict({ pass: false, missing: [], detected: [], noDetection: true });
+      setPhase(PHASE.DONE);
+      return;  // Do not log an empty scan as a violation.
+    }
+
+    setPhase(PHASE.DONE);
+    setVerdict({ pass: passed, missing, detected, noDetection: false });
+
+    setSaving(true);
+    const logId = Date.now();
+    setSessionLog(prev => [{
+      id        : logId,
+      time      : new Date().toLocaleTimeString(),
+      workerName: w?.full_name   || 'Unknown',
+      employeeId: w?.employee_id || '—',
+      pass      : passed,
+      missing,
+      detected,
+    }, ...prev].slice(0, 50));
+
     try {
       const token = localStorage.getItem('token');
-      const res   = await fetch(`${API}/workers/by-employee-id/${encodeURIComponent(employeeId)}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (!res.ok) {
-        setQrError(`Worker "${employeeId}" not found. Register this ID first.`);
-        setQrScanning(true);
-        // Restart QR loop by toggling state (causes useEffect re-run)
-        setPhase(PHASE.QR);
-        return;
+      const real  = (lastData?.detections || []).filter(d => !d.inferred);
+      const conf  = real.length
+        ? Math.round((real.reduce((s, d) => s + d.confidence, 0) / real.length) * 100) / 100
+        : null;
+
+      // Capture snapshot from webcam for violations only
+      let photoBase64 = null;
+      if (!passed && videoRef.current) {
+        try {
+          const snap = document.createElement('canvas');
+          snap.width  = videoRef.current.videoWidth  || 640;
+          snap.height = videoRef.current.videoHeight || 480;
+          snap.getContext('2d').drawImage(videoRef.current, 0, 0, snap.width, snap.height);
+          photoBase64 = snap.toDataURL('image/jpeg', 0.75);
+        } catch (e) {
+          console.warn('Snapshot failed:', e);
+        }
       }
-      const data = await res.json();
-      setWorker(data);
-      workerRef.current     = data;
-      finishCalledRef.current = false;
-      setPhase(PHASE.PPE);
-    } catch {
-      setQrError('Network error — check your connection.');
-      setQrScanning(true);
+
+      const saved = await fetch(`${API}/detections`, {
+        method : 'POST',
+        signal : AbortSignal.timeout(SAVE_DETECTION_TIMEOUT_MS),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body   : JSON.stringify({
+          device_uuid     : getDeviceUUID(),
+          result          : passed ? 'compliant' : 'violation',
+          missing_ppe     : missing,
+          detected_ppe    : detected,
+          worker_id       : w?.id || null,
+          confidence_score: conf,
+          photo_url       : photoBase64,
+        }),
+      });
+      if (!saved.ok) throw new Error('The scan could not be saved. Please retry.');
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setQrError(err.name === 'TimeoutError'
+        ? 'The scan could not be saved before the connection timed out. Check the backend tunnel and scan again.'
+        : err.message);
+      setSessionLog(prev => prev.filter(entry => entry.id !== logId));
+      setVerdict({ pass: false, missing: [], detected: [], noDetection: true });
+      return;
+    } finally {
+      if (mountedRef.current) setSaving(false);
     }
-  };
+
+    if (mountedRef.current) {
+      Promise.resolve().then(() => onScanCompleteRef.current?.()).catch(() => {
+        // A dashboard refresh failure must not stop the scanner.
+      });
+    }
+  }, []);
 
   // ── PHASE 2: PPE scan + countdown ────────────────────────────
   useEffect(() => {
@@ -169,7 +287,12 @@ export default function PPEDetectionTab({ onScanComplete }) {
       return;
     }
 
+    let cancelled = false;
+    const controller = new AbortController();
+
     // Reset all PPE state
+    lastResultRef.current = null;
+    setQrError('');
     streakRef.current    = 0;
     missCountRef.current = 0;
     busyRef.current      = false;
@@ -204,6 +327,7 @@ export default function PPEDetectionTab({ onScanComplete }) {
       canvas.getContext('2d').drawImage(videoRef.current, 0, 0, 640, 480);
 
       canvas.toBlob(async (blob) => {
+        if (cancelled) return;
         if (!blob || phaseRef.current !== PHASE.PPE) {
           busyRef.current = false;
           setScanning(false);
@@ -212,9 +336,11 @@ export default function PPEDetectionTab({ onScanComplete }) {
         try {
           const fd = new FormData();
           fd.append('file', blob, 'ppe.jpg');
-          fd.append('conf', 0.35);
-          const res  = await fetch(`${PPE_API}/detect`, { method: 'POST', body: fd });
+          fd.append('conf', 0.25);
+          const res  = await fetch(`${API}/ppe/detect`, { method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }, body: fd, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(DETECTION_TIMEOUT_MS)]) });
+          if (!res.ok) throw new Error('Detection service unavailable. Please retry.');
           const data = await res.json();
+          if (cancelled || phaseRef.current !== PHASE.PPE) return;
 
           if (data.total_detections > 0) {
             missCountRef.current = 0;
@@ -247,104 +373,28 @@ export default function PPEDetectionTab({ onScanComplete }) {
             }
           }
         } catch (err) {
-          console.error('PPE scan error:', err);
+          if (cancelled || phaseRef.current !== PHASE.PPE) return;
+          lastResultRef.current = null;
+          setQrError(err.name === 'TimeoutError'
+            ? 'The PPE scan took too long. Check the backend tunnel and try again.'
+            : err.message);
+          clearInterval(timerRef.current); clearInterval(ppeLoopRef.current);
+          finishScan(false, null);
         } finally {
-          busyRef.current = false;
-          setScanning(false);
+          if (!cancelled) { busyRef.current = false; setScanning(false); }
         }
       }, 'image/jpeg', 0.85);
     }, SCAN_INTERVAL_MS);
 
     return () => {
+      cancelled = true;
+      controller.abort();
       clearInterval(ppeLoopRef.current);
       clearInterval(timerRef.current);
     };
-  }, [phase]);
+  }, [phase, finishScan]);
 
-  // ── PHASE 3: Finish & log ─────────────────────────────────────
-  const finishScan = useCallback(async (passed, lastData) => {
-    if (finishCalledRef.current) return;
-    finishCalledRef.current = true;
-
-    const missing  = lastData?.violations || [];
-    const detected = lastData?.compliant  || [];
-    const w        = workerRef.current;
-
-    // If FAIL but no missing PPE detected (bad scan / no one in frame)
-    // show rescan prompt instead of logging a false violation
-    const isNoDetection = !passed && missing.length === 0;
-    if (isNoDetection) {
-      setVerdict({ pass: false, missing: [], detected: [], noDetection: true });
-      setPhase(PHASE.DONE);
-      return;  // do NOT log to DB, do NOT auto-reset
-    }
-
-    setPhase(PHASE.DONE);
-    setVerdict({ pass: passed, missing, detected, noDetection: false });
-
-    setSessionLog(prev => [{
-      id        : Date.now(),
-      time      : new Date().toLocaleTimeString(),
-      workerName: w?.full_name   || 'Unknown',
-      employeeId: w?.employee_id || '—',
-      pass      : passed,
-      missing,
-      detected,
-    }, ...prev].slice(0, 50));
-
-    try {
-      const token = localStorage.getItem('token');
-      const real  = (lastData?.detections || []).filter(d => !d.inferred);
-      const conf  = real.length
-        ? Math.round((real.reduce((s, d) => s + d.confidence, 0) / real.length) * 100) / 100
-        : null;
-
-      // Capture snapshot from webcam for violations only
-      let photoBase64 = null;
-      if (!passed && videoRef.current) {
-        try {
-          const snap = document.createElement('canvas');
-          snap.width  = videoRef.current.videoWidth  || 640;
-          snap.height = videoRef.current.videoHeight || 480;
-          snap.getContext('2d').drawImage(videoRef.current, 0, 0, snap.width, snap.height);
-          photoBase64 = snap.toDataURL('image/jpeg', 0.75);
-        } catch (e) {
-          console.warn('Snapshot failed:', e);
-        }
-      }
-
-      await fetch(`${API}/detections`, {
-        method : 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body   : JSON.stringify({
-          device_uuid     : getDeviceUUID(),
-          result          : passed ? 'compliant' : 'violation',
-          missing_ppe     : missing,
-          detected_ppe    : detected,
-          worker_id       : w?.id || null,
-          confidence_score: conf,
-          photo_url       : photoBase64,
-        }),
-      });
-    } catch (err) {
-      console.warn('Could not save detection:', err.message);
-    }
-
-    // Notify parent to refresh DB stats
-    if (onScanComplete) onScanComplete();
-
-    // Visible countdown so worker sees when it resets
-    let countdown = RESET_DELAY_MS / 1000;
-    setResetCountdown(countdown);
-    const countInterval = setInterval(() => {
-      countdown -= 1;
-      setResetCountdown(countdown);
-      if (countdown <= 0) clearInterval(countInterval);
-    }, 1000);
-    setTimeout(resetToQR, RESET_DELAY_MS);
-  }, []);
-
-  const resetToQR = () => {
+  const resetToQR = useCallback(() => {
     clearInterval(ppeLoopRef.current);
     clearInterval(timerRef.current);
     clearInterval(qrLoopRef.current);
@@ -353,6 +403,10 @@ export default function PPEDetectionTab({ onScanComplete }) {
     missCountRef.current  = 0;
     finishCalledRef.current = false;
     lastResultRef.current   = null;
+    phaseRef.current = PHASE.QR;
+    workerRef.current = null;
+    setScanning(false);
+    setResetCountdown(0);
     setWorker(null);
     setVerdict(null);
     setCamResult(null);
@@ -362,7 +416,20 @@ export default function PPEDetectionTab({ onScanComplete }) {
     setQrScanning(true);
     setQrError('');
     setPhase(PHASE.QR);
-  };
+  }, []);
+
+  // Every finished scan returns to the next worker, including service errors.
+  useEffect(() => {
+    if (phase !== PHASE.DONE || saving) return;
+    let countdown = RESET_DELAY_MS / 1000;
+    setResetCountdown(countdown);
+    const interval = setInterval(() => {
+      countdown -= 1;
+      setResetCountdown(countdown);
+      if (countdown <= 0) resetToQR();
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [phase, saving, resetToQR]);
 
   // ── Session stats ─────────────────────────────────────────────
   const totalScans     = sessionLog.length;
@@ -472,7 +539,7 @@ export default function PPEDetectionTab({ onScanComplete }) {
             fontSize: '0.8rem', color: '#94a3b8', fontWeight: 600 }}>
             {phase === PHASE.QR   && '📋 Hold QR ID card up to the camera'}
             {phase === PHASE.PPE  && (scanning ? '🔍 Scanning PPE...' : '👀 Watching for PPE...')}
-            {phase === PHASE.DONE && `✅ Done — resetting in ${RESET_DELAY_MS / 1000}s`}
+            {phase === PHASE.DONE && (saving ? 'Saving scan…' : `Next worker in ${resetCountdown}s`)}
           </div>
 
 
@@ -642,15 +709,16 @@ export default function PPEDetectionTab({ onScanComplete }) {
                 }}>
                   <div style={{ fontSize: '3.5rem', marginBottom: '0.5rem' }}>⚠️</div>
                   <div style={{ fontSize: '1.4rem', fontWeight: 900, color: '#fbbf24', letterSpacing: '0.05em' }}>
-                    NO PPE DETECTED
+                    {qrError ? 'SCAN NOT RECORDED' : 'NO PPE DETECTED'}
                   </div>
                   <div style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.5)', marginTop: '0.5rem', marginBottom: '1.25rem' }}>
-                    Could not detect worker in frame — not logged as a violation
+                    {qrError || 'Could not detect worker in frame — not logged as a violation'}
                   </div>
                   <button
                     onClick={() => {
                       finishCalledRef.current = false;
                       setVerdict(null);
+                      phaseRef.current = PHASE.PPE;
                       setPhase(PHASE.PPE);
                     }}
                     style={{
@@ -684,7 +752,7 @@ export default function PPEDetectionTab({ onScanComplete }) {
                     {verdict.pass ? 'CHECKPOINT PASSED' : 'CHECKPOINT FAILED'}
                   </div>
                   <div style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.35)', marginTop: '0.5rem' }}>
-                    Next worker in {resetCountdown}s...
+                    {saving ? 'Saving scan…' : `Next worker in ${resetCountdown}s…`}
                   </div>
                 </div>
               )}

@@ -11,7 +11,9 @@
     "migrate:verify": "node scripts/migrate-postgres.js --verify",
     "db:backup": "node scripts/backup-postgres.js",
     "db:local": "node scripts/start-local-mongo.js",
-    "migrate:local": "node scripts/atlas-to-local.js"
+    "migrate:local": "node scripts/atlas-to-local.js",
+    "db:secure": "node scripts/secure-database.js",
+    "admin:recover": "node scripts/admin-recovery.js"
   },
   "keywords": [],
   "author": "",
@@ -22,11 +24,15 @@
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.7.0",
+    "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.3",
     "mongodb": "^6.21.0",
-    "nodemailer": "^8.0.3",
+    "multer": "^2.4.0",
+    "nodemailer": "^10.0.10",
     "pg": "^8.18.0",
-    "ws": "^8.19.0"
+    "ws": "^8.19.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "mongodb-memory-server": "^11.2.0"

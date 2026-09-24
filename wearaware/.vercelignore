@@ -1,0 +1,15 @@
+# Deploy only the frontend. Backend, model, and database remain on this laptop.
+src/wearawarebackend/
+services/
+deliverables/
+docs/
+.env
+.env.*
+**/.env
+**/.env.*
+node_modules/
+dist/
+.git/
+.mongodb-data/
+backups/
+*.log

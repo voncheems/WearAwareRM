@@ -48,9 +48,14 @@ button {
 button:hover {
   border-color: #646cff;
 }
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+/* Pointer clicks stay clean; keyboard navigation keeps a visible focus ring. */
+:is(button, a, [tabindex]):focus:not(:focus-visible) {
+  outline: none;
+}
+
+:is(button, a, [tabindex]):focus-visible {
+  outline: 2px solid #789167;
+  outline-offset: 3px;
 }
 
 @media (prefers-color-scheme: light) {

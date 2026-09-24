@@ -1,3 +1,4 @@
+const { validateRequest } = require('../validation');
 const express = require('express');
 const router  = express.Router();
 
@@ -6,12 +7,13 @@ const { data, requireAuth, requireRole } = require('../middleware');
 // ══════════════════════════════════════════════════════════════
 //  GET /api/workers  — admin + inspector
 // ══════════════════════════════════════════════════════════════
-router.get('/', requireAuth, requireRole('admin', 'inspector'), async (req, res) => {
+router.get('/', requireAuth, requireRole('admin', 'inspector'), validateRequest, async (req, res) => {
   try {
-    const result = await data.workers({});
+    const result = req.user.role === 'inspector' ? await data.inspectorWorkers(req.user.id) : await data.workers({});
     res.json(result.rows);
   } catch (err) {
-    console.error('GET /workers error:', err.message);
+    if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
+    console.error('Request handler failed.');
     res.status(500).json({ error: 'Failed to fetch workers.' });
   }
 });
@@ -21,7 +23,7 @@ router.get('/', requireAuth, requireRole('admin', 'inspector'), async (req, res)
 //  Lookup worker by QR scan — inspectors can only scan workers
 //  assigned to their own stations. Admins have no restriction.
 // ══════════════════════════════════════════════════════════════
-router.get('/by-employee-id/:employee_id', requireAuth, requireRole('admin', 'inspector'), async (req, res) => {
+router.get('/by-employee-id/:employee_id', requireAuth, requireRole('admin', 'inspector'), validateRequest, async (req, res) => {
   try {
     const result = await data.workers({ employee_id: req.params.employee_id });
 
@@ -48,7 +50,8 @@ router.get('/by-employee-id/:employee_id', requireAuth, requireRole('admin', 'in
 
     res.json(worker);
   } catch (err) {
-    console.error('GET /workers/by-employee-id error:', err.message);
+    if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
+    console.error('Request handler failed.');
     res.status(500).json({ error: 'Failed to fetch worker.' });
   }
 });
@@ -56,13 +59,18 @@ router.get('/by-employee-id/:employee_id', requireAuth, requireRole('admin', 'in
 // ══════════════════════════════════════════════════════════════
 //  GET /api/workers/:id  — admin + inspector
 // ══════════════════════════════════════════════════════════════
-router.get('/:id', requireAuth, requireRole('admin', 'inspector'), async (req, res) => {
+router.get('/:id', requireAuth, requireRole('admin', 'inspector'), validateRequest, async (req, res) => {
   try {
     const result = await data.workers({ id: req.params.id });
     if (!result.rows[0]) return res.status(404).json({ error: 'Worker not found.' });
+    if (req.user.role === 'inspector') {
+      const station = result.rows[0].device_id && (await data.find('devices', { id: result.rows[0].device_id, inspector_id: req.user.id }, 'id')).rows[0];
+      if (!station) return res.status(403).json({ error: 'Access denied.' });
+    }
     res.json(result.rows[0]);
   } catch (err) {
-    console.error('GET /workers/:id error:', err.message);
+    if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
+    console.error('Request handler failed.');
     res.status(500).json({ error: 'Failed to fetch worker.' });
   }
 });
@@ -70,7 +78,7 @@ router.get('/:id', requireAuth, requireRole('admin', 'inspector'), async (req, r
 // ══════════════════════════════════════════════════════════════
 //  POST /api/workers  — admin only
 // ══════════════════════════════════════════════════════════════
-router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
+router.post('/', requireAuth, requireRole('admin'), validateRequest, async (req, res) => {
   const { full_name, position, device_id, contact_number, status } = req.body;
 
   if (!full_name)
@@ -84,9 +92,10 @@ router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
 
     res.status(201).json({ success: true, worker: result.rows[0] });
   } catch (err) {
+    if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
     if (err.code === 11000)
       return res.status(409).json({ error: 'Employee ID already exists.' });
-    console.error('POST /workers error:', err.message);
+    console.error('Request handler failed.');
     res.status(500).json({ error: 'Failed to create worker.' });
   }
 });
@@ -94,7 +103,15 @@ router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 //  PUT /api/workers/:id  — admin only
 // ══════════════════════════════════════════════════════════════
-router.put('/:id', requireAuth, requireRole('admin'), async (req, res) => {
+router.patch('/:id/status', requireAuth, requireRole('admin'), validateRequest, async (req, res, next) => {
+  try {
+    const result = await data.update('workers', { id: req.params.id }, { status: req.body.status }, 'id employee_id full_name position device_id contact_number status');
+    if (!result.rows[0]) return res.status(404).json({ error: 'Worker not found.' });
+    res.json({ success: true, worker: result.rows[0] });
+  } catch (err) { next(err); }
+});
+
+router.put('/:id', requireAuth, requireRole('admin'), validateRequest, async (req, res) => {
   const { full_name, position, device_id, contact_number, status } = req.body;
 
   if (!full_name)
@@ -106,7 +123,8 @@ router.put('/:id', requireAuth, requireRole('admin'), async (req, res) => {
     if (!result.rows[0]) return res.status(404).json({ error: 'Worker not found.' });
     res.json({ success: true, worker: result.rows[0] });
   } catch (err) {
-    console.error('PUT /workers/:id error:', err.message);
+    if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
+    console.error('Request handler failed.');
     res.status(500).json({ error: 'Failed to update worker.' });
   }
 });
@@ -114,13 +132,14 @@ router.put('/:id', requireAuth, requireRole('admin'), async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 //  DELETE /api/workers/:id  — admin only
 // ══════════════════════════════════════════════════════════════
-router.delete('/:id', requireAuth, requireRole('admin'), async (req, res) => {
+router.delete('/:id', requireAuth, requireRole('admin'), validateRequest, async (req, res) => {
   try {
     const result = await data.remove('workers', { id: req.params.id });
     if (!result.rows[0]) return res.status(404).json({ error: 'Worker not found.' });
     res.json({ success: true });
   } catch (err) {
-    console.error('DELETE /workers/:id error:', err.message);
+    if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
+    console.error('Request handler failed.');
     res.status(500).json({ error: 'Failed to delete worker.' });
   }
 });

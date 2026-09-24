@@ -59,12 +59,12 @@ export default function ComplianceLineGraph({ detections }) {
       <svg className="ad-chart-svg" viewBox={`0 0 ${W} ${H}`}>
         <defs>
           <linearGradient id="compGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%"   stopColor="#667eea" stopOpacity="0.25" />
-            <stop offset="100%" stopColor="#667eea" stopOpacity="0.02" />
+            <stop offset="0%"   stopColor="var(--dashboard-chart-start, #667eea)" stopOpacity="0.25" />
+            <stop offset="100%" stopColor="var(--dashboard-chart-start, #667eea)" stopOpacity="0.02" />
           </linearGradient>
           <linearGradient id="lineGrad" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%"   stopColor="#667eea" />
-            <stop offset="100%" stopColor="#764ba2" />
+            <stop offset="0%"   stopColor="var(--dashboard-chart-start, #667eea)" />
+            <stop offset="100%" stopColor="var(--dashboard-chart-end, #764ba2)" />
           </linearGradient>
         </defs>
 
@@ -92,12 +92,12 @@ export default function ComplianceLineGraph({ detections }) {
 
             {/* Rate label above dot for single point */}
             {isSingle && (
-              <text x={xOf(i)} y={yOf(d.rate) - 10} textAnchor="middle" fontSize="11" fill="#667eea" fontWeight="700" fontFamily="inherit">
+              <text x={xOf(i)} y={yOf(d.rate) - 10} textAnchor="middle" fontSize="11" fill="var(--dashboard-chart-start, #667eea)" fontWeight="700" fontFamily="inherit">
                 {d.rate}%
               </text>
             )}
 
-            <circle cx={xOf(i)} cy={yOf(d.rate)} r="5" fill="white" stroke="#667eea" strokeWidth="2.5" />
+            <circle cx={xOf(i)} cy={yOf(d.rate)} r="5" fill="white" stroke="var(--dashboard-chart-start, #667eea)" strokeWidth="2.5" />
             <rect
               x={xOf(i) - 18} y={padT} width="36" height={innerH + padB}
               fill="transparent"
@@ -128,7 +128,7 @@ export default function ComplianceLineGraph({ detections }) {
 
       <div className="ad-chart-legend">
         <div className="ad-chart-legend-item">
-          <div className="ad-chart-legend-dot" style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }} />
+          <div className="ad-chart-legend-dot" style={{ background: 'linear-gradient(135deg, var(--dashboard-chart-start, #667eea), var(--dashboard-chart-end, #764ba2))' }} />
           Daily Compliance Rate
         </div>
         <div className="ad-chart-legend-item" style={{ marginLeft: 'auto', color: '#aaa' }}>

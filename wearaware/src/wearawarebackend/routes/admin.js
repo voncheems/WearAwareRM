@@ -1,3 +1,4 @@
+const { validateRequest } = require('../validation');
 const express = require('express');
 const router  = express.Router();
 
@@ -6,20 +7,30 @@ const { data, requireAuth, requireRole } = require('../middleware');
 // ══════════════════════════════════════════════════════════════
 //  GET /api/admin/detections  — includes worker name
 // ══════════════════════════════════════════════════════════════
-router.get('/detections', requireAuth, requireRole('admin'), async (req, res) => {
+router.get('/detections', requireAuth, requireRole('admin'), validateRequest, async (req, res) => {
   try {
     const result = await data.detections({}, 'admin', 500);
     res.json(result.rows);
   } catch (err) {
-    console.error('GET /admin/detections error:', err.message);
+    if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
+    console.error('Request handler failed.');
     res.status(500).json({ error: 'Failed to fetch detections.' });
   }
+});
+
+// Full camera images are fetched only when an administrator opens one.
+router.get('/detections/:id/photo', requireAuth, requireRole('admin'), validateRequest, async (req, res, next) => {
+  try {
+    const result = await data.find('detections', { id: req.params.id }, 'photo_url');
+    if (!result.rows[0]) return res.status(404).json({ error: 'Detection not found.' });
+    res.json({ photo_url: result.rows[0].photo_url || null });
+  } catch (err) { next(err); }
 });
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/admin/stats  — fixed compliance rate formula
 // ══════════════════════════════════════════════════════════════
-router.get('/stats', requireAuth, requireRole('admin'), async (req, res) => {
+router.get('/stats', requireAuth, requireRole('admin'), validateRequest, async (req, res) => {
   try {
     const result = await data.stats({});
     const row        = result.rows[0];
@@ -34,7 +45,8 @@ router.get('/stats', requireAuth, requireRole('admin'), async (req, res) => {
 
     res.json({ total, violations, compliant, compliance_rate });
   } catch (err) {
-    console.error('GET /admin/stats error:', err.message);
+    if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
+    console.error('Request handler failed.');
     res.status(500).json({ error: 'Failed to fetch stats.' });
   }
 });
@@ -42,7 +54,7 @@ router.get('/stats', requireAuth, requireRole('admin'), async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 //  GET /api/admin/activity
 // ══════════════════════════════════════════════════════════════
-router.get('/activity', requireAuth, requireRole('admin'), async (req, res) => {
+router.get('/activity', requireAuth, requireRole('admin'), validateRequest, async (req, res) => {
   try {
     // User registrations
     const usersResult = await data.userActivity();
@@ -54,7 +66,7 @@ router.get('/activity', requireAuth, requireRole('admin'), async (req, res) => {
     const userEvents = usersResult.rows.map(e => ({
       ts  : e.ts,
       icon: e.role === 'admin' ? '🛡️' : '👤',
-      text: `${e.role === 'admin' ? 'Admin' : 'Inspector'} account created — ${e.actor}`,
+      text: `${e.role === 'admin' ? 'Admin' : e.role === 'user' ? 'User' : 'Inspector'} account created — ${e.actor}`,
       type: 'user',
       time: formatRelativeTime(e.ts),
     }));
@@ -73,7 +85,8 @@ router.get('/activity', requireAuth, requireRole('admin'), async (req, res) => {
 
     res.json(all);
   } catch (err) {
-    console.error('GET /admin/activity error:', err.message);
+    if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
+    console.error('Request handler failed.');
     res.status(500).json({ error: 'Failed to fetch activity.' });
   }
 });

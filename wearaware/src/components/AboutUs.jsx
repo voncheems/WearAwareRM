@@ -1,69 +1,23 @@
-import React, { useEffect } from 'react';
+import MarketingNav from './MarketingNav';
+import useMarketingMotion from '../hooks/useMarketingMotion';
+import React from 'react';
 import './AboutUs.css';
 
 function AboutUs({ setCurrentPage }) {
-  useEffect(() => {
-    const handleScroll = () => {
-      const navbar = document.querySelector('.navbar');
-      if (!navbar) return;
-      if (window.scrollY > 50) {
-        navbar.classList.add('scrolled');
-      } else {
-        navbar.classList.remove('scrolled');
-      }
-    };
+  useMarketingMotion();
 
-    window.addEventListener('scroll', handleScroll);
-
-    const observerOptions = {
-      threshold: 0.1,
-      rootMargin: '0px 0px -100px 0px'
-    };
-
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting) {
-          entry.target.classList.add('visible');
-        }
-      });
-    }, observerOptions);
-
-    document.querySelectorAll('.fade-in').forEach(el => {
-      observer.observe(el);
-    });
-
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
-
-  const handleNav = (e, page) => {
-    e.preventDefault();
-    setCurrentPage(page);
-  };
 
   return (
-    <div className="about-page">
+    <div className="about-page marketing-page">
       {/* Navigation */}
-      <nav className="navbar">
-        <div className="logo" onClick={(e) => handleNav(e, 'landing')} style={{ cursor: 'pointer' }}>
-          <div className="logo-icon">
-            <img src="/favicon.svg" alt="WearAware logo" style={{ width: 32, height: 32 }} />
-          </div>
-          <span>WearAware</span>
-        </div>
-        <ul className="nav-links">
-          <li><a href="#" onClick={(e) => handleNav(e, 'about')}>ABOUT US</a></li>
-          <li><a href="#" onClick={(e) => handleNav(e, 'projects')}>OUR PROJECTS</a></li>
-          <li><a href="#" onClick={(e) => handleNav(e, 'expertise')}>EXPERTISE</a></li>
-          <li><a href="#" onClick={(e) => handleNav(e, 'contact')}>GET IN TOUCH</a></li>
-        </ul>
-      </nav>
+      <MarketingNav currentPage="about" setCurrentPage={setCurrentPage} />
 
       {/* Hero Section */}
       <section className="hero">
         <div className="hero-overlay"></div>
         <div className="hero-content">
           <div className="hero-subtitle">GROUP 4 - BSIT 2-07</div>
-          <h1 className="hero-title">MEET THE<br/>DEVELOPERS</h1>
+          <h1 className="hero-title">People behind<br/>the purpose.</h1>
           <p className="hero-description">
             Three IT students building an AI-assisted PPE compliance system for workplace safety.
           </p>

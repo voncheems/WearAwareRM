@@ -27,6 +27,7 @@ async function ensureIndexes(db) {
   for (const [table, field] of [['roles', 'name'], ['users', 'email'], ['devices', 'device_id'], ['workers', 'employee_id']]) {
     await db.collection(table).createIndex({ [field]: 1 }, { unique: true });
   }
+  await db.collection('users').createIndex({ worker_id: 1 }, { unique: true, partialFilterExpression: { worker_id: { $type: 'number' } } });
   for (const [table, keys] of [
     ['users', { role_id: 1 }], ['workers', { device_id: 1 }],
     ['devices', { inspector_id: 1 }], ['detections', { inspector_id: 1, detected_at: -1 }],
@@ -35,4 +36,15 @@ async function ensureIndexes(db) {
     ['notifications', { detection_id: 1 }], ['password_reset_requests', { email: 1, status: 1 }],
   ]) await db.collection(table).createIndex(keys);
 }
-module.exports = { TABLES, connectDatabase, getDatabase, closeDatabase, ensureIndexes };
+async function ensureUserRole(db) {
+  if (await db.collection('roles').findOne({ name: 'user' })) return;
+  const last = await db.collection('roles').find().sort({ id: -1 }).limit(1).next();
+  await db.collection('_counters').updateOne({ _id: 'roles' }, { $max: { value: last?.id || 0 } }, { upsert: true });
+  const counter = await db.collection('_counters').findOneAndUpdate({ _id: 'roles' }, { $inc: { value: 1 } }, { returnDocument: 'after' });
+  try {
+    await db.collection('roles').updateOne({ name: 'user' }, { $setOnInsert: { id: counter.value, name: 'user' } }, { upsert: true });
+  } catch (error) {
+    if (error.code !== 11000 || !await db.collection('roles').findOne({ name: 'user' })) throw error;
+  }
+}
+module.exports = { ensureUserRole, TABLES, connectDatabase, getDatabase, closeDatabase, ensureIndexes };

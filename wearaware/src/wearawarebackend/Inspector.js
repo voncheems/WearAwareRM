@@ -1,3 +1,4 @@
+const { validateRequest } = require('./validation');
 const express = require('express');
 const router  = express.Router();
 
@@ -6,20 +7,30 @@ const { data, requireAuth, requireRole } = require('./middleware');
 // ══════════════════════════════════════════════════════════════
 //  GET /api/inspector/detections
 // ══════════════════════════════════════════════════════════════
-router.get('/detections', requireAuth, requireRole('inspector'), async (req, res) => {
+router.get('/detections', requireAuth, requireRole('inspector'), validateRequest, async (req, res) => {
   try {
     const result = await data.detections({ inspector_id: req.user.id }, 'inspector');
     res.json(result.rows);
   } catch (err) {
-    console.error('GET /inspector/detections error:', err.message);
+    if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
+    console.error('Request handler failed.');
     res.status(500).json({ error: 'Failed to fetch detections.' });
   }
+});
+
+// Full camera images are fetched only after the inspector chooses a record.
+router.get('/detections/:id/photo', requireAuth, requireRole('inspector'), validateRequest, async (req, res, next) => {
+  try {
+    const result = await data.find('detections', { id: req.params.id, inspector_id: req.user.id }, 'photo_url');
+    if (!result.rows[0]) return res.status(404).json({ error: 'Detection not found.' });
+    res.json({ photo_url: result.rows[0].photo_url || null });
+  } catch (err) { next(err); }
 });
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/inspector/detections/stats
 // ══════════════════════════════════════════════════════════════
-router.get('/detections/stats', requireAuth, requireRole('inspector'), async (req, res) => {
+router.get('/detections/stats', requireAuth, requireRole('inspector'), validateRequest, async (req, res) => {
   try {
     const result = await data.stats({ inspector_id: req.user.id });
     const row = result.rows[0];
@@ -35,7 +46,8 @@ router.get('/detections/stats', requireAuth, requireRole('inspector'), async (re
       })(),
     });
   } catch (err) {
-    console.error('GET /inspector/detections/stats error:', err.message);
+    if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
+    console.error('Request handler failed.');
     res.status(500).json({ error: 'Failed to fetch stats.' });
   }
 });
@@ -43,12 +55,13 @@ router.get('/detections/stats', requireAuth, requireRole('inspector'), async (re
 // ══════════════════════════════════════════════════════════════
 //  GET /api/inspector/stations
 // ══════════════════════════════════════════════════════════════
-router.get('/stations', requireAuth, requireRole('inspector'), async (req, res) => {
+router.get('/stations', requireAuth, requireRole('inspector'), validateRequest, async (req, res) => {
   try {
     const result = await data.stations({ inspector_id: req.user.id }, false);
     res.json(result.rows);
   } catch (err) {
-    console.error('GET /inspector/stations error:', err.message);
+    if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
+    console.error('Request handler failed.');
     res.status(500).json({ error: 'Failed to fetch stations.' });
   }
 });
@@ -56,7 +69,7 @@ router.get('/stations', requireAuth, requireRole('inspector'), async (req, res) 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/inspector/stations/:id/workers
 // ══════════════════════════════════════════════════════════════
-router.get('/stations/:id/workers', requireAuth, requireRole('inspector'), async (req, res) => {
+router.get('/stations/:id/workers', requireAuth, requireRole('inspector'), validateRequest, async (req, res) => {
   try {
     const device = await data.find('devices', { id: req.params.id, inspector_id: req.user.id }, "id", {});
     if (!device.rows[0])
@@ -65,7 +78,8 @@ router.get('/stations/:id/workers', requireAuth, requireRole('inspector'), async
     const result = await data.find('workers', { device_id: req.params.id }, "id employee_id full_name position contact_number status created_at", { sort: { full_name: 1 } });
     res.json(result.rows);
   } catch (err) {
-    console.error('GET /inspector/stations/:id/workers error:', err.message);
+    if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
+    console.error('Request handler failed.');
     res.status(500).json({ error: 'Failed to fetch workers.' });
   }
 });
@@ -73,12 +87,13 @@ router.get('/stations/:id/workers', requireAuth, requireRole('inspector'), async
 // ══════════════════════════════════════════════════════════════
 //  GET /api/inspector/workers
 // ══════════════════════════════════════════════════════════════
-router.get('/workers', requireAuth, requireRole('inspector'), async (req, res) => {
+router.get('/workers', requireAuth, requireRole('inspector'), validateRequest, async (req, res) => {
   try {
     const result = await data.inspectorWorkers(req.user.id);
     res.json(result.rows);
   } catch (err) {
-    console.error('GET /inspector/workers error:', err.message);
+    if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
+    console.error('Request handler failed.');
     res.status(500).json({ error: 'Failed to fetch workers.' });
   }
 });
@@ -86,12 +101,13 @@ router.get('/workers', requireAuth, requireRole('inspector'), async (req, res) =
 // ══════════════════════════════════════════════════════════════
 //  GET /api/inspector/workers/unassigned
 // ══════════════════════════════════════════════════════════════
-router.get('/workers/unassigned', requireAuth, requireRole('inspector'), async (req, res) => {
+router.get('/workers/unassigned', requireAuth, requireRole('inspector'), validateRequest, async (req, res) => {
   try {
-    const result = await data.find('workers', { device_id: null }, "id employee_id full_name position contact_number status created_at", { sort: { full_name: 1 } });
+    const result = await data.find('workers', { device_id: null }, "id employee_id full_name", { sort: { full_name: 1 } });
     res.json(result.rows);
   } catch (err) {
-    console.error('GET /inspector/workers/unassigned error:', err.message);
+    if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
+    console.error('Request handler failed.');
     res.status(500).json({ error: 'Failed to fetch unassigned workers.' });
   }
 });
@@ -99,7 +115,7 @@ router.get('/workers/unassigned', requireAuth, requireRole('inspector'), async (
 // ══════════════════════════════════════════════════════════════
 //  PATCH /api/inspector/workers/:id/assign
 // ══════════════════════════════════════════════════════════════
-router.patch('/workers/:id/assign', requireAuth, requireRole('inspector'), async (req, res) => {
+router.patch('/workers/:id/assign', requireAuth, requireRole('inspector'), validateRequest, async (req, res) => {
   const { station_id } = req.body;
   if (!station_id)
     return res.status(400).json({ error: 'station_id is required.' });
@@ -114,10 +130,12 @@ router.patch('/workers/:id/assign', requireAuth, requireRole('inspector'), async
     if (workerCheck.rows[0].device_id !== null)
       return res.status(409).json({ error: 'Worker is already assigned to a station.' });
 
-    const result = await data.update('workers', { id: req.params.id }, { device_id: station_id }, "id employee_id full_name position contact_number status");
+    const result = await data.update('workers', { id: req.params.id, device_id: null }, { device_id: station_id }, "id employee_id full_name position contact_number status");
+    if (!result.rows[0]) return res.status(409).json({ error: 'Worker was already assigned. Refresh and try again.' });
     res.json({ success: true, worker: result.rows[0] });
   } catch (err) {
-    console.error('PATCH /inspector/workers/:id/assign error:', err.message);
+    if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
+    console.error('Request handler failed.');
     res.status(500).json({ error: 'Failed to assign worker.' });
   }
 });
@@ -125,12 +143,13 @@ router.patch('/workers/:id/assign', requireAuth, requireRole('inspector'), async
 // ══════════════════════════════════════════════════════════════
 //  GET /api/inspector/notifications
 // ══════════════════════════════════════════════════════════════
-router.get('/notifications', requireAuth, requireRole('inspector'), async (req, res) => {
+router.get('/notifications', requireAuth, requireRole('inspector'), validateRequest, async (req, res) => {
   try {
     const result = await data.notifications(req.user.id);
     res.json(result.rows);
   } catch (err) {
-    console.error('GET /inspector/notifications error:', err.message);
+    if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
+    console.error('Request handler failed.');
     res.status(500).json({ error: 'Failed to fetch notifications.' });
   }
 });
@@ -138,12 +157,13 @@ router.get('/notifications', requireAuth, requireRole('inspector'), async (req, 
 // ══════════════════════════════════════════════════════════════
 //  PATCH /api/inspector/notifications/:id/read
 // ══════════════════════════════════════════════════════════════
-router.patch('/notifications/:id/read', requireAuth, requireRole('inspector'), async (req, res) => {
+router.patch('/notifications/:id/read', requireAuth, requireRole('inspector'), validateRequest, async (req, res) => {
   try {
     await data.update('notifications', { id: req.params.id, inspector_id: req.user.id }, { is_read: true }, "*");
     res.json({ success: true });
   } catch (err) {
-    console.error('PATCH /inspector/notifications/:id/read error:', err.message);
+    if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
+    console.error('Request handler failed.');
     res.status(500).json({ error: 'Failed to update notification.' });
   }
 });
@@ -152,7 +172,7 @@ router.patch('/notifications/:id/read', requireAuth, requireRole('inspector'), a
 //  PATCH /api/inspector/detections/:id/override
 //  Inspector overrides a violation → compliant
 // ══════════════════════════════════════════════════════════════
-router.patch('/detections/:id/override', requireAuth, requireRole('inspector'), async (req, res) => {
+router.patch('/detections/:id/override', requireAuth, requireRole('inspector'), validateRequest, async (req, res) => {
   try {
     const check = await data.find('detections', { id: req.params.id, inspector_id: req.user.id }, "id result", {});
     if (!check.rows[0])
@@ -163,7 +183,8 @@ router.patch('/detections/:id/override', requireAuth, requireRole('inspector'), 
     const result = await data.overrideDetection(req.params.id, req.user.id);
     res.json({ success: true, detection: result.rows[0] });
   } catch (err) {
-    console.error('PATCH /inspector/detections/:id/override error:', err.message);
+    if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
+    console.error('Request handler failed.');
     res.status(500).json({ error: 'Failed to override detection.' });
   }
 });

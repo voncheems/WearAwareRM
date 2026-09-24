@@ -44,12 +44,17 @@ function createRepository(dbProvider = getDatabase) {
   }
   async function references(table, doc) {
     const refs = {
-      users: { role_id: 'roles' }, devices: { inspector_id: 'users' }, workers: { device_id: 'devices' },
+      users: { role_id: 'roles', worker_id: 'workers' }, devices: { inspector_id: 'users' }, workers: { device_id: 'devices' },
       detections: { device_id: 'devices', inspector_id: 'users', worker_id: 'workers' },
       notifications: { detection_id: 'detections', inspector_id: 'users' },
     }[table] || {};
     for (const [field, target] of Object.entries(refs)) {
       if (doc[field] != null && !await collection(target).findOne({ id: doc[field] }, { projection: { _id: 1 } })) throw new Error(`Unknown ${field}`);
+    }
+    if (table === 'devices' && doc.inspector_id != null) {
+      const inspector = await collection('users').findOne({ id: doc.inspector_id, is_active: true });
+      const role = inspector && await collection('roles').findOne({ id: inspector.role_id, name: 'inspector' });
+      if (!role) throw Object.assign(new Error('Select an active inspector.'), { status: 400 });
     }
     if (table === 'workers' && doc.status !== undefined && !['active', 'on_leave', 'terminated'].includes(doc.status)) throw new Error('Invalid worker status');
     if (table === 'detections' && doc.result !== undefined && !['compliant', 'violation'].includes(doc.result)) throw new Error('Invalid detection result');
@@ -70,7 +75,7 @@ function createRepository(dbProvider = getDatabase) {
         workers: { device_id: null, position: null, contact_number: null, status: 'active', created_at: now, updated_at: now },
         detections: { worker_id: null, missing_ppe: [], detected_ppe: [], photo_url: null, confidence_score: null, detected_at: now },
         notifications: { is_read: false, created_at: now },
-        password_reset_requests: { status: 'pending', temp_password: null, reason: null, created_at: now },
+        password_reset_requests: { status: 'pending', reason: null, created_at: now },
       };
       const doc = { ...defaults[table], ...normalize(table, values), id: await nextId(table) };
       const required = {
@@ -87,7 +92,7 @@ function createRepository(dbProvider = getDatabase) {
       const doc = normalize(table, values);
       await references(table, doc);
       if (['users', 'workers', 'devices'].includes(table)) doc.updated_at = new Date();
-      const updated = await collection(table).findOneAndUpdate(normalize(table, filter), { $set: doc }, { returnDocument: 'after', includeResultMetadata: false, projection: project(fields) });
+      const updated = await collection(table).findOneAndUpdate(normalize(table, filter), { $set: doc, ...(table === 'users' ? { $inc: { session_version: 1 } } : {}) }, { returnDocument: 'after', includeResultMetadata: false, projection: project(fields) });
       return result(updated ? [updated] : []);
     },
     async remove(table, filter) {
@@ -102,10 +107,10 @@ function createRepository(dbProvider = getDatabase) {
             if (await collection(target).findOne({ [field]: row.id }, { session })) throw new Error('Record has linked data; deactivate it instead');
           }
           // Match the PostgreSQL ON DELETE actions in the original schema.
-          const nullLinks = { users: [['devices', 'inspector_id']], devices: [['workers', 'device_id']], workers: [['detections', 'worker_id']] }[table] || [];
+          const nullLinks = { users: [['devices', 'inspector_id']], devices: [['workers', 'device_id']], workers: [['detections', 'worker_id'], ['users', 'worker_id']] }[table] || [];
           for (const [target, field] of nullLinks) {
             const changes = { [field]: null };
-            if (target === 'devices' || target === 'workers') changes.updated_at = new Date();
+            if (target === 'devices' || target === 'workers' || target === 'users') changes.updated_at = new Date();
             await collection(target).updateMany({ [field]: row.id }, { $set: changes }, { session });
           }
           if (table === 'users') await collection('notifications').deleteMany({ inspector_id: row.id }, { session });
@@ -144,8 +149,9 @@ function createRepository(dbProvider = getDatabase) {
       pipeline.push(...join('devices', 'device_id', 'stationDoc'));
       if (view !== 'legacy') pipeline.push(...join('workers', 'worker_id', 'workerDoc'));
       if (view === 'admin') pipeline.push(...join('users', 'inspector_id', 'inspectorDoc'));
-      const fields = 'id result missing_ppe detected_ppe' + (view === 'inspector' ? ' device_id photo_url' : ' confidence_score detected_at' + (view === 'admin' ? ' photo_url' : ''));
+      const fields = 'id result missing_ppe detected_ppe' + (view === 'inspector' ? ' device_id' : ' confidence_score detected_at');
       pipeline.push({ $project: { ...project(fields), _timestamp: '$detected_at', station: nullable('stationDoc.label'),
+        has_photo: { $ne: [{ $ifNull: ['$photo_url', ''] }, ''] },
         ...(view !== 'inspector' ? { location: nullable('stationDoc.location') } : {}),
         ...(view !== 'legacy' ? { worker_name: nullable('workerDoc.full_name'), worker_employee_id: nullable('workerDoc.employee_id') } : {}),
         ...(view === 'admin' ? { inspector: nullable('inspectorDoc.full_name') } : {}),

@@ -8,7 +8,7 @@
         }
 
         /* ── Sidebar ── */
-        .ad-sidebar {
+        .wa-admin-sidebar {
         width: 260px;
         background: linear-gradient(180deg, #dc2626 0%, #991b1b 100%);
         height: 100vh;
@@ -317,7 +317,7 @@
         .ad-grid  { grid-template-columns: 1fr; }
         }
         @media (max-width: 768px) {
-        .ad-sidebar { display: none; }
+        .wa-admin-sidebar { display: flex; }
         .ad-stats   { grid-template-columns: repeat(2, 1fr); }
         .ad-filters { flex-direction: column; }
         }

@@ -47,7 +47,7 @@ async function main() {
       await to.createCollection(c.name, c.options);
       if (c.documents.length) await to.collection(c.name).insertMany(c.documents);
       for (const index of c.indexes.filter(i => i.name !== '_id_')) {
-        const { key, v, ns, ...options } = index;
+        const { key, v: _version, ns: _namespace, ...options } = index;
         await to.collection(c.name).createIndex(key, options);
       }
       const restored = await to.collection(c.name).find({}).toArray();

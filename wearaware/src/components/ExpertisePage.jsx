@@ -1,22 +1,10 @@
-import React, { useEffect } from 'react';
+import MarketingNav from './MarketingNav';
+import useMarketingMotion from '../hooks/useMarketingMotion';
+import React from 'react';
 import './ExpertisePage.css';
 
 function ExpertisePage({ setCurrentPage }) {
-  useEffect(() => {
-    window.scrollTo({ top: 0 });
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) entry.target.classList.add('visible');
-        });
-      },
-      { threshold: 0.1, rootMargin: '0px 0px -100px 0px' }
-    );
-
-    document.querySelectorAll('.fade-in').forEach((el) => observer.observe(el));
-    return () => observer.disconnect();
-  }, []);
+  useMarketingMotion();
 
   const handleNav = (e, page) => {
     e.preventDefault();
@@ -26,7 +14,7 @@ function ExpertisePage({ setCurrentPage }) {
   const handleSmoothScroll = (e, targetId) => {
     e.preventDefault();
     const target = document.querySelector(targetId);
-    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (target) target.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' });
   };
 
   const expertiseAreas = [
@@ -117,29 +105,16 @@ function ExpertisePage({ setCurrentPage }) {
   ];
 
   return (
-    <div className="expertise-page">
+    <div className="expertise-page marketing-page">
       {/* Navigation */}
-      <nav className="navbar">
-        <div className="logo" onClick={(e) => handleNav(e, 'landing')} style={{ cursor: 'pointer' }}>
-          <div className="logo-icon">
-            <img src="/favicon.svg" alt="WearAware logo" style={{ width: 32, height: 32 }} />
-          </div>
-          <span>WearAware</span>
-        </div>
-        <ul className="nav-links">
-          <li><a href="#" onClick={(e) => handleNav(e, 'about')}>ABOUT US</a></li>
-          <li><a href="#" onClick={(e) => handleNav(e, 'projects')}>OUR PROJECTS</a></li>
-          <li><a href="#" onClick={(e) => handleNav(e, 'expertise')}>EXPERTISE</a></li>
-          <li><a href="#" onClick={(e) => handleNav(e, 'contact')}>GET IN TOUCH</a></li>
-        </ul>
-      </nav>
+      <MarketingNav currentPage="expertise" setCurrentPage={setCurrentPage} />
 
       {/* Hero */}
       <section className="ep-hero">
         <div className="ep-hero-overlay" />
         <div className="ep-hero-content">
           <div className="hero-subtitle">WHAT OUR SYSTEM PROVIDES</div>
-          <h1 className="hero-title">OUR AREAS<br />OF EXPERTISE</h1>
+          <h1 className="hero-title">A smarter way<br />to work safely.</h1>
           <p className="hero-description">
             Six core capabilities that make up the WearAware PPE compliance system —
             from entrance checkpoint detection to admin-level reporting.

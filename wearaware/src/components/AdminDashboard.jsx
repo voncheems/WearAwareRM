@@ -1,18 +1,38 @@
+import { escapeHtml, printDocument } from '../utils/print';
 import React, { useState, useEffect, useRef } from 'react';
 import './AdminDashboard.css';
+import './AdminTheme.css';
 import ComplianceLineGraph from './ComplianceLineGraph';
 import QRCode from 'qrcode';
 import {
   LayoutDashboard, Users, HardHat, MapPin, ScanLine, Clock, KeyRound,
-  ClipboardList, AlertTriangle, RefreshCw, QrCode, Download, Printer
+  ClipboardList, AlertTriangle, RefreshCw, QrCode, Download, Printer, ShieldCheck, ArrowUpRight
 } from 'lucide-react';
 import WearAwareLogo from './Wearawarelogo';
 
-const API = 'http://localhost:5000/api';
+import { API } from '../config/api';
 
 function getAuthHeaders() {
   const token = localStorage.getItem('token');
   return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+}
+
+async function adminFetch(url, options) {
+  let response;
+  try {
+    response = await fetch(url, { ...options, signal: AbortSignal.timeout(15000) });
+  } catch (error) {
+    throw new Error(error.name === 'TimeoutError'
+      ? 'The request timed out. Refresh to check its result before retrying.'
+      : 'Cannot reach the backend. Check that the backend and demo tunnel are running.');
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    const detail = body.fields?.map(item => `${item.field}: ${item.message}`).join(' ');
+    throw new Error(response.status === 401 ? 'Your session has expired. Sign out and sign in again.'
+      : detail || body.error || `Request failed (${response.status}). Please try again.`);
+  }
+  return response;
 }
 
 // ─────────────────────────────────────────────
@@ -38,17 +58,16 @@ function QRModal({ worker, onClose }) {
   const handleDownload = () => {
     if (!dataUrl) return;
     const link    = document.createElement('a');
-    link.download = `QR-${worker.employee_id}-${worker.full_name.replace(/\s+/g, '_')}.png`;
+    link.download = `QR-${escapeHtml(worker.employee_id)}-${worker.full_name.replace(/\s+/g, '_')}.png`;
     link.href     = dataUrl;
     link.click();
   };
 
   const handlePrint = () => {
-    const win = window.open('', '_blank');
-    win.document.write(`
+    printDocument(`
       <html>
         <head>
-          <title>QR — ${worker.full_name}</title>
+          <title>QR — ${escapeHtml(worker.full_name)}</title>
           <style>
             body { margin: 0; display: flex; align-items: center; justify-content: center; min-height: 100vh; background: #fff; font-family: sans-serif; }
             .card { text-align: center; padding: 2rem; border: 2px solid #e2e8f0; border-radius: 16px; width: 280px; }
@@ -61,15 +80,13 @@ function QRModal({ worker, onClose }) {
         <body>
           <div class="card">
             <img src="${dataUrl}" />
-            <div class="name">${worker.full_name}</div>
-            <div class="id">${worker.employee_id}</div>
-            <div class="pos">${worker.position || 'No position'}</div>
+            <div class="name">${escapeHtml(worker.full_name)}</div>
+            <div class="id">${escapeHtml(worker.employee_id)}</div>
+            <div class="pos">${escapeHtml(worker.position || 'No position')}</div>
           </div>
-          <script>window.onload = () => { window.print(); window.close(); }<\/script>
         </body>
       </html>
-    `);
-    win.document.close();
+    `, true);
   };
 
   return (
@@ -87,7 +104,7 @@ function QRModal({ worker, onClose }) {
         }}>
           <div style={{
             width: 42, height: 42, borderRadius: '50%', flexShrink: 0,
-            background: 'linear-gradient(135deg, #667eea, #764ba2)',
+            background: 'linear-gradient(135deg, #607e4d, #91a77f)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             color: '#fff', fontWeight: 800, fontSize: '0.9rem',
           }}>
@@ -146,8 +163,7 @@ function BulkQRModal({ workers, onClose }) {
       return { worker: w, url };
     }));
 
-    const win = window.open('', '_blank');
-    win.document.write(`
+    printDocument(`
       <html>
         <head>
           <title>Worker QR Codes — WearAware</title>
@@ -169,17 +185,15 @@ function BulkQRModal({ workers, onClose }) {
             ${cards.map(({ worker: w, url }) => `
               <div class="card">
                 <img src="${url}" />
-                <div class="name">${w.full_name}</div>
-                <div class="id">${w.employee_id}</div>
-                <div class="pos">${w.position || 'No position'}</div>
+                <div class="name">${escapeHtml(w.full_name)}</div>
+                <div class="id">${escapeHtml(w.employee_id)}</div>
+                <div class="pos">${escapeHtml(w.position || 'No position')}</div>
               </div>
             `).join('')}
           </div>
-          <script>window.onload = () => { window.print(); window.close(); }<\/script>
         </body>
       </html>
-    `);
-    win.document.close();
+    `, true);
     setGenerating(false);
   };
 
@@ -200,7 +214,7 @@ function BulkQRModal({ workers, onClose }) {
               padding: '0.5rem 0', borderBottom: '1px solid #f1f5f9' }}>
               <div style={{
                 width: 32, height: 32, borderRadius: '50%',
-                background: 'linear-gradient(135deg, #667eea, #764ba2)',
+                background: 'linear-gradient(135deg, #607e4d, #91a77f)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 color: '#fff', fontWeight: 800, fontSize: '0.75rem', flexShrink: 0,
               }}>
@@ -230,6 +244,8 @@ function BulkQRModal({ workers, onClose }) {
 //  Main AdminDashboard
 // ─────────────────────────────────────────────
 export default function AdminDashboard({ setCurrentPage }) {
+  const sidebarRef = useRef(null);
+  const [loadErrors, setLoadErrors] = useState({});
   const [activeTab,     setActiveTab]     = useState('overview');
   const [users,         setUsers]         = useState([]);
   const [loadingUsers,  setLoadingUsers]  = useState(false);
@@ -242,10 +258,10 @@ export default function AdminDashboard({ setCurrentPage }) {
   const [formMsg,       setFormMsg]       = useState({ type: '', text: '' });
   const [fieldErrors,   setFieldErrors]   = useState({});
   const [submitting,    setSubmitting]    = useState(false);
-  const [newUser,       setNewUser]       = useState({ full_name: '', email: '', password: '', role: 'inspector', gmail: '' });
+  const [newUser,       setNewUser]       = useState({ full_name: '', email: '', password: '', role: 'inspector', gmail: '', worker_id: '' });
   const [editingUser,   setEditingUser]   = useState(null);
   const [showEditUserModal, setShowEditUserModal] = useState(false);
-  const [editUserForm,  setEditUserForm]  = useState({ full_name: '', gmail: '', role: 'inspector', is_active: true });
+  const [editUserForm,  setEditUserForm]  = useState({ full_name: '', gmail: '', role: 'inspector', is_active: true, worker_id: '' });
   const [editUserMsg,   setEditUserMsg]   = useState({ type: '', text: '' });
   const [editUserErrors, setEditUserErrors] = useState({});
   const [editUserSubmitting, setEditUserSubmitting] = useState(false);
@@ -284,86 +300,89 @@ export default function AdminDashboard({ setCurrentPage }) {
   /* ── Password reset requests ── */
   const [pwRequests,     setPwRequests]     = useState([]);
   const [pwLoading,      setPwLoading]      = useState(false);
-  const [tempPassInputs, setTempPassInputs] = useState({});
+  const [resetLink, setResetLink] = useState('');
 
   useEffect(() => { fetchUsers(); fetchDetections(); fetchActivity(); fetchWorkers(); fetchDevices(); fetchPwRequests(); }, []);
+  useEffect(() => {
+    // Keep navigation available even if an older responsive stylesheet is cached.
+    sidebarRef.current?.style.setProperty('display', 'flex', 'important');
+  }, []);
 
   const fetchUsers = async () => {
     setLoadingUsers(true);
+    setLoadErrors(prev => ({ ...prev, 'Users': '' }));
     try {
-      const res = await fetch(`${API}/users`, { headers: getAuthHeaders() });
+      const res = await adminFetch(`${API}/users`, { headers: getAuthHeaders() });
       const data = await res.json();
       if (res.ok) setUsers(data);
-    } catch (err) { console.error(err); }
+    } catch (err) { setLoadErrors(prev => ({ ...prev, 'Users': err.message })); }
     finally { setLoadingUsers(false); }
   };
 
   const fetchDetections = async () => {
     setDetLoading(true);
+    setLoadErrors(prev => ({ ...prev, 'Detections': '' }));
     try {
       const [detRes, statsRes] = await Promise.all([
-        fetch(`${API}/admin/detections`, { headers: getAuthHeaders() }),
-        fetch(`${API}/admin/stats`,      { headers: getAuthHeaders() }),
+        adminFetch(`${API}/admin/detections`, { headers: getAuthHeaders() }),
+        adminFetch(`${API}/admin/stats`,      { headers: getAuthHeaders() }),
       ]);
       if (detRes.ok)   setDetections(await detRes.json());
       if (statsRes.ok) setDetStats(await statsRes.json());
-    } catch (err) { console.error('Failed to load detections:', err); }
+    } catch (err) { setLoadErrors(prev => ({ ...prev, 'Detections': err.message })); }
     finally { setDetLoading(false); }
   };
 
   const fetchActivity = async () => {
     setActLoading(true);
+    setLoadErrors(prev => ({ ...prev, 'Activity': '' }));
     try {
-      const res = await fetch(`${API}/admin/activity`, { headers: getAuthHeaders() });
+      const res = await adminFetch(`${API}/admin/activity`, { headers: getAuthHeaders() });
       if (res.ok) setActivity(await res.json());
-    } catch (err) { console.error('Failed to load activity:', err); }
+    } catch (err) { setLoadErrors(prev => ({ ...prev, 'Activity': err.message })); }
     finally { setActLoading(false); }
   };
 
   const fetchWorkers = async () => {
     setLoadingWorkers(true);
+    setLoadErrors(prev => ({ ...prev, 'Workers': '' }));
     try {
-      const res = await fetch(`${API}/workers`, { headers: getAuthHeaders() });
+      const res = await adminFetch(`${API}/workers`, { headers: getAuthHeaders() });
       if (res.ok) setWorkers(await res.json());
-    } catch (err) { console.error('Failed to load workers:', err); }
+    } catch (err) { setLoadErrors(prev => ({ ...prev, 'Workers': err.message })); }
     finally { setLoadingWorkers(false); }
   };
 
   const fetchDevices = async () => {
+    setLoadErrors(prev => ({ ...prev, 'Stations': '' }));
     try {
-      const res = await fetch(`${API}/devices`, { headers: getAuthHeaders() });
+      const res = await adminFetch(`${API}/devices`, { headers: getAuthHeaders() });
       if (res.ok) setDevices(await res.json());
-    } catch (err) { console.error('Failed to load devices:', err); }
+    } catch (err) { setLoadErrors(prev => ({ ...prev, 'Stations': err.message })); }
   };
 
   const fetchPwRequests = async () => {
     setPwLoading(true);
+    setLoadErrors(prev => ({ ...prev, 'Password requests': '' }));
     try {
-      const res = await fetch(`${API}/admin/password-requests`, { headers: getAuthHeaders() });
+      const res = await adminFetch(`${API}/admin/password-requests`, { headers: getAuthHeaders() });
       if (res.ok) setPwRequests(await res.json());
-    } catch (err) { console.error('Failed to load password requests:', err); }
+    } catch (err) { setLoadErrors(prev => ({ ...prev, 'Password requests': err.message })); }
     finally { setPwLoading(false); }
   };
 
   const handleResetPassword = async (id, email) => {
-    const temp = tempPassInputs[id];
-    if (!temp || temp.length < 6) { alert('Enter at least 6 characters for the temp password.'); return; }
-    if (!window.confirm(`Reset password for ${email} to "${temp}"?`)) return;
+    if (!window.confirm(`Create a single-use password reset link for ${email}?`)) return;
     try {
-      const res  = await fetch(`${API}/admin/password-requests/${id}/reset`, {
+      const res  = await adminFetch(`${API}/admin/password-requests/${id}/reset`, {
         method: 'PATCH', headers: getAuthHeaders(),
-        body: JSON.stringify({ temp_password: temp }),
+        body: JSON.stringify({}),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
-      if (data.emailed) {
-        alert(`Password reset! An email has been sent to the user's Gmail with their temp password.`);
-      } else {
-        alert(`Password reset! No Gmail on file — please tell ${email} their temp password is: ${temp}`);
-      }
-
-      setTempPassInputs(p => ({ ...p, [id]: '' }));
+      if (data.emailed) alert('A single-use reset link was emailed to the account recovery address.');
+      else setResetLink(data.reset_url);
       fetchPwRequests();
     } catch (err) { alert(err.message); }
   };
@@ -371,7 +390,7 @@ export default function AdminDashboard({ setCurrentPage }) {
   const handleDeletePwRequest = async (id) => {
     if (!window.confirm('Delete this request?')) return;
     try {
-      await fetch(`${API}/admin/password-requests/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+      await adminFetch(`${API}/admin/password-requests/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
       fetchPwRequests();
     } catch (err) { alert(err.message); }
   };
@@ -381,7 +400,7 @@ export default function AdminDashboard({ setCurrentPage }) {
     if (!newWorker.full_name.trim())                errs.full_name = 'Full name is required.';
     else if (newWorker.full_name.trim().length < 2) errs.full_name = 'Must be at least 2 characters.';
     else if (newWorker.full_name.trim().length > 100) errs.full_name = 'Name is too long (max 100 characters).';
-    else if (!/^[A-Za-zÀ-ÖØ-öø-ÿÑñ\s'.\-]+$/.test(newWorker.full_name.trim()))
+    else if (!/^[A-Za-zÀ-ÖØ-öø-ÿÑñ\s'.-]+$/.test(newWorker.full_name.trim()))
       errs.full_name = 'Name can only contain letters, spaces, hyphens, and apostrophes.';
     if (newWorker.position && newWorker.position.trim().length > 80)
       errs.position = 'Position is too long (max 80 characters).';
@@ -424,7 +443,7 @@ export default function AdminDashboard({ setCurrentPage }) {
       const payload = { ...newWorker, device_id: newWorker.device_id || null };
       const url    = editingWorker ? `${API}/workers/${editingWorker.id}` : `${API}/workers`;
       const method = editingWorker ? 'PUT' : 'POST';
-      const res    = await fetch(url, { method, headers: getAuthHeaders(), body: JSON.stringify(payload) });
+      const res    = await adminFetch(url, { method, headers: getAuthHeaders(), body: JSON.stringify(payload) });
       const data   = await res.json();
       if (!res.ok) throw new Error(data.error);
       setWorkerFormMsg({ type: 'success', text: editingWorker ? 'Worker updated successfully!' : `Worker "${newWorker.full_name}" added successfully!` });
@@ -439,7 +458,7 @@ export default function AdminDashboard({ setCurrentPage }) {
   const handleDeactivateWorker = async (id, name) => {
     if (!window.confirm(`Deactivate worker "${name}"?`)) return;
     try {
-      const res  = await fetch(`${API}/workers/${id}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ status: 'terminated' }) });
+      const res  = await adminFetch(`${API}/workers/${id}/status`, { method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify({ status: 'terminated' }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       fetchWorkers();
@@ -449,7 +468,7 @@ export default function AdminDashboard({ setCurrentPage }) {
   const handleReactivateWorker = async (id, name) => {
     if (!window.confirm(`Reactivate worker "${name}"?`)) return;
     try {
-      const res  = await fetch(`${API}/workers/${id}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ status: 'active' }) });
+      const res  = await adminFetch(`${API}/workers/${id}/status`, { method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify({ status: 'active' }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       fetchWorkers();
@@ -458,7 +477,7 @@ export default function AdminDashboard({ setCurrentPage }) {
 
   const handleAssignInspector = async (deviceId, inspectorId) => {
     try {
-      const res = await fetch(`${API}/devices/${deviceId}/assign`, {
+      const res = await adminFetch(`${API}/devices/${deviceId}/assign`, {
         method: 'PATCH', headers: getAuthHeaders(),
         body: JSON.stringify({ inspector_id: inspectorId || null }),
       });
@@ -516,7 +535,7 @@ export default function AdminDashboard({ setCurrentPage }) {
       };
       const url    = editingStation ? `${API}/devices/${editingStation.id}` : `${API}/devices`;
       const method = editingStation ? 'PUT' : 'POST';
-      const res    = await fetch(url, { method, headers: getAuthHeaders(), body: JSON.stringify(payload) });
+      const res    = await adminFetch(url, { method, headers: getAuthHeaders(), body: JSON.stringify(payload) });
       const data   = await res.json();
       if (!res.ok) throw new Error(data.error);
       setStationFormMsg({ type: 'success', text: editingStation ? 'Station updated!' : `Station "${newStation.label}" created!` });
@@ -531,7 +550,7 @@ export default function AdminDashboard({ setCurrentPage }) {
   const handleDeleteStation = async (id, name) => {
     if (!window.confirm(`Delete station "${name}"? If it has detection records, it will be blocked — deactivate it instead.`)) return;
     try {
-      const res  = await fetch(`${API}/devices/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+      const res  = await adminFetch(`${API}/devices/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       fetchDevices();
@@ -542,7 +561,7 @@ export default function AdminDashboard({ setCurrentPage }) {
     const errs = {};
     if (!newUser.full_name.trim())           errs.full_name = 'Full name is required.';
     else if (newUser.full_name.trim().length < 2) errs.full_name = 'Must be at least 2 characters.';
-    else if (!/^[A-Za-zÀ-ÖØ-öø-ÿÑñ\s'.\-]+$/.test(newUser.full_name.trim()))
+    else if (!/^[A-Za-zÀ-ÖØ-öø-ÿÑñ\s'.-]+$/.test(newUser.full_name.trim()))
       errs.full_name = 'Name can only contain letters, spaces, hyphens, and apostrophes.';
     if (!newUser.email.trim())               errs.email = 'Email is required.';
     else if (!/^[^\s@]+@wearaware\.ph$/.test(newUser.email.trim())) errs.email = 'Only @wearaware.ph email addresses are allowed.';
@@ -563,32 +582,34 @@ export default function AdminDashboard({ setCurrentPage }) {
     if (Object.keys(errs).length > 0) return;
     setSubmitting(true);
     try {
-      const res  = await fetch(`${API}/users`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(newUser) });
+      const res  = await adminFetch(`${API}/users`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(newUser) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setFormMsg({ type: 'success', text: `User "${newUser.full_name}" created successfully!` });
-      setNewUser({ full_name: '', email: '', password: '', role: 'inspector', gmail: '' });
+      setNewUser({ full_name: '', email: '', password: '', role: 'inspector', gmail: '', worker_id: '' });
       setFieldErrors({});
       fetchUsers();
     } catch (err) { setFormMsg({ type: 'error', text: err.message }); }
     finally { setSubmitting(false); }
   };
 
-  const handleDeactivate = async (id, name) => { if (!window.confirm(`Deactivate ${name}?`)) return; await fetch(`${API}/users/${id}/deactivate`, { method: 'PATCH', headers: getAuthHeaders() }); fetchUsers(); };
-  const handleReactivate = async (id, name) => { if (!window.confirm(`Reactivate ${name}?`)) return; await fetch(`${API}/users/${id}/reactivate`, { method: 'PATCH', headers: getAuthHeaders() }); fetchUsers(); };
-  const handleDelete     = async (id, name) => {
-    if (!window.confirm(`Permanently delete ${name}? This cannot be undone.`)) return;
+  const handleDeactivate = async (id, name) => {
+    if (!window.confirm(`Deactivate ${name}?`)) return;
     try {
-      const res  = await fetch(`${API}/users/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      await adminFetch(`${API}/users/${id}/deactivate`, { method: 'PATCH', headers: getAuthHeaders() });
       fetchUsers();
     } catch (err) { alert(err.message); }
   };
-
+  const handleReactivate = async (id, name) => {
+    if (!window.confirm(`Reactivate ${name}?`)) return;
+    try {
+      await adminFetch(`${API}/users/${id}/reactivate`, { method: 'PATCH', headers: getAuthHeaders() });
+      fetchUsers();
+    } catch (err) { alert(err.message); }
+  };
   const openEditUser = (u) => {
     setEditingUser(u);
-    setEditUserForm({ full_name: u.full_name, gmail: u.gmail || '', role: u.role, is_active: u.is_active });
+    setEditUserForm({ full_name: u.full_name, gmail: u.gmail || '', role: u.role, is_active: u.is_active, worker_id: u.worker_id || '' });
     setEditUserMsg({ type: '', text: '' });
     setEditUserErrors({});
     setShowEditUserModal(true);
@@ -598,7 +619,7 @@ export default function AdminDashboard({ setCurrentPage }) {
     const errs = {};
     if (!editUserForm.full_name.trim()) errs.full_name = 'Full name is required.';
     else if (editUserForm.full_name.trim().length < 2) errs.full_name = 'Must be at least 2 characters.';
-    else if (!/^[A-Za-zÀ-ÖØ-öø-ÿÑñ\s'.\-]+$/.test(editUserForm.full_name.trim()))
+    else if (!/^[A-Za-zÀ-ÖØ-öø-ÿÑñ\s'.-]+$/.test(editUserForm.full_name.trim()))
       errs.full_name = 'Name can only contain letters, spaces, hyphens, and apostrophes.';
     if (editUserForm.gmail && !/^[^\s@]+@gmail\.com$/.test(editUserForm.gmail.trim()))
       errs.gmail = 'Must be a valid @gmail.com address.';
@@ -613,17 +634,25 @@ export default function AdminDashboard({ setCurrentPage }) {
     if (Object.keys(errs).length > 0) return;
     setEditUserSubmitting(true);
     try {
-      const res  = await fetch(`${API}/users/${editingUser.id}`, {
+      const res  = await adminFetch(`${API}/users/${editingUser.id}`, {
         method: 'PUT', headers: getAuthHeaders(),
         body: JSON.stringify({
           full_name: editUserForm.full_name.trim(),
           gmail: editUserForm.gmail.trim() || null,
           role: editUserForm.role,
+          worker_id: editUserForm.worker_id,
           is_active: editUserForm.is_active,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
+      if (editingUser.id === user.id) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        alert('Your account was updated. Please sign in again.');
+        setCurrentPage('login');
+        return;
+      }
       setEditUserMsg({ type: 'success', text: 'User updated successfully!' });
       fetchUsers();
     } catch (err) { setEditUserMsg({ type: 'error', text: err.message }); }
@@ -637,6 +666,17 @@ export default function AdminDashboard({ setCurrentPage }) {
   const [reportPeriod, setReportPeriod] = useState('all');
   const [reportFrom,   setReportFrom]   = useState('');
   const [reportTo,     setReportTo]     = useState('');
+
+  const openAdminPhoto = async (detectionId) => {
+    try {
+      const res = await adminFetch(`${API}/admin/detections/${detectionId}/photo`, { headers: getAuthHeaders() });
+      const data = await res.json();
+      if (!res.ok || !data.photo_url) throw new Error(data.error || 'No camera photo is available for this detection.');
+      setAdminPhoto(data.photo_url);
+    } catch (err) {
+      alert(err.message);
+    }
+  };
 
   const generateAdminReport = () => {
     const today = new Date().toISOString().split('T')[0];
@@ -660,7 +700,7 @@ export default function AdminDashboard({ setCurrentPage }) {
     const reportDate   = now.toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
     const reportTime   = now.toLocaleTimeString('en-PH');
 
-    const byInspector = {};
+    const byInspector = Object.create(null);
     filtered.forEach(d => {
       const key = d.inspector || 'Unknown';
       if (!byInspector[key]) byInspector[key] = { total: 0, violations: 0, compliant: 0 };
@@ -670,7 +710,7 @@ export default function AdminDashboard({ setCurrentPage }) {
     });
     const inspectorRows = Object.entries(byInspector).map(([name, c]) => `
       <tr>
-        <td>${name}</td><td>${c.total}</td>
+        <td>${escapeHtml(name)}</td><td>${c.total}</td>
         <td style="color:#dc2626">${c.violations}</td>
         <td style="color:#16a34a">${c.compliant}</td>
         <td style="font-weight:700;color:${Math.round(((c.total-c.violations)/c.total)*100)>=80?'#16a34a':'#dc2626'}">${Math.round(((c.total-c.violations)/c.total)*100)}%</td>
@@ -678,16 +718,16 @@ export default function AdminDashboard({ setCurrentPage }) {
 
     const logRows = filtered.map(d => `
       <tr>
-        <td>${d.worker_name || '—'}</td>
-        <td style="font-family:monospace;font-size:11px">${d.worker_employee_id || '—'}</td>
-        <td>${d.station || '—'}</td><td>${d.inspector || '—'}</td>
-        <td>${d.date} ${d.time}</td>
+        <td>${escapeHtml(d.worker_name || '—')}</td>
+        <td style="font-family:monospace;font-size:11px">${escapeHtml(d.worker_employee_id || '—')}</td>
+        <td>${escapeHtml(d.station || '—')}</td><td>${escapeHtml(d.inspector || '—')}</td>
+        <td>${escapeHtml(d.date)} ${escapeHtml(d.time)}</td>
         <td style="color:${d.result==='violation'?'#dc2626':'#16a34a'};font-weight:700">${d.result==='violation'?'⚠ Violation':'✓ Compliant'}</td>
-        <td>${(d.missing_ppe||[]).join(', ')||'—'}</td>
+        <td>${escapeHtml((d.missing_ppe||[]).join(', ')||'—')}</td>
       </tr>`).join('');
 
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
-<title>WearAware Admin Report — ${periodLabel}</title>
+<title>WearAware Admin Report — ${escapeHtml(periodLabel)}</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   body{font-family:Arial,sans-serif;color:#1a202c;font-size:13px;padding:32px}
@@ -707,7 +747,7 @@ export default function AdminDashboard({ setCurrentPage }) {
   <div class="header">
     <div><h1>🦺 WearAware</h1><div style="font-size:14px;font-weight:700;margin-top:4px">Admin Compliance Report</div></div>
     <div class="header-meta">
-      <div><strong>Period:</strong> ${periodLabel}</div>
+      <div><strong>Period:</strong> ${escapeHtml(periodLabel)}</div>
       <div><strong>Generated:</strong> ${reportDate} ${reportTime}</div>
       <div><strong>Total Records:</strong> ${fTotal}</div>
     </div>
@@ -730,10 +770,7 @@ export default function AdminDashboard({ setCurrentPage }) {
   </div>
 </body></html>`;
 
-    const win = window.open('', '_blank');
-    win.document.write(html);
-    win.document.close();
-    win.onload = () => win.print();
+    printDocument(html);
   };
 
   const resetFilters = () => { setFilterStation('All Stations'); setFilterInspector('All Inspectors'); setFilterDate(''); setFilterViolation('All Types'); };
@@ -782,14 +819,14 @@ export default function AdminDashboard({ setCurrentPage }) {
   return (
     <div className="ad-page">
 
-      <aside className="ad-sidebar">
-        <div className="ad-logo" onClick={() => setActiveTab('overview')}>
-          <span className="ad-logo-icon"><WearAwareLogo size={30} /></span> WearAware
-        </div>
-        <nav className="ad-nav">
-          <div className="ad-nav-label">Main Menu</div>
+      <div ref={sidebarRef} className="wa-admin-sidebar" role="complementary" aria-label="Admin controls" style={{ display: 'flex' }}>
+        <button className="ad-logo" onClick={() => setActiveTab('overview')} aria-label="WearAware admin overview">
+          <span className="ad-logo-icon"><WearAwareLogo size={30} /></span> WearAware<span className="ad-brand-dot">.</span>
+        </button>
+        <nav className="ad-nav" aria-label="Admin navigation">
+          <div className="ad-nav-label">Your workspace</div>
           {navItems.map(item => (
-            <button key={item.id} className={`ad-nav-item ${activeTab === item.id ? 'active' : ''}`} onClick={() => setActiveTab(item.id)}>
+            <button key={item.id} aria-current={activeTab === item.id ? 'page' : undefined} className={`ad-nav-item ${activeTab === item.id ? 'active' : ''}`} onClick={() => setActiveTab(item.id)}>
               <span className="ad-nav-icon">{item.icon}</span> {item.label}
             </button>
           ))}
@@ -804,7 +841,7 @@ export default function AdminDashboard({ setCurrentPage }) {
           </div>
           <button className="ad-logout" onClick={handleLogout}>Sign Out</button>
         </div>
-      </aside>
+      </div>
 
       <main className="ad-main">
         <div className="ad-topbar">
@@ -818,16 +855,36 @@ export default function AdminDashboard({ setCurrentPage }) {
               {activeTab === 'activity'   && 'Activity Log'}
               {activeTab === 'pwrequests' && 'Password Reset Requests'}
             </div>
-            <div className="ad-topbar-sub">Welcome back, {user.full_name || 'Admin'} 👋</div>
+            <div className="ad-topbar-sub">Welcome back, {user.full_name || 'Admin'}</div>
           </div>
-          <div className="ad-topbar-right"><span className="ad-badge">ADMIN</span></div>
+          <div className="ad-topbar-right">
+            <span className="ad-badge">ADMIN</span>
+            <button className="ad-topbar-logout" onClick={handleLogout}>Sign Out</button>
+          </div>
         </div>
 
-        <div className="ad-content">
+        <div className="ad-content" key={activeTab}>
+          {Object.entries(loadErrors).filter(([, message]) => message).map(([section, message]) => (
+            <div key={section} role="alert" style={{ padding: '0.8rem 1rem', marginBottom: '0.75rem', borderRadius: 8, background: '#fef2f2', color: '#991b1b' }}>
+              <strong>{section} could not load.</strong> {message}
+            </div>
+          ))}
 
           {/* ── OVERVIEW ── */}
           {activeTab === 'overview' && (
             <>
+              <section className="ad-welcome" aria-labelledby="admin-welcome-title">
+                <div>
+                  <div className="ad-eyebrow">A CLEARER VIEW OF SITE SAFETY</div>
+                  <h1 id="admin-welcome-title">Connected teams.<br /><span>Safer workplaces.</span></h1>
+                  <p>Your people, stations, and compliance records. All in one place.</p>
+                  <div className="ad-welcome-actions">
+                    <button className="ad-btn ad-welcome-primary" onClick={() => setActiveTab('detections')}>Review detections <ArrowUpRight size={17} /></button>
+                    <button className="ad-btn ad-welcome-secondary" onClick={() => setActiveTab('stations')}>Manage stations</button>
+                  </div>
+                </div>
+                <div className="ad-welcome-mark" aria-hidden="true"><ShieldCheck size={64} strokeWidth={1} /><span>AWARENESS IN ACTION</span></div>
+              </section>
               <div className="ad-stats">
                 <div className="ad-stat-card">
                   <div className="ad-stat-icon"><Users size={22} /></div>
@@ -881,7 +938,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                     <div><div className="ad-panel-title">Recent Users</div><div className="ad-panel-sub">Latest registered accounts</div></div>
                     <button className="ad-panel-action" onClick={() => setActiveTab('users')}>View All →</button>
                   </div>
-                  <table className="ad-table">
+                  <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Scrollable admin records"><table className="ad-table">
                     <thead><tr><th>Name</th><th>Role</th><th>Status</th></tr></thead>
                     <tbody>
                       {users.slice(0, 5).map(u => (
@@ -893,7 +950,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                       ))}
                       {users.length === 0 && <tr><td colSpan={3} className="ad-empty">No users found</td></tr>}
                     </tbody>
-                  </table>
+                  </table></div>
                 </div>
                 <div className="ad-panel">
                   <div className="ad-panel-header">
@@ -932,12 +989,12 @@ export default function AdminDashboard({ setCurrentPage }) {
                   <button className="ad-btn ad-btn-primary" onClick={() => { setShowModal(true); setFormMsg({ type: '', text: '' }); setFieldErrors({}); }}>+ Add User</button>
                 </div>
                 {loadingUsers ? <div className="ad-empty">Loading users...</div> : (
-                  <table className="ad-table">
+                  <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Scrollable admin records"><table className="ad-table">
                     <thead><tr><th>Name</th><th>Login Email</th><th>Gmail</th><th>Role</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
                     <tbody>
                       {users.map(u => (
                         <tr key={u.id}>
-                          <td style={{ fontWeight: 600 }}>{u.full_name}</td>
+                          <td style={{ fontWeight: 600 }}>{u.full_name}{u.role === 'user' && <div className="ad-panel-sub">{workers.find(w => w.id === u.worker_id)?.employee_id || 'Worker link missing'}</div>}</td>
                           <td style={{ color: '#666', fontSize: '0.85rem' }}>{u.email}</td>
                           <td style={{ color: '#666', fontSize: '0.85rem' }}>{u.gmail || <span style={{ color: '#ccc' }}>—</span>}</td>
                           <td><span className={`ad-role-badge ad-role-${u.role}`}>{u.role}</span></td>
@@ -957,7 +1014,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                       ))}
                       {users.length === 0 && <tr><td colSpan={7} className="ad-empty">No users found</td></tr>}
                     </tbody>
-                  </table>
+                  </table></div>
                 )}
               </div>
             </div>
@@ -972,7 +1029,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                     <div className="ad-panel-title">Worker Registry</div>
                     <div className="ad-panel-sub">{workers.length} workers on record &nbsp;<span className="ad-log-count">— {filteredWorkers.length} shown</span></div>
                   </div>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <div className="ad-panel-actions">
                     <button
                       className="ad-btn ad-btn-ghost"
                       style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem' }}
@@ -1000,7 +1057,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                   <button className="ad-filter-reset" onClick={() => { setWorkerFilterStation('All Stations'); setWorkerFilterStatus('All Statuses'); }}>Reset Filters</button>
                 </div>
                 {loadingWorkers ? <div className="ad-empty">Loading workers…</div> : (
-                  <table className="ad-table">
+                  <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Scrollable admin records"><table className="ad-table">
                     <thead>
                       <tr><th>Employee ID</th><th>Name</th><th>Position</th><th>Station</th><th>Contact</th><th>Status</th><th>Actions</th></tr>
                     </thead>
@@ -1039,7 +1096,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                  </table></div>
                 )}
               </div>
             </div>
@@ -1054,7 +1111,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                     <div className="ad-panel-title">Station Management</div>
                     <div className="ad-panel-sub">{devices.length} registered stations — assign inspectors and manage PPE requirements</div>
                   </div>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <div className="ad-panel-actions">
                     <button className="ad-refresh-btn" onClick={fetchDevices}>↻ Refresh</button>
                     <button className="ad-btn ad-btn-primary" onClick={() => openStationModal()}>+ Add Station</button>
                   </div>
@@ -1062,7 +1119,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                 {devices.length === 0 ? (
                   <div className="ad-empty">No stations yet — click "+ Add Station" to create one.</div>
                 ) : (
-                  <table className="ad-table">
+                  <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Scrollable admin records"><table className="ad-table">
                     <thead><tr><th>Station</th><th>Location</th><th>Status</th><th>Workers</th><th>Required PPE</th><th>Assigned Inspector</th><th>Actions</th></tr></thead>
                     <tbody>
                       {devices.map(d => (
@@ -1088,7 +1145,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                  </table></div>
                 )}
               </div>
             </div>
@@ -1103,7 +1160,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                     <div className="ad-panel-title">Detection Log</div>
                     <div className="ad-panel-sub">All PPE detections across all stations &nbsp;<span className="ad-log-count">— {filteredDetections.length} of {detections.length} records</span></div>
                   </div>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <div className="ad-panel-actions">
                     <button className="ad-btn ad-btn-primary"
                       style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
                       onClick={() => setReportModal(true)}
@@ -1124,7 +1181,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                     <select className="ad-filter-select" value={filterViolation} onChange={e => setFilterViolation(e.target.value)}><option>All Types</option><option>Violation</option><option>Compliant</option></select></div>
                   <button className="ad-filter-reset" onClick={resetFilters}>Reset Filters</button>
                 </div>
-                <table className="ad-table">
+                <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Scrollable admin records"><table className="ad-table">
                   <thead><tr><th>Photo</th><th>#</th><th>Worker</th><th>Station</th><th>Inspector</th><th>Date & Time</th><th>Status</th><th>Missing PPE</th><th>Present PPE</th></tr></thead>
                   <tbody>
                     {detLoading ? <tr><td colSpan={9} className="ad-empty">Loading detections…</td></tr>
@@ -1132,9 +1189,9 @@ export default function AdminDashboard({ setCurrentPage }) {
                     : filteredDetections.map(d => (
                       <tr key={d.id}>
                         <td>
-                          {d.photo_url
-                            ? <img src={d.photo_url} alt="Proof" onClick={() => setAdminPhoto(d.photo_url)}
-                                style={{ width: 44, height: 44, objectFit: 'cover', borderRadius: 6, cursor: 'pointer', border: '2px solid #fca5a5' }} />
+                          {d.has_photo
+                            ? <button type="button" onClick={() => openAdminPhoto(d.id)} aria-label="Open proof photo"
+                                style={{ width: 44, height: 44, borderRadius: 6, cursor: 'pointer', border: '2px solid #fca5a5', background: '#fff1f2', fontSize: '1.1rem' }}>📷</button>
                             : <div style={{ width: 44, height: 44, borderRadius: 6, background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                 <span style={{ fontSize: '1.1rem' }}>{d.result === 'violation' ? '⚠️' : '✓'}</span>
                               </div>}
@@ -1155,7 +1212,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </table></div>
               </div>
             </div>
           )}
@@ -1169,7 +1226,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                     <div className="ad-panel-title">Password Reset Requests</div>
                     <div className="ad-panel-sub">
                       {pwRequests.filter(r => r.status === 'pending').length} pending &nbsp;
-                      <span className="ad-log-count">— temp password will be emailed if Gmail is on file</span>
+                      <span className="ad-log-count">— reset links expire after 30 minutes</span>
                     </div>
                   </div>
                   <button className="ad-refresh-btn" onClick={fetchPwRequests} disabled={pwLoading}>
@@ -1179,9 +1236,9 @@ export default function AdminDashboard({ setCurrentPage }) {
                 {pwLoading ? <div className="ad-empty">Loading requests…</div>
                 : pwRequests.length === 0 ? <div className="ad-empty">No password reset requests yet</div>
                 : (
-                  <table className="ad-table">
+                  <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Scrollable admin records"><table className="ad-table">
                     <thead>
-                      <tr><th>Email</th><th>Reason</th><th>Status</th><th>Submitted</th><th>Temp Password</th><th>Actions</th></tr>
+                      <tr><th>Email</th><th>Reason</th><th>Status</th><th>Submitted</th><th>Recovery</th><th>Actions</th></tr>
                     </thead>
                     <tbody>
                       {pwRequests.map(r => (
@@ -1191,27 +1248,20 @@ export default function AdminDashboard({ setCurrentPage }) {
                           <td>
                             <span className={`ad-status ${r.status === 'pending' ? 'inactive' : 'active'}`}>
                               <span className="ad-status-dot" />
-                              {r.status === 'pending' ? 'Pending' : 'Resolved'}
+                              {r.status === 'pending' ? 'Pending' : r.status === 'issued' ? 'Link issued' : 'Resolved'}
                             </span>
                           </td>
                           <td style={{ color: '#aaa', fontSize: '0.82rem' }}>
                             {new Date(r.created_at).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                           </td>
                           <td>
-                            {r.status === 'resolved'
-                              ? <code style={{ background: '#f1f5f9', padding: '2px 8px', borderRadius: 4, fontSize: '0.82rem', color: '#334155' }}>{r.temp_password}</code>
-                              : <input
-                                  style={{ border: '1px solid #e2e8f0', borderRadius: 6, padding: '0.35rem 0.65rem', fontSize: '0.82rem', width: 140 }}
-                                  placeholder="Set temp password"
-                                  value={tempPassInputs[r.id] || ''}
-                                  onChange={e => setTempPassInputs(p => ({ ...p, [r.id]: e.target.value }))}
-                                />}
+                            {r.status === 'resolved' ? 'Completed' : r.expires_at ? `Link expires ${new Date(r.expires_at).toLocaleTimeString()}` : 'Awaiting approval'}
                           </td>
                           <td>
                             <div className="ad-action-btns">
-                              {r.status === 'pending' && (
+                              {r.status !== 'resolved' && (
                                 <button className="ad-btn-reactivate" onClick={() => handleResetPassword(r.id, r.email)}>
-                                  Reset Password
+                                  Create Reset Link
                                 </button>
                               )}
                               <button className="ad-btn-delete" onClick={() => handleDeletePwRequest(r.id)}>Delete</button>
@@ -1220,7 +1270,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                  </table></div>
                 )}
               </div>
             </div>
@@ -1240,7 +1290,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                   {activity.map((a, i) => (
                     <div className="ad-activity-item" key={i}>
                       <div className="ad-activity-dot-wrap">
-                        <div className="ad-activity-dot" style={{ background: a.type === 'detection' ? (a.text.includes('violation') ? '#e53e3e' : '#38a169') : 'linear-gradient(135deg, #667eea, #764ba2)' }} />
+                        <div className="ad-activity-dot" style={{ background: a.type === 'detection' ? (a.text.includes('violation') ? '#e53e3e' : '#38a169') : 'linear-gradient(135deg, #607e4d, #91a77f)' }} />
                         {i < activity.length - 1 && <div className="ad-activity-line" />}
                       </div>
                       <div>
@@ -1273,7 +1323,7 @@ export default function AdminDashboard({ setCurrentPage }) {
               <div className="ad-modal-field">
                 <label className="ad-modal-label">Full Name</label>
                 <input className={`ad-modal-input${fieldErrors.full_name ? ' error' : ''}`} placeholder="Juan dela Cruz" value={newUser.full_name}
-                  onChange={e => { const f = e.target.value.replace(/[^A-Za-zÀ-ÖØ-öø-ÿÑñ\s'.\-]/g, ''); setNewUser({ ...newUser, full_name: f }); setFieldErrors(p => ({ ...p, full_name: '' })); }} />
+                  onChange={e => { const f = e.target.value.replace(/[^A-Za-zÀ-ÖØ-öø-ÿÑñ\s'.-]/g, ''); setNewUser({ ...newUser, full_name: f }); setFieldErrors(p => ({ ...p, full_name: '' })); }} />
                 {fieldErrors.full_name && <span className="ad-field-error">⚠ {fieldErrors.full_name}</span>}
               </div>
               <div className="ad-modal-field">
@@ -1300,10 +1350,21 @@ export default function AdminDashboard({ setCurrentPage }) {
                 <select className="ad-modal-select" value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })}>
                   <option value="inspector">Inspector</option>
                   <option value="admin">Admin</option>
+                  <option value="user">User (worker portal)</option>
                 </select>
               </div>
+              {newUser.role === 'user' && (
+                <div className="ad-modal-field">
+                  <label className="ad-modal-label" htmlFor="newUser-worker">Linked worker *</label>
+                  <select id="newUser-worker" className="ad-modal-select" required value={newUser.worker_id} onChange={e => setNewUser(p => ({ ...p, worker_id: e.target.value }))}>
+                    <option value="">Select a worker</option>
+                    {workers.map(w => <option key={w.id} value={w.id} disabled={users.some(u => u.worker_id === w.id && u.id !== null)}>{w.employee_id} — {w.full_name}</option>)}
+                  </select>
+                  <span className="ad-panel-sub">This account can only view this worker’s profile, QR code, and compliance records. Register a worker first if the list is empty.</span>
+                </div>
+              )}
               <div className="ad-modal-footer">
-                <button type="button" className="ad-btn ad-btn-ghost" onClick={() => { setShowModal(false); setNewUser({ full_name: '', email: '', password: '', role: 'inspector', gmail: '' }); setFieldErrors({}); setFormMsg({ type: '', text: '' }); }}>Cancel</button>
+                <button type="button" className="ad-btn ad-btn-ghost" onClick={() => { setShowModal(false); setNewUser({ full_name: '', email: '', password: '', role: 'inspector', gmail: '', worker_id: '' }); setFieldErrors({}); setFormMsg({ type: '', text: '' }); }}>Cancel</button>
                 <button type="submit" className="ad-btn ad-btn-primary" disabled={submitting}>{submitting ? 'Creating…' : 'Create User'}</button>
               </div>
             </form>
@@ -1322,7 +1383,7 @@ export default function AdminDashboard({ setCurrentPage }) {
               <div className="ad-modal-field">
                 <label className="ad-modal-label">Full Name</label>
                 <input className={`ad-modal-input${workerErrors.full_name ? ' error' : ''}`} placeholder="Juan dela Cruz" value={newWorker.full_name}
-                  onChange={e => { const f = e.target.value.replace(/[^A-Za-zÀ-ÖØ-öø-ÿÑñ\s'.\-]/g, ''); setNewWorker({ ...newWorker, full_name: f }); setWorkerErrors(p => ({ ...p, full_name: '' })); }} />
+                  onChange={e => { const f = e.target.value.replace(/[^A-Za-zÀ-ÖØ-öø-ÿÑñ\s'.-]/g, ''); setNewWorker({ ...newWorker, full_name: f }); setWorkerErrors(p => ({ ...p, full_name: '' })); }} />
                 {workerErrors.full_name && <span className="ad-field-error">⚠ {workerErrors.full_name}</span>}
               </div>
               <div className="ad-modal-field">
@@ -1498,7 +1559,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                 <label className="ad-modal-label">Full Name</label>
                 <input className={`ad-modal-input${editUserErrors.full_name ? ' error' : ''}`}
                   placeholder="Juan dela Cruz" value={editUserForm.full_name}
-                  onChange={e => { const f = e.target.value.replace(/[^A-Za-zÀ-ÖØ-öø-ÿÑñ\s'.\-]/g, ''); setEditUserForm(p => ({ ...p, full_name: f })); setEditUserErrors(p => ({ ...p, full_name: '' })); }} />
+                  onChange={e => { const f = e.target.value.replace(/[^A-Za-zÀ-ÖØ-öø-ÿÑñ\s'.-]/g, ''); setEditUserForm(p => ({ ...p, full_name: f })); setEditUserErrors(p => ({ ...p, full_name: '' })); }} />
                 {editUserErrors.full_name && <span className="ad-field-error">⚠ {editUserErrors.full_name}</span>}
               </div>
               <div className="ad-modal-field">
@@ -1519,8 +1580,19 @@ export default function AdminDashboard({ setCurrentPage }) {
                 <select className="ad-modal-select" value={editUserForm.role} onChange={e => setEditUserForm(p => ({ ...p, role: e.target.value }))}>
                   <option value="inspector">Inspector</option>
                   <option value="admin">Admin</option>
+                  <option value="user">User (worker portal)</option>
                 </select>
               </div>
+              {editUserForm.role === 'user' && (
+                <div className="ad-modal-field">
+                  <label className="ad-modal-label" htmlFor="editUserForm-worker">Linked worker *</label>
+                  <select id="editUserForm-worker" className="ad-modal-select" required value={editUserForm.worker_id} onChange={e => setEditUserForm(p => ({ ...p, worker_id: e.target.value }))}>
+                    <option value="">Select a worker</option>
+                    {workers.map(w => <option key={w.id} value={w.id} disabled={users.some(u => u.worker_id === w.id && u.id !== editingUser?.id)}>{w.employee_id} — {w.full_name}</option>)}
+                  </select>
+                  <span className="ad-panel-sub">This account can only view this worker’s profile, QR code, and compliance records. Register a worker first if the list is empty.</span>
+                </div>
+              )}
               <div className="ad-modal-field">
                 <label className="ad-modal-label">Status</label>
                 <select className="ad-modal-select" value={editUserForm.is_active} onChange={e => setEditUserForm(p => ({ ...p, is_active: e.target.value === 'true' }))}>
@@ -1536,6 +1608,13 @@ export default function AdminDashboard({ setCurrentPage }) {
           </div>
         </div>
       )}
+
+      {resetLink && <div className="ad-modal-overlay"><div className="ad-modal" role="dialog" aria-modal="true" aria-labelledby="recovery-title">
+        <h2 id="recovery-title">Deliver this reset link securely</h2>
+        <p>Verify the worker's identity before sharing. This link expires in 30 minutes and is shown only here.</p>
+        <input aria-label="Single-use reset link" readOnly value={resetLink} onFocus={e => e.target.select()} style={{ width: '100%' }} />
+        <button className="ad-btn ad-btn-primary" onClick={() => setResetLink('')}>Done</button>
+      </div></div>}
 
     </div>
   );

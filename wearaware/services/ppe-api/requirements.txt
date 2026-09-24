@@ -1,0 +1,8 @@
+ultralytics>=8.3,<9
+opencv-python-headless>=4.10,<5
+Pillow>=11.3,<13
+numpy>=1.26,<3
+fastapi>=0.115,<1
+uvicorn[standard]>=0.34,<1
+python-multipart>=0.0.22,<1
+python-dotenv>=1,<2

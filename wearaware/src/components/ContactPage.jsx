@@ -1,4 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import { API } from '../config/api';
+import MarketingNav from './MarketingNav';
+import useMarketingMotion from '../hooks/useMarketingMotion';
+import React, { useState } from 'react';
 import './ContactPage.css';
 
 function ContactPage({ setCurrentPage }) {
@@ -13,21 +16,7 @@ function ContactPage({ setCurrentPage }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    window.scrollTo({ top: 0 });
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) entry.target.classList.add('visible');
-        });
-      },
-      { threshold: 0.1, rootMargin: '0px 0px -100px 0px' }
-    );
-
-    document.querySelectorAll('.fade-in').forEach((el) => observer.observe(el));
-    return () => observer.disconnect();
-  }, []);
+  useMarketingMotion();
 
   const handleNav = (e, page) => {
     e.preventDefault();
@@ -44,7 +33,7 @@ function ContactPage({ setCurrentPage }) {
     setSubmitting(true);
     setError('');
     try {
-      const res = await fetch('http://localhost:5000/api/contact', {
+      const res = await fetch(`${API}/contact`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData),
@@ -75,29 +64,16 @@ function ContactPage({ setCurrentPage }) {
   ];
 
   return (
-    <div className="contact-page">
+    <div className="contact-page marketing-page">
       {/* Navigation */}
-      <nav className="navbar">
-        <div className="logo" onClick={(e) => handleNav(e, 'landing')} style={{ cursor: 'pointer' }}>
-          <div className="logo-icon">
-            <img src="/favicon.svg" alt="WearAware logo" style={{ width: 32, height: 32 }} />
-          </div>
-          <span>WearAware</span>
-        </div>
-        <ul className="nav-links">
-          <li><a href="#" onClick={(e) => handleNav(e, 'about')}>ABOUT US</a></li>
-          <li><a href="#" onClick={(e) => handleNav(e, 'projects')}>OUR PROJECTS</a></li>
-          <li><a href="#" onClick={(e) => handleNav(e, 'expertise')}>EXPERTISE</a></li>
-          <li><a href="#" onClick={(e) => handleNav(e, 'contact')}>GET IN TOUCH</a></li>
-        </ul>
-      </nav>
+      <MarketingNav currentPage="contact" setCurrentPage={setCurrentPage} />
 
       {/* Hero */}
       <section className="cp-hero">
         <div className="cp-hero-overlay" />
         <div className="cp-hero-content">
           <div className="hero-subtitle">WE'D LOVE TO HEAR FROM YOU</div>
-          <h1 className="hero-title">GET IN<br />TOUCH</h1>
+          <h1 className="hero-title">Better safety starts<br />with a conversation.</h1>
           <p className="hero-description">
             Have questions about WearAware or want to know more about the project?
             Send us a message and we'll get back to you.

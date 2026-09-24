@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import MarketingNav from './MarketingNav';
+import useMarketingMotion from '../hooks/useMarketingMotion';
+import React, { useState } from 'react';
 import './OurProjects.css';
 
 // ─── To use your own photos, replace the `image` URLs below ───
@@ -70,19 +72,8 @@ const categories = ['All', 'Construction', 'Warehouse', 'Industrial'];
 
 export default function OurProjects({ setCurrentPage }) {
   const [activeCategory, setActiveCategory] = useState('All');
-  const [visible, setVisible] = useState(false);
 
-  useEffect(() => {
-    setTimeout(() => setVisible(true), 50);
-
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting) entry.target.classList.add('visible');
-      });
-    }, { threshold: 0.1, rootMargin: '0px 0px -80px 0px' });
-
-    document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
-  }, []);
+  useMarketingMotion();
 
   const handleNav = (e, page) => {
     e.preventDefault();
@@ -94,30 +85,17 @@ export default function OurProjects({ setCurrentPage }) {
     : projects.filter(p => p.category === activeCategory);
 
   return (
-    <div className="projects-page">
+    <div className="projects-page marketing-page">
 
       {/* Navigation */}
-      <nav className="navbar">
-        <div className="logo" onClick={(e) => handleNav(e, 'landing')} style={{ cursor: 'pointer' }}>
-          <div className="logo-icon">
-            <img src="/favicon.svg" alt="WearAware logo" style={{ width: 32, height: 32 }} />
-          </div>
-          <span>WearAware</span>
-        </div>
-        <ul className="nav-links">
-          <li><a href="#" onClick={(e) => handleNav(e, 'about')}>ABOUT US</a></li>
-          <li><a href="#" onClick={(e) => handleNav(e, 'projects')}>OUR PROJECTS</a></li>
-          <li><a href="#" onClick={(e) => handleNav(e, 'expertise')}>EXPERTISE</a></li>
-          <li><a href="#" onClick={(e) => handleNav(e, 'contact')}>GET IN TOUCH</a></li>
-        </ul>
-      </nav>
+      <MarketingNav currentPage="projects" setCurrentPage={setCurrentPage} />
 
       {/* Hero */}
       <section className="projects-hero">
         <div className="projects-hero-overlay" />
-        <div className={`projects-hero-content ${visible ? 'visible' : ''}`}>
+        <div className="projects-hero-content visible">
           <div className="projects-hero-subtitle">CAPSTONE PROJECT 2025</div>
-          <h1 className="projects-hero-title">OUR<br />PROJECTS</h1>
+          <h1 className="projects-hero-title">Real sites.<br />Safer starts.</h1>
           <p className="projects-hero-desc">
             A look at the deployment sites where WearAware's checkpoint-based
             PPE monitoring is being tested and applied.
@@ -139,6 +117,7 @@ export default function OurProjects({ setCurrentPage }) {
           {categories.map(cat => (
             <button
               key={cat}
+              aria-pressed={activeCategory === cat}
               className={`projects-filter-btn ${activeCategory === cat ? 'active' : ''}`}
               onClick={() => setActiveCategory(cat)}
             >
