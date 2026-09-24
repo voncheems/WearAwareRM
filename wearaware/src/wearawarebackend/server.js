@@ -417,6 +417,9 @@ function startupFailureMessage(err) {
   if (/CORS_ORIGINS|FRONTEND_URL/.test(message)) return 'Startup configuration error: FRONTEND_URL and CORS_ORIGINS must be the HTTPS Vercel URL.';
   if (/Production MongoDB/.test(message)) return 'Startup configuration error: MONGODB_URI must be an Atlas URI with credentials and TLS.';
   if (/Database initialization is incomplete/.test(message)) return 'Database initialization is incomplete. Use the Atlas database containing the WearAware migration and data.';
+  if (/dedicated readWrite account/.test(message)) return 'Atlas database-user permissions are incorrect. Give the runtime user the readWrite role for the wearaware database only.';
+  if (/Provision strict database validation/.test(message)) return 'Atlas database is missing the required collection validation rules. It must be provisioned before this production deployment can start.';
+  if (/not authorized|Unauthorized|code 13/i.test(message)) return 'Atlas database-user permissions are insufficient. Give the runtime user the readWrite role for the wearaware database.';
   if (/authentication failed|bad auth|auth failed|code 18/i.test(message)) return 'Database authentication failed. Reset the Atlas database-user password and update MONGODB_URI in Render.';
   if (/ENOTFOUND|querySrv|DNS/i.test(message)) return 'Database address could not be resolved. Copy the Atlas Driver URI again and keep the cluster hostname unchanged.';
   if (err?.name === 'MongoServerSelectionError' || /ECONNREFUSED|timed out|network/i.test(message)) return 'Atlas could not be reached. In Atlas Network Access, add and activate the 0.0.0.0/0 rule for this demo.';
