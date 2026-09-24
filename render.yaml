@@ -2,7 +2,7 @@ services:
   - type: web
     name: wearaware-api
     runtime: node
-    rootDir: src/wearawarebackend
+    rootDir: wearaware/src/wearawarebackend
     buildCommand: npm ci
     startCommand: npm start
     healthCheckPath: /health
