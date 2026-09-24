@@ -144,7 +144,11 @@ export default function LoginPage({ setCurrentPage }) {
                   <div className="login-input-wrap">
                     <input id="login-email" name="email" className="login-input" type="email" placeholder="you@wearaware.ph"
                       value={email}
-                      onChange={e => { setEmail(e.target.value); if (error === 'Enter a valid email address.') setError(''); }}
+                      onChange={e => {
+                        // Keep the sign-in identifier simple and prevent unsupported symbols.
+                        setEmail(e.target.value.replace(/[^A-Za-z0-9._@-]/g, ''));
+                        if (error === 'Enter a valid email address.') setError('');
+                      }}
                       onBlur={() => { if (email.trim() && !isValidEmail(email.trim())) setError('Enter a valid email address.'); }}
                       aria-invalid={Boolean(email.trim()) && !isValidEmail(email.trim())}
                       autoComplete="email" required />
