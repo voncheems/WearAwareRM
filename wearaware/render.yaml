@@ -23,9 +23,3 @@ services:
         value: https://wearaware-demo.vercel.app
       - key: AI_API_KEY
         sync: false
-      - key: EMAIL_USER
-        sync: false
-      - key: EMAIL_PASS
-        sync: false
-      - key: CONTACT_EMAIL
-        sync: false
