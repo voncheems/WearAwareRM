@@ -360,7 +360,9 @@ export default function AdminDashboard({ setCurrentPage }) {
     setLoadErrors(prev => ({ ...prev, 'Workers': '' }));
     try {
       const res = await adminFetch(`${API}/workers`, { headers: getAuthHeaders() });
-      if (res.ok) setWorkers(await res.json());
+      const data = await res.json();
+      if (!Array.isArray(data)) throw new Error('The server returned an invalid worker list.');
+      setWorkers(data);
     } catch (err) { setLoadErrors(prev => ({ ...prev, 'Workers': err.message })); }
     finally { setLoadingWorkers(false); }
   };
@@ -369,7 +371,9 @@ export default function AdminDashboard({ setCurrentPage }) {
     setLoadErrors(prev => ({ ...prev, 'Stations': '' }));
     try {
       const res = await adminFetch(`${API}/devices`, { headers: getAuthHeaders() });
-      if (res.ok) setDevices(await res.json());
+      const data = await res.json();
+      if (!Array.isArray(data)) throw new Error('The server returned an invalid station list.');
+      setDevices(data);
     } catch (err) { setLoadErrors(prev => ({ ...prev, 'Stations': err.message })); }
   };
 
@@ -819,12 +823,14 @@ export default function AdminDashboard({ setCurrentPage }) {
   };
 
   const accountUsers = Array.isArray(users) ? users.filter(user => user && typeof user === 'object') : [];
+  const accountWorkers = Array.isArray(workers) ? workers.filter(worker => worker && typeof worker === 'object') : [];
+  const stationDevices = Array.isArray(devices) ? devices.filter(device => device && typeof device === 'object') : [];
   const inspectors           = accountUsers.filter(u => u.role === 'inspector' && u.is_active);
-  const workerStationOptions = ['All Stations', ...new Set(devices.map(d => d.label).filter(Boolean))];
+  const workerStationOptions = ['All Stations', ...new Set(stationDevices.map(d => d.label).filter(Boolean))];
 
-  const filteredWorkers = workers.filter(w => {
+  const filteredWorkers = accountWorkers.filter(w => {
     if (workerFilterStation !== 'All Stations') {
-      const dev = devices.find(d => d.id === w.device_id);
+      const dev = stationDevices.find(d => d.id === w.device_id);
       if (!dev || dev.label !== workerFilterStation) return false;
     }
     if (workerFilterStatus !== 'All Statuses' && w.status !== workerFilterStatus.toLowerCase()) return false;
@@ -923,7 +929,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                 </div>
                 <div className="ad-stat-card">
                   <div className="ad-stat-icon"><HardHat size={22} /></div>
-                  <div className="ad-stat-number">{workers.length}</div>
+                  <div className="ad-stat-number">{accountWorkers.length}</div>
                   <div className="ad-stat-label">Workers</div>
                   <div className="ad-stat-change up">↑ On registry</div>
                 </div>
@@ -1009,7 +1015,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                     <tbody>
                       {accountUsers.map(u => (
                         <tr key={u.id}>
-                          <td style={{ fontWeight: 600 }}>{u.full_name}{u.role === 'user' && <div className="ad-panel-sub">{workers.find(w => w.id === u.worker_id)?.employee_id || 'Worker link missing'}</div>}</td>
+                          <td style={{ fontWeight: 600 }}>{u.full_name}{u.role === 'user' && <div className="ad-panel-sub">{accountWorkers.find(w => w.id === u.worker_id)?.employee_id || 'Worker link missing'}</div>}</td>
                           <td style={{ color: '#666', fontSize: '0.85rem' }}>{u.email}</td>
                           <td style={{ color: '#666', fontSize: '0.85rem' }}>{u.gmail || <span style={{ color: '#ccc' }}>—</span>}</td>
                           <td><span className={`ad-role-badge ad-role-${u.role}`}>{roleLabel(u.role)}</span></td>
@@ -1042,7 +1048,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                 <div className="ad-panel-header">
                   <div>
                     <div className="ad-panel-title">Worker Registry</div>
-                    <div className="ad-panel-sub">{workers.length} workers on record &nbsp;<span className="ad-log-count">— {filteredWorkers.length} shown</span></div>
+                    <div className="ad-panel-sub">{accountWorkers.length} workers on record &nbsp;<span className="ad-log-count">— {filteredWorkers.length} shown</span></div>
                   </div>
                   <div className="ad-panel-actions">
                     <button
@@ -1602,7 +1608,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                   <label className="ad-modal-label" htmlFor="editUserForm-worker">Linked worker</label>
                   <select id="editUserForm-worker" className="ad-modal-select" value={editUserForm.worker_id} onChange={e => setEditUserForm(p => ({ ...p, worker_id: e.target.value }))}>
                     <option value="">Create a worker profile automatically</option>
-                    {workers.map(w => <option key={w.id} value={w.id} disabled={accountUsers.some(u => u.worker_id === w.id && u.id !== editingUser?.id)}>{w.employee_id} — {w.full_name}</option>)}
+                    {accountWorkers.map(w => <option key={w.id} value={w.id} disabled={accountUsers.some(u => u.worker_id === w.id && u.id !== editingUser?.id)}>{w.employee_id} — {w.full_name}</option>)}
                   </select>
                   <span className="ad-panel-sub">Leave this empty to create and link a worker profile automatically. Select an existing worker only when you need to link an existing record.</span>
                 </div>
