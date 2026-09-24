@@ -78,21 +78,22 @@ test('invalid login stays generic and role/algorithm/session checks cannot be by
   assert.equal((await call('/api/users', bad)).status, 401);
   assert.equal((await call('/api/users/1/deactivate', token(1), 'PATCH', {})).status, 403);
 });
-test('inspector reads and scan writes are confined to assigned stations', async () => {
+test('inspectors read only their stations while the dedicated scanner routes writes by station', async () => {
   const auth = token(2);
   assert.deepEqual((await (await call('/api/workers', auth)).json()).map(x => x.id), [11]);
   assert.deepEqual((await (await call('/api/devices', auth)).json()).map(x => x.id), [1]);
   assert.equal((await call('/api/workers/12', auth)).status, 403);
   assert.equal((await call('/api/detections', auth, 'POST', { worker_id: 12, result: 'compliant' })).status, 403);
-  const response = await call('/api/detections', auth, 'POST', { worker_id: 11, device_uuid: 'forged-station', result: 'compliant' });
-  assert.equal(response.status, 201);
-  const record = await db.collection('detections').findOne({ id: (await response.json()).detection_id });
-  assert.equal(record.device_id, 1); assert.equal(await db.collection('devices').countDocuments(), 2);
+  assert.equal((await call('/api/detections', auth, 'POST', { worker_id: 11, device_uuid: 'forged-station', result: 'compliant' })).status, 403);
 
   // The dedicated scanner account cannot choose an inspector. The worker's
   // station assignment routes each check to the right inspector dashboard.
   const scannerAuth = token(6, 'scanner');
   assert.equal((await call('/api/workers/by-employee-id/W11', scannerAuth)).status, 200);
+  const firstScannerCheck = await call('/api/detections', scannerAuth, 'POST', { worker_id: 11, result: 'compliant' });
+  assert.equal(firstScannerCheck.status, 201);
+  const firstRecord = await db.collection('detections').findOne({ id: (await firstScannerCheck.json()).detection_id });
+  assert.equal(firstRecord.inspector_id, 2); assert.equal(firstRecord.device_id, 1); assert.equal(firstRecord.worker_id, 11);
   const scannerCheck = await call('/api/detections', scannerAuth, 'POST', { worker_id: 12, result: 'compliant' });
   assert.equal(scannerCheck.status, 201);
   const scannerRecord = await db.collection('detections').findOne({ id: (await scannerCheck.json()).detection_id });
@@ -162,8 +163,9 @@ test('AI uploads require an authorized scanning account and forward confidence a
   try {
     const send = async (auth, size = 16) => { const form = new FormData(); form.append('conf', '0.35'); form.append('file', new Blob([new Uint8Array(size)], { type: 'image/jpeg' }), 'frame.jpg'); return fetch(base + '/api/ppe/detect', { method: 'POST', headers: auth ? { Authorization: `Bearer ${auth}` } : {}, body: form }); };
     assert.equal((await send(null)).status, 401); assert.equal((await send(token(1))).status, 403); assert.equal(received, null);
-    assert.equal((await send(token(3))).status, 200); assert.equal(received.url, '/detect?conf=0.35'); assert.equal(received.key, process.env.AI_API_KEY);
-    assert.equal((await send(token(3), 2 * 1024 * 1024 + 1)).status, 413);
+    assert.equal((await send(token(3))).status, 403); assert.equal(received, null);
+    assert.equal((await send(token(6, 'scanner'))).status, 200); assert.equal(received.url, '/detect?conf=0.35'); assert.equal(received.key, process.env.AI_API_KEY);
+    assert.equal((await send(token(6, 'scanner'), 2 * 1024 * 1024 + 1)).status, 413);
   } finally { await new Promise(r => mock.close(r)); }
 });
 test('legacy plaintext cleanup revokes access and strict database validation rejects unsafe records', async () => {

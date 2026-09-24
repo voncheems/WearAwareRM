@@ -20,11 +20,11 @@ router.get('/', requireAuth, requireRole('admin', 'inspector'), validateRequest,
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/workers/by-employee-id/:employee_id
-//  Lookup worker by QR scan. Inspectors can only scan workers assigned to
-//  their stations. A checkpoint scanner can scan any active assigned worker;
-//  the worker's station determines the inspector who receives the result.
+//  Lookup worker by QR scan. A checkpoint scanner can scan any active
+//  assigned worker; the worker's station determines the inspector who
+//  receives the result.
 // ══════════════════════════════════════════════════════════════
-router.get('/by-employee-id/:employee_id', requireAuth, requireRole('admin', 'inspector', 'scanner'), validateRequest, async (req, res) => {
+router.get('/by-employee-id/:employee_id', requireAuth, requireRole('admin', 'scanner'), validateRequest, async (req, res) => {
   try {
     const result = await data.workers({ employee_id: req.params.employee_id });
 
@@ -32,22 +32,6 @@ router.get('/by-employee-id/:employee_id', requireAuth, requireRole('admin', 'in
       return res.status(404).json({ error: 'Worker not found.' });
 
     const worker = result.rows[0];
-
-    // ── Inspectors: enforce station ownership ──
-    if (req.user.role === 'inspector') {
-      // Worker must be assigned to a station
-      if (!worker.device_id)
-        return res.status(403).json({ error: 'This worker is not assigned to any station.' });
-
-      // That station must be assigned to this inspector
-      const stationCheck = await data.find('devices', { id: worker.device_id, inspector_id: req.user.id }, "id", {});
-      if (!stationCheck.rows[0])
-        return res.status(403).json({ error: 'This worker is not assigned to your station.' });
-
-      // Worker must be active
-      if (worker.status !== 'active')
-        return res.status(403).json({ error: `Worker is ${worker.status === 'on_leave' ? 'on leave' : 'terminated'} and cannot be scanned.` });
-    }
 
     if (req.user.role === 'scanner') {
       if (worker.status !== 'active' || !worker.device_id)

@@ -4,7 +4,7 @@ const { requireAuth, requireRole } = require('../middleware');
 const { limiter } = require('../security');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 1, fieldSize: 20, parts: 2 },
   fileFilter(req, file, cb) { cb(null, ['image/jpeg', 'image/png'].includes(file.mimetype)); } });
-router.post('/detect', requireAuth, requireRole('inspector', 'scanner'), limiter(60, 60 * 1000, { keyGenerator: req => String(req.user.id) }), upload.single('file'), async (req, res, next) => {
+router.post('/detect', requireAuth, requireRole('scanner'), limiter(60, 60 * 1000, { keyGenerator: req => String(req.user.id) }), upload.single('file'), async (req, res, next) => {
   if (!req.file) return res.status(400).json({ error: 'Upload one JPEG or PNG image (maximum 2 MB).' });
   const conf = Number(req.body.conf ?? 0.35);
   if (!Number.isFinite(conf) || conf < 0.1 || conf > 1) return res.status(400).json({ error: 'Invalid confidence threshold.' });

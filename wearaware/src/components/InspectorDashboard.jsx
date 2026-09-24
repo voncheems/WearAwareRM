@@ -596,8 +596,8 @@ export default function InspectorDashboard({ setCurrentPage }) {
                   <h1 id="ins-welcome-title">Every check.<br /><span>A safer start.</span></h1>
                   <p>Your checkpoint activity, records, and insights. All in one place.</p>
                   <div className="ins-welcome-actions">
-                    <button className="ins-btn ins-welcome-primary" onClick={() => setCurrentPage('scanner')}>Start an inspection <ArrowUpRight size={17} /></button>
-                    <button className="ins-btn ins-welcome-secondary" onClick={() => setActiveTab('stations')}>View my stations</button>
+                    <button className="ins-btn ins-welcome-primary" onClick={() => setActiveTab('stations')}>View my stations <ArrowUpRight size={17} /></button>
+                    <button className="ins-btn ins-welcome-secondary" onClick={fetchDetections}>Refresh records</button>
                   </div>
                 </div>
                 <div className="ins-welcome-mark" aria-hidden="true"><Shield size={64} strokeWidth={1} /><span>AWARENESS IN ACTION</span></div>

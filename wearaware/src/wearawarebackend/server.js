@@ -293,7 +293,7 @@ app.patch('/api/inspector/profile', requireAuth, requireRole('inspector'), valid
 // ══════════════════════════════════════════════════════════════
 //  POST /api/detections  ✅ UPDATED — now saves worker_id
 // ══════════════════════════════════════════════════════════════
-app.post('/api/detections', requireAuth, requireRole('inspector', 'scanner'), validateRequest, async (req, res) => {
+app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest, async (req, res) => {
   const {
     result,
     missing_ppe     = [],
@@ -314,8 +314,6 @@ app.post('/api/detections', requireAuth, requireRole('inspector', 'scanner'), va
     const station = (await data.find('devices', { id: worker.device_id, is_active: true }, 'id inspector_id')).rows[0];
     if (!station?.inspector_id) return res.status(403).json({ error: 'This worker has no inspector assigned to their active station.' });
 
-    if (req.user.role === 'inspector' && station.inspector_id !== req.user.id)
-      return res.status(403).json({ error: 'This worker is not assigned to your active station.' });
     // The registered worker/station relationship determines the station, never a browser UUID.
     const deviceDbId = station.id;
     // A worker check is always owned by the inspector assigned to its station.
