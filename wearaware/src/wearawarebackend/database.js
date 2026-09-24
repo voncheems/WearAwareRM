@@ -36,15 +36,17 @@ async function ensureIndexes(db) {
     ['notifications', { detection_id: 1 }], ['password_reset_requests', { email: 1, status: 1 }],
   ]) await db.collection(table).createIndex(keys);
 }
-async function ensureUserRole(db) {
-  if (await db.collection('roles').findOne({ name: 'user' })) return;
+async function ensureRole(db, name) {
+  if (await db.collection('roles').findOne({ name })) return;
   const last = await db.collection('roles').find().sort({ id: -1 }).limit(1).next();
   await db.collection('_counters').updateOne({ _id: 'roles' }, { $max: { value: last?.id || 0 } }, { upsert: true });
   const counter = await db.collection('_counters').findOneAndUpdate({ _id: 'roles' }, { $inc: { value: 1 } }, { returnDocument: 'after' });
   try {
-    await db.collection('roles').updateOne({ name: 'user' }, { $setOnInsert: { id: counter.value, name: 'user' } }, { upsert: true });
+    await db.collection('roles').updateOne({ name }, { $setOnInsert: { id: counter.value, name } }, { upsert: true });
   } catch (error) {
-    if (error.code !== 11000 || !await db.collection('roles').findOne({ name: 'user' })) throw error;
+    if (error.code !== 11000 || !await db.collection('roles').findOne({ name })) throw error;
   }
 }
-module.exports = { ensureUserRole, TABLES, connectDatabase, getDatabase, closeDatabase, ensureIndexes };
+async function ensureUserRole(db) { return ensureRole(db, 'user'); }
+async function ensureScannerRole(db) { return ensureRole(db, 'scanner'); }
+module.exports = { ensureUserRole, ensureScannerRole, TABLES, connectDatabase, getDatabase, closeDatabase, ensureIndexes };

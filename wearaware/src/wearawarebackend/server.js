@@ -13,7 +13,7 @@ const http = require('node:http');
 const nodemailer = require('nodemailer');
 
 const { data, JWT_SECRET, requireAuth, requireRole } = require('./middleware');
-const { connectDatabase, closeDatabase, ensureIndexes, ensureUserRole } = require('./database');
+const { connectDatabase, closeDatabase, ensureIndexes, ensureUserRole, ensureScannerRole } = require('./database');
 
 const app = express();
 const DUMMY_PASSWORD_HASH = bcrypt.hashSync('non-account-comparison-value', 12);
@@ -293,7 +293,7 @@ app.patch('/api/inspector/profile', requireAuth, requireRole('inspector'), valid
 // ══════════════════════════════════════════════════════════════
 //  POST /api/detections  ✅ UPDATED — now saves worker_id
 // ══════════════════════════════════════════════════════════════
-app.post('/api/detections', requireAuth, requireRole('inspector', 'user'), validateRequest, async (req, res) => {
+app.post('/api/detections', requireAuth, requireRole('inspector', 'scanner'), validateRequest, async (req, res) => {
   const {
     result,
     missing_ppe     = [],
@@ -316,11 +316,6 @@ app.post('/api/detections', requireAuth, requireRole('inspector', 'user'), valid
 
     if (req.user.role === 'inspector' && station.inspector_id !== req.user.id)
       return res.status(403).json({ error: 'This worker is not assigned to your active station.' });
-    if (req.user.role === 'user') {
-      const account = (await data.users({ id: req.user.id }, 'worker_id')).rows[0];
-      if (!Number.isSafeInteger(account?.worker_id) || account.worker_id !== worker.id)
-        return res.status(403).json({ error: 'You can only record a PPE check for your own worker profile.' });
-    }
     // The registered worker/station relationship determines the station, never a browser UUID.
     const deviceDbId = station.id;
     // A worker check is always owned by the inspector assigned to its station.
@@ -451,6 +446,7 @@ async function start() {
   if (migration?.status !== 'complete') throw new Error('Database initialization is incomplete. Run the verified migration first.');
   await ensureIndexes(db);
   await ensureUserRole(db);
+  await ensureScannerRole(db);
   await cleanLegacyPasswords(db);
   if (process.env.NODE_ENV === 'production') await verifyDatabaseSecurity(db);
   else await applyDatabaseSecurity(db);

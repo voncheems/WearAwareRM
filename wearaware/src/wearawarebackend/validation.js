@@ -6,7 +6,7 @@ const optionalText = max => z.string().trim().max(max).nullable().optional();
 const email = z.string().trim().email().max(254).transform(v => v.toLowerCase());
 const optionalEmail = z.union([email, z.literal(''), z.null()]).optional();
 const password = z.string().min(8).refine(v => Buffer.byteLength(v, 'utf8') <= 72, 'Password must be at most 72 UTF-8 bytes.').refine(v => /[A-Za-z]/.test(v) && /\d/.test(v), 'Password must contain letters and numbers.');
-const role = z.enum(['admin', 'inspector', 'user']);
+const role = z.enum(['admin', 'inspector', 'user', 'scanner']);
 const ppe = z.array(z.enum(['helmet', 'vest', 'no-helmet', 'no-vest', 'gloves', 'boots', 'goggles', 'mask'])).max(8);
 const worker = z.object({ full_name: text(120), position: optionalText(100), device_id: optionalId, contact_number: optionalText(30), status: z.enum(['active', 'on_leave', 'terminated']).optional() }).strict();
 const station = z.object({ label: text(120), location: optionalText(200), required_ppe: z.array(z.enum(['helmet', 'vest', 'gloves', 'boots', 'goggles', 'mask'])).min(1).max(6).optional(), inspector_id: optionalId, is_active: z.boolean().optional() }).strict();

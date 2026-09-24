@@ -14,7 +14,7 @@ before(async () => {
   mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   Object.assign(process.env, { NODE_ENV: 'test', MONGODB_URI: mongo.getUri(), MONGODB_DB: 'security_test', JWT_SECRET: secret, EMAIL_USER: '', EMAIL_PASS: '', AI_API_KEY: 'isolated-ai-test-key-with-32-characters', TRUST_PROXY: '', CORS_ORIGINS: 'http://localhost:5173', FRONTEND_URL: 'http://localhost:5173' });
   const database = require('../database'); db = await database.connectDatabase(); await database.ensureIndexes(db);
-  await db.collection('roles').insertMany([{ id: 1, name: 'admin' }, { id: 2, name: 'inspector' }, { id: 3, name: 'user' }]);
+  await db.collection('roles').insertMany([{ id: 1, name: 'admin' }, { id: 2, name: 'inspector' }, { id: 3, name: 'user' }, { id: 4, name: 'scanner' }]);
   const password_hash = await bcrypt.hash('OriginalPass123', 4);
   await db.collection('users').insertMany([
     { id: 1, full_name: 'Admin', email: 'admin@example.test', role_id: 1, is_active: true, password_hash },
@@ -22,6 +22,7 @@ before(async () => {
     { id: 3, full_name: 'Other Inspector', email: 'other@example.test', role_id: 2, is_active: true, password_hash },
     { id: 4, full_name: 'Worker', email: 'worker@example.test', role_id: 3, worker_id: 11, is_active: true, password_hash },
     { id: 5, full_name: 'Legacy Recovery', email: 'legacy@example.test', role_id: 3, is_active: true, password_hash },
+    { id: 6, full_name: 'Checkpoint Scanner', email: 'scanner@example.test', role_id: 4, is_active: true, password_hash },
   ]);
   await db.collection('_counters').insertOne({ _id: 'users', value: 5 });
   await db.collection('devices').insertMany([{ id: 1, device_id: 'first', label: 'First', inspector_id: 2, is_active: true }, { id: 2, device_id: 'other', label: 'Other', inspector_id: 3, is_active: true }]);
@@ -88,14 +89,14 @@ test('inspector reads and scan writes are confined to assigned stations', async 
   const record = await db.collection('detections').findOne({ id: (await response.json()).detection_id });
   assert.equal(record.device_id, 1); assert.equal(await db.collection('devices').countDocuments(), 2);
 
-  // A worker can create only their own check. The station assignment, not a
-  // browser-provided inspector value, makes it appear in the right dashboard.
-  const workerAuth = token(4, 'user');
-  assert.equal((await call('/api/detections', workerAuth, 'POST', { worker_id: 12, result: 'compliant' })).status, 403);
-  const ownCheck = await call('/api/detections', workerAuth, 'POST', { worker_id: 11, result: 'compliant' });
-  assert.equal(ownCheck.status, 201);
-  const ownRecord = await db.collection('detections').findOne({ id: (await ownCheck.json()).detection_id });
-  assert.equal(ownRecord.inspector_id, 2); assert.equal(ownRecord.device_id, 1); assert.equal(ownRecord.worker_id, 11);
+  // The dedicated scanner account cannot choose an inspector. The worker's
+  // station assignment routes each check to the right inspector dashboard.
+  const scannerAuth = token(6, 'scanner');
+  assert.equal((await call('/api/workers/by-employee-id/W11', scannerAuth)).status, 200);
+  const scannerCheck = await call('/api/detections', scannerAuth, 'POST', { worker_id: 12, result: 'compliant' });
+  assert.equal(scannerCheck.status, 201);
+  const scannerRecord = await db.collection('detections').findOne({ id: (await scannerCheck.json()).detection_id });
+  assert.equal(scannerRecord.inspector_id, 3); assert.equal(scannerRecord.device_id, 2); assert.equal(scannerRecord.worker_id, 12);
 });
 test('recovery is generic, stores only hashes, enforces expiry and consumes a link once', async () => {
   const request = await call('/api/auth/forgot-password', null, 'POST', { email: 'worker@example.test' });
@@ -154,7 +155,7 @@ test('production refuses insecure configuration and HTTP including forged forwar
     assert.equal(response.status, 426); assert.match(response.headers.get('strict-transport-security'), /max-age=31536000/);
   } finally { process.env.NODE_ENV = 'test'; await new Promise(r => temporary.close(r)); }
 });
-test('AI uploads require an authorized scanner and forward confidence and service credentials privately', async () => {
+test('AI uploads require an authorized scanning account and forward confidence and service credentials privately', async () => {
   let received = null;
   const mock = httpModule.createServer((req, res) => { received = { url: req.url, key: req.headers['x-api-key'] }; req.resume(); res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ detections: [], total_detections: 0, is_compliant: false })); });
   mock.listen(0, '127.0.0.1'); await once(mock, 'listening'); process.env.AI_API_URL = `http://127.0.0.1:${mock.address().port}`;

@@ -1,7 +1,7 @@
 import { API } from '../config/api';
 import { createElement, useEffect, useState } from 'react';
 import QRCode from 'qrcode';
-import { LayoutDashboard, ClipboardList, QrCode, User, ShieldCheck, CheckCircle, AlertTriangle, ArrowUpRight, RefreshCw, Download, ScanLine } from 'lucide-react';
+import { LayoutDashboard, ClipboardList, QrCode, User, ShieldCheck, CheckCircle, AlertTriangle, ArrowUpRight, RefreshCw, Download } from 'lucide-react';
 import './InspectorDashboard.css';
 import './InspectorTheme.css';
 import './UserDashboard.css';
@@ -76,7 +76,7 @@ export default function UserDashboard({ setCurrentPage }) {
         {error && <div className="ins-error-msg" role="alert">{error} <button className="ins-btn ins-btn-secondary" onClick={() => setRefresh(n => n + 1)}>Try again</button></div>}
         {loading ? <div className="ins-panel user-loading" role="status">Loading your safety records…</div> : data && <>
           {tab === 'overview' && <>
-            <section className="ins-welcome"><div><div className="ins-eyebrow">YOUR SAFETY JOURNEY</div><h2>Ready for work.<br /><span>Aware of your safety.</span></h2><p>Welcome, {name}. Start your PPE check and it will be sent to your assigned inspector.</p><div className="ins-welcome-actions"><button className="ins-btn ins-welcome-primary" onClick={() => setCurrentPage('scanner')}>Start PPE check <ScanLine size={17} /></button><button className="ins-btn ins-welcome-secondary" onClick={() => setTab('history')}>View my history</button></div></div><div className="ins-welcome-mark" aria-hidden="true"><ShieldCheck size={64} strokeWidth={1} /></div></section>
+            <section className="ins-welcome"><div><div className="ins-eyebrow">YOUR SAFETY JOURNEY</div><h2>Ready for work.<br /><span>Aware of your safety.</span></h2><p>Welcome, {name}. Keep your checkpoint ID and PPE history close at hand.</p><div className="ins-welcome-actions"><button className="ins-btn ins-welcome-primary" onClick={() => setTab('qr')}>Show my QR code <ArrowUpRight size={17} /></button><button className="ins-btn ins-welcome-secondary" onClick={() => setTab('history')}>View my history</button></div></div><div className="ins-welcome-mark" aria-hidden="true"><ShieldCheck size={64} strokeWidth={1} /></div></section>
             <div className="ins-stats">
               <Stat icon={<ShieldCheck size={20} />} value={stats.compliance_rate === null ? '—' : `${stats.compliance_rate}%`} label="Compliance rate" note={stats.total ? 'All-time compliant scans ÷ total scans' : 'No scans yet'} />
               <Stat icon={<ClipboardList size={20} />} value={stats.total} label="Total scans" note="Your checkpoint history" />

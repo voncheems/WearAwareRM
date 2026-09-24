@@ -1352,6 +1352,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                 <label className="ad-modal-label">Role</label>
                 <select className="ad-modal-select" value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })}>
                   <option value="inspector">Inspector</option>
+                  <option value="scanner">Scanner (checkpoint device)</option>
                   <option value="admin">Admin</option>
                   <option value="user">User (worker portal)</option>
                 </select>
@@ -1578,6 +1579,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                 <label className="ad-modal-label">Role</label>
                 <select className="ad-modal-select" value={editUserForm.role} onChange={e => setEditUserForm(p => ({ ...p, role: e.target.value }))}>
                   <option value="inspector">Inspector</option>
+                  <option value="scanner">Scanner (checkpoint device)</option>
                   <option value="admin">Admin</option>
                   <option value="user">User (worker portal)</option>
                 </select>
