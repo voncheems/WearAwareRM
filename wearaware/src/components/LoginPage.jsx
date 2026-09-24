@@ -3,6 +3,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowUpRight, Eye, EyeOff, ShieldCheck, ScanLine, QrCode, ClipboardCheck, KeyRound } from 'lucide-react';
 import './LoginPage.css';
 
+const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+
 export default function LoginPage({ setCurrentPage }) {
   const [email,    setEmail]    = useState('');
   const [password, setPassword] = useState('');
@@ -46,14 +48,16 @@ export default function LoginPage({ setCurrentPage }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!email || !password) { setError('Please fill in all fields.'); return; }
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !password) { setError('Please fill in all fields.'); return; }
+    if (!isValidEmail(normalizedEmail)) { setError('Enter a valid email address.'); return; }
     setError('');
     setLoading(true);
     try {
       const response = await fetch(`${API}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: normalizedEmail, password }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Login failed. Please try again.');
@@ -138,8 +142,12 @@ export default function LoginPage({ setCurrentPage }) {
                 <div className="login-field">
                   <label className="login-label" htmlFor="login-email">Email address</label>
                   <div className="login-input-wrap">
-                    <input id="login-email" name="email" className="login-input" type="email" placeholder="you@company.com"
-                      value={email} onChange={e => setEmail(e.target.value)} autoComplete="email" />
+                    <input id="login-email" name="email" className="login-input" type="email" placeholder="you@wearaware.ph"
+                      value={email}
+                      onChange={e => { setEmail(e.target.value); if (error === 'Enter a valid email address.') setError(''); }}
+                      onBlur={() => { if (email.trim() && !isValidEmail(email.trim())) setError('Enter a valid email address.'); }}
+                      aria-invalid={Boolean(email.trim()) && !isValidEmail(email.trim())}
+                      autoComplete="email" required />
                   </div>
                 </div>
 
