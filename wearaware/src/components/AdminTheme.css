@@ -37,7 +37,19 @@
 .ad-page .ad-topbar-title { font-size: 19px; font-weight: 550; letter-spacing: -.6px; }
 .ad-page .ad-topbar-sub { font-size: 11px; color: var(--ad-muted); margin-top: 4px; }
 .ad-page .ad-badge { background: #edf2e7; border: 1px solid #dce6d2; color: #5d764c; font-size: 9px; letter-spacing: 1.4px; padding: 7px 12px; }
-.ad-page .ad-content { padding: 24px 4px; animation: adminReveal .4s ease both; }
+.ad-page .ad-content {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  min-height: 180px;
+  padding: 24px 4px;
+  animation: adminReveal .4s ease both;
+}
+.ad-page .ad-content > .ad-grid-full {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
 .ad-page .ad-welcome { display: flex; align-items: center; justify-content: space-between; gap: 32px; padding: 34px 38px; border-radius: 24px; background: linear-gradient(100deg, #23341eea, #23341ead), url('https://images.unsplash.com/photo-1590579491624-f98f36d4c763?auto=format&fit=crop&w=1600&q=80') center / cover; color: white; margin-bottom: 24px; }
 .ad-page .ad-eyebrow { font-size: 9px; letter-spacing: 2px; color: #cadab8; margin-bottom: 17px; }
 .ad-page .ad-welcome h1 { font-size: clamp(30px, 3.2vw, 46px); font-weight: 500; letter-spacing: -.055em; line-height: 1.08; }
