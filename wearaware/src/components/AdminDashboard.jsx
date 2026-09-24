@@ -24,8 +24,34 @@ function roleLabel(role) {
 }
 
 function dateLabel(value) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString();
+  try {
+    const date = new Date(typeof value === 'string' || typeof value === 'number' ? value : '');
+    return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString();
+  } catch {
+    return '—';
+  }
+}
+
+function displayText(value, fallback = '—') {
+  return typeof value === 'string' || typeof value === 'number' ? String(value) : fallback;
+}
+
+class AdminPanelBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { failed: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    if (this.state.failed) {
+      return <div className="ad-panel"><div className="ad-empty">This section could not be displayed. Refresh the page and try again.</div></div>;
+    }
+    return this.props.children;
+  }
 }
 
 function UserManagementPanel({ users, loading, onAddUser, onEditUser, onDeactivate, onReactivate }) {
@@ -52,10 +78,10 @@ function UserManagementPanel({ users, loading, onAddUser, onEditUser, onDeactiva
                   const active = account.is_active === true;
                   const role = typeof account.role === 'string' ? account.role : '';
                   return (
-                    <tr key={account.id || account.email || account.full_name}>
-                      <td style={{ fontWeight: 600 }}>{account.full_name || 'Unnamed account'}</td>
-                      <td style={{ color: '#666', fontSize: '0.85rem' }}>{account.email || '—'}</td>
-                      <td style={{ color: '#666', fontSize: '0.85rem' }}>{account.gmail || <span style={{ color: '#ccc' }}>—</span>}</td>
+                    <tr key={displayText(account.id, displayText(account.email, displayText(account.full_name, 'account')))}>
+                      <td style={{ fontWeight: 600 }}>{displayText(account.full_name, 'Unnamed account')}</td>
+                      <td style={{ color: '#666', fontSize: '0.85rem' }}>{displayText(account.email)}</td>
+                      <td style={{ color: '#666', fontSize: '0.85rem' }}>{displayText(account.gmail, '') || <span style={{ color: '#ccc' }}>—</span>}</td>
                       <td><span className={`ad-role-badge ad-role-${role || 'unknown'}`}>{roleLabel(role)}</span></td>
                       <td><span className={`ad-status ${active ? 'active' : 'inactive'}`}><span className="ad-status-dot" />{active ? 'Active' : 'Inactive'}</span></td>
                       <td style={{ color: '#aaa', fontSize: '0.82rem' }}>{dateLabel(account.created_at)}</td>
@@ -63,8 +89,8 @@ function UserManagementPanel({ users, loading, onAddUser, onEditUser, onDeactiva
                         {role !== 'admin' && (
                           <div className="ad-action-btns">
                             {active
-                              ? <button className="ad-btn-deactivate" onClick={() => onDeactivate(account.id, account.full_name)}>Deactivate</button>
-                              : <button className="ad-btn-reactivate" onClick={() => onReactivate(account.id, account.full_name)}>Reactivate</button>}
+                              ? <button className="ad-btn-deactivate" onClick={() => onDeactivate(account.id, displayText(account.full_name, 'this account'))}>Deactivate</button>
+                              : <button className="ad-btn-reactivate" onClick={() => onReactivate(account.id, displayText(account.full_name, 'this account'))}>Reactivate</button>}
                             <button className="ad-btn-reactivate" onClick={() => onEditUser(account)}>Edit</button>
                           </div>
                         )}
@@ -1073,14 +1099,16 @@ export default function AdminDashboard({ setCurrentPage }) {
 
           {/* ── USERS ── */}
           {activeTab === 'users' && (
-            <UserManagementPanel
-              users={accountUsers}
-              loading={loadingUsers}
-              onAddUser={() => { setShowModal(true); setFormMsg({ type: '', text: '' }); setFieldErrors({}); }}
-              onEditUser={openEditUser}
-              onDeactivate={handleDeactivate}
-              onReactivate={handleReactivate}
-            />
+            <AdminPanelBoundary>
+              <UserManagementPanel
+                users={accountUsers}
+                loading={loadingUsers}
+                onAddUser={() => { setShowModal(true); setFormMsg({ type: '', text: '' }); setFieldErrors({}); }}
+                onEditUser={openEditUser}
+                onDeactivate={handleDeactivate}
+                onReactivate={handleReactivate}
+              />
+            </AdminPanelBoundary>
           )}
 
           {/* ── WORKERS ── */}
