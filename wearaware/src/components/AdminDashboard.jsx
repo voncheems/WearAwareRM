@@ -18,7 +18,14 @@ function getAuthHeaders() {
 }
 
 function roleLabel(role) {
-  return role === 'user' ? 'Worker' : role.charAt(0).toUpperCase() + role.slice(1);
+  if (role === 'user') return 'Worker';
+  if (typeof role !== 'string' || !role) return 'Unassigned';
+  return role.charAt(0).toUpperCase() + role.slice(1);
+}
+
+function dateLabel(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString();
 }
 
 async function adminFetch(url, options) {
@@ -318,7 +325,8 @@ export default function AdminDashboard({ setCurrentPage }) {
     try {
       const res = await adminFetch(`${API}/users`, { headers: getAuthHeaders() });
       const data = await res.json();
-      if (res.ok) setUsers(data);
+      if (!Array.isArray(data)) throw new Error('The server returned an invalid user list.');
+      setUsers(data);
     } catch (err) { setLoadErrors(prev => ({ ...prev, 'Users': err.message })); }
     finally { setLoadingUsers(false); }
   };
@@ -810,7 +818,8 @@ export default function AdminDashboard({ setCurrentPage }) {
     return d ? `${d.label} — ${d.location || 'No location'}` : 'Unassigned';
   };
 
-  const inspectors           = users.filter(u => u.role === 'inspector' && u.is_active);
+  const accountUsers = Array.isArray(users) ? users.filter(user => user && typeof user === 'object') : [];
+  const inspectors           = accountUsers.filter(u => u.role === 'inspector' && u.is_active);
   const workerStationOptions = ['All Stations', ...new Set(devices.map(d => d.label).filter(Boolean))];
 
   const filteredWorkers = workers.filter(w => {
@@ -894,7 +903,7 @@ export default function AdminDashboard({ setCurrentPage }) {
               <div className="ad-stats">
                 <div className="ad-stat-card">
                   <div className="ad-stat-icon"><Users size={22} /></div>
-                  <div className="ad-stat-number">{users.length}</div>
+                  <div className="ad-stat-number">{accountUsers.length}</div>
                   <div className="ad-stat-label">Total Users</div>
                   <div className="ad-stat-change up">↑ Registered accounts</div>
                 </div>
@@ -947,14 +956,14 @@ export default function AdminDashboard({ setCurrentPage }) {
                   <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Scrollable admin records"><table className="ad-table">
                     <thead><tr><th>Name</th><th>Role</th><th>Status</th></tr></thead>
                     <tbody>
-                      {users.slice(0, 5).map(u => (
+                      {accountUsers.slice(0, 5).map(u => (
                         <tr key={u.id}>
                           <td><div style={{ fontWeight: 600 }}>{u.full_name}</div><div style={{ fontSize: '0.78rem', color: '#aaa' }}>{u.email}</div></td>
                           <td><span className={`ad-role-badge ad-role-${u.role}`}>{roleLabel(u.role)}</span></td>
                           <td><span className={`ad-status ${u.is_active ? 'active' : 'inactive'}`}><span className="ad-status-dot" />{u.is_active ? 'Active' : 'Inactive'}</span></td>
                         </tr>
                       ))}
-                      {users.length === 0 && <tr><td colSpan={3} className="ad-empty">No users found</td></tr>}
+                      {accountUsers.length === 0 && <tr><td colSpan={3} className="ad-empty">No users found</td></tr>}
                     </tbody>
                   </table></div>
                 </div>
@@ -991,21 +1000,21 @@ export default function AdminDashboard({ setCurrentPage }) {
             <div className="ad-grid-full">
               <div className="ad-panel">
                 <div className="ad-panel-header">
-                  <div><div className="ad-panel-title">All Users</div><div className="ad-panel-sub">{users.length} accounts registered</div></div>
+                  <div><div className="ad-panel-title">All Users</div><div className="ad-panel-sub">{accountUsers.length} accounts registered</div></div>
                   <button className="ad-btn ad-btn-primary" onClick={() => { setShowModal(true); setFormMsg({ type: '', text: '' }); setFieldErrors({}); }}>+ Add User</button>
                 </div>
                 {loadingUsers ? <div className="ad-empty">Loading users...</div> : (
                   <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Scrollable admin records"><table className="ad-table">
                     <thead><tr><th>Name</th><th>Login Email</th><th>Gmail</th><th>Role</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
                     <tbody>
-                      {users.map(u => (
+                      {accountUsers.map(u => (
                         <tr key={u.id}>
                           <td style={{ fontWeight: 600 }}>{u.full_name}{u.role === 'user' && <div className="ad-panel-sub">{workers.find(w => w.id === u.worker_id)?.employee_id || 'Worker link missing'}</div>}</td>
                           <td style={{ color: '#666', fontSize: '0.85rem' }}>{u.email}</td>
                           <td style={{ color: '#666', fontSize: '0.85rem' }}>{u.gmail || <span style={{ color: '#ccc' }}>—</span>}</td>
                           <td><span className={`ad-role-badge ad-role-${u.role}`}>{roleLabel(u.role)}</span></td>
                           <td><span className={`ad-status ${u.is_active ? 'active' : 'inactive'}`}><span className="ad-status-dot" />{u.is_active ? 'Active' : 'Inactive'}</span></td>
-                          <td style={{ color: '#aaa', fontSize: '0.82rem' }}>{new Date(u.created_at).toLocaleDateString()}</td>
+                          <td style={{ color: '#aaa', fontSize: '0.82rem' }}>{dateLabel(u.created_at)}</td>
                           <td>
                             {u.role !== 'admin' && (
                               <div className="ad-action-btns">
@@ -1018,7 +1027,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                           </td>
                         </tr>
                       ))}
-                      {users.length === 0 && <tr><td colSpan={7} className="ad-empty">No users found</td></tr>}
+                      {accountUsers.length === 0 && <tr><td colSpan={7} className="ad-empty">No users found</td></tr>}
                     </tbody>
                   </table></div>
                 )}
@@ -1593,7 +1602,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                   <label className="ad-modal-label" htmlFor="editUserForm-worker">Linked worker</label>
                   <select id="editUserForm-worker" className="ad-modal-select" value={editUserForm.worker_id} onChange={e => setEditUserForm(p => ({ ...p, worker_id: e.target.value }))}>
                     <option value="">Create a worker profile automatically</option>
-                    {workers.map(w => <option key={w.id} value={w.id} disabled={users.some(u => u.worker_id === w.id && u.id !== editingUser?.id)}>{w.employee_id} — {w.full_name}</option>)}
+                    {workers.map(w => <option key={w.id} value={w.id} disabled={accountUsers.some(u => u.worker_id === w.id && u.id !== editingUser?.id)}>{w.employee_id} — {w.full_name}</option>)}
                   </select>
                   <span className="ad-panel-sub">Leave this empty to create and link a worker profile automatically. Select an existing worker only when you need to link an existing record.</span>
                 </div>
