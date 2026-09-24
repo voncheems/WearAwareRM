@@ -114,7 +114,7 @@
         .ad-grid-full { margin-bottom: 1.5rem; }
 
         /* ── Panel ── */
-        .ad-panel { background: white; border-radius: 16px; padding: 1.8rem; box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+        .admin-surface { background: white; border-radius: 16px; padding: 1.8rem; box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
         .ad-panel-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
         .ad-panel-title  { font-size: 1rem; font-weight: 800; color: #1a1a1a; }
         .ad-panel-sub    { font-size: 0.8rem; color: #aaa; margin-top: 2px; }

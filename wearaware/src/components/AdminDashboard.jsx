@@ -48,7 +48,7 @@ class AdminPanelBoundary extends React.Component {
 
   render() {
     if (this.state.failed) {
-      return <div className="ad-panel"><div className="ad-empty">This section could not be displayed. Refresh the page and try again.</div></div>;
+      return <div className="admin-surface"><div className="ad-empty">This section could not be displayed. Refresh the page and try again.</div></div>;
     }
     return this.props.children;
   }
@@ -61,7 +61,7 @@ function UserManagementPanel({ users, loading, onAddUser, onEditUser, onDeactiva
 
   return (
     <section className="ad-grid-full" aria-label="User management">
-      <div className="ad-panel">
+      <div className="admin-surface">
         <div className="ad-panel-header">
           <div>
             <div className="ad-panel-title">All Users</div>
@@ -1031,7 +1031,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                 </div>
               </div>
 
-              <div className="ad-panel" style={{ marginBottom: '1.5rem' }}>
+              <div className="admin-surface" style={{ marginBottom: '1.5rem' }}>
                 <div className="ad-panel-header">
                   <div>
                     <div className="ad-panel-title">Compliance Rate Trend</div>
@@ -1050,7 +1050,7 @@ export default function AdminDashboard({ setCurrentPage }) {
               </div>
 
               <div className="ad-grid">
-                <div className="ad-panel">
+                <div className="admin-surface">
                   <div className="ad-panel-header">
                     <div><div className="ad-panel-title">Recent Users</div><div className="ad-panel-sub">Latest registered accounts</div></div>
                     <button className="ad-panel-action" onClick={() => setActiveTab('users')}>View All →</button>
@@ -1069,7 +1069,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                     </tbody>
                   </table></div>
                 </div>
-                <div className="ad-panel">
+                <div className="admin-surface">
                   <div className="ad-panel-header">
                     <div><div className="ad-panel-title">Recent Detections</div><div className="ad-panel-sub">Latest checkpoint scans</div></div>
                     <button className="ad-panel-action" onClick={() => setActiveTab('detections')}>View All →</button>
@@ -1114,7 +1114,7 @@ export default function AdminDashboard({ setCurrentPage }) {
           {/* ── WORKERS ── */}
           {activeTab === 'workers' && (
             <div className="ad-grid-full">
-              <div className="ad-panel">
+              <div className="admin-surface">
                 <div className="ad-panel-header">
                   <div>
                     <div className="ad-panel-title">Worker Registry</div>
@@ -1196,7 +1196,7 @@ export default function AdminDashboard({ setCurrentPage }) {
           {/* ── STATIONS ── */}
           {activeTab === 'stations' && (
             <div className="ad-grid-full">
-              <div className="ad-panel">
+              <div className="admin-surface">
                 <div className="ad-panel-header">
                   <div>
                     <div className="ad-panel-title">Station Management</div>
@@ -1245,7 +1245,7 @@ export default function AdminDashboard({ setCurrentPage }) {
           {/* ── DETECTION LOG ── */}
           {activeTab === 'detections' && (
             <div className="ad-grid-full">
-              <div className="ad-panel">
+              <div className="admin-surface">
                 <div className="ad-panel-header">
                   <div>
                     <div className="ad-panel-title">Detection Log</div>
@@ -1311,7 +1311,7 @@ export default function AdminDashboard({ setCurrentPage }) {
           {/* ── PASSWORD REQUESTS ── */}
           {activeTab === 'pwrequests' && (
             <div className="ad-grid-full">
-              <div className="ad-panel">
+              <div className="admin-surface">
                 <div className="ad-panel-header">
                   <div>
                     <div className="ad-panel-title">Password Reset Requests</div>
@@ -1369,7 +1369,7 @@ export default function AdminDashboard({ setCurrentPage }) {
 
           {/* ── ACTIVITY ── */}
           {activeTab === 'activity' && (
-            <div className="ad-panel">
+            <div className="admin-surface">
               <div className="ad-panel-header">
                 <div><div className="ad-panel-title">Activity Log</div><div className="ad-panel-sub">Recent system events — user registrations &amp; checkpoint scans</div></div>
                 <button className="ad-refresh-btn" onClick={fetchActivity} disabled={actLoading}>{actLoading ? '…' : '↻ Refresh'}</button>
