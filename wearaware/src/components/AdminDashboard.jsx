@@ -28,6 +28,60 @@ function dateLabel(value) {
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString();
 }
 
+function UserManagementPanel({ users, loading, onAddUser, onEditUser, onDeactivate, onReactivate }) {
+  const accounts = Array.isArray(users)
+    ? users.filter(account => account && typeof account === 'object')
+    : [];
+
+  return (
+    <section className="ad-grid-full" aria-label="User management">
+      <div className="ad-panel">
+        <div className="ad-panel-header">
+          <div>
+            <div className="ad-panel-title">All Users</div>
+            <div className="ad-panel-sub">{accounts.length} accounts registered</div>
+          </div>
+          <button className="ad-btn ad-btn-primary" onClick={onAddUser}>+ Add User</button>
+        </div>
+        {loading ? <div className="ad-empty">Loading users...</div> : (
+          <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="User accounts">
+            <table className="ad-table">
+              <thead><tr><th>Name</th><th>Login Email</th><th>Gmail</th><th>Role</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+              <tbody>
+                {accounts.map(account => {
+                  const active = account.is_active === true;
+                  const role = typeof account.role === 'string' ? account.role : '';
+                  return (
+                    <tr key={account.id || account.email || account.full_name}>
+                      <td style={{ fontWeight: 600 }}>{account.full_name || 'Unnamed account'}</td>
+                      <td style={{ color: '#666', fontSize: '0.85rem' }}>{account.email || '—'}</td>
+                      <td style={{ color: '#666', fontSize: '0.85rem' }}>{account.gmail || <span style={{ color: '#ccc' }}>—</span>}</td>
+                      <td><span className={`ad-role-badge ad-role-${role || 'unknown'}`}>{roleLabel(role)}</span></td>
+                      <td><span className={`ad-status ${active ? 'active' : 'inactive'}`}><span className="ad-status-dot" />{active ? 'Active' : 'Inactive'}</span></td>
+                      <td style={{ color: '#aaa', fontSize: '0.82rem' }}>{dateLabel(account.created_at)}</td>
+                      <td>
+                        {role !== 'admin' && (
+                          <div className="ad-action-btns">
+                            {active
+                              ? <button className="ad-btn-deactivate" onClick={() => onDeactivate(account.id, account.full_name)}>Deactivate</button>
+                              : <button className="ad-btn-reactivate" onClick={() => onReactivate(account.id, account.full_name)}>Reactivate</button>}
+                            <button className="ad-btn-reactivate" onClick={() => onEditUser(account)}>Edit</button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {accounts.length === 0 && <tr><td colSpan={7} className="ad-empty">No users found</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 async function adminFetch(url, options) {
   let response;
   try {
@@ -1019,42 +1073,14 @@ export default function AdminDashboard({ setCurrentPage }) {
 
           {/* ── USERS ── */}
           {activeTab === 'users' && (
-            <div className="ad-grid-full">
-              <div className="ad-panel">
-                <div className="ad-panel-header">
-                  <div><div className="ad-panel-title">All Users</div><div className="ad-panel-sub">{accountUsers.length} accounts registered</div></div>
-                  <button className="ad-btn ad-btn-primary" onClick={() => { setShowModal(true); setFormMsg({ type: '', text: '' }); setFieldErrors({}); }}>+ Add User</button>
-                </div>
-                {loadingUsers ? <div className="ad-empty">Loading users...</div> : (
-                  <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Scrollable admin records"><table className="ad-table">
-                    <thead><tr><th>Name</th><th>Login Email</th><th>Gmail</th><th>Role</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
-                    <tbody>
-                      {accountUsers.map(u => (
-                        <tr key={u.id}>
-                          <td style={{ fontWeight: 600 }}>{u.full_name}{u.role === 'user' && <div className="ad-panel-sub">{accountWorkers.find(w => w.id === u.worker_id)?.employee_id || 'Worker link missing'}</div>}</td>
-                          <td style={{ color: '#666', fontSize: '0.85rem' }}>{u.email}</td>
-                          <td style={{ color: '#666', fontSize: '0.85rem' }}>{u.gmail || <span style={{ color: '#ccc' }}>—</span>}</td>
-                          <td><span className={`ad-role-badge ad-role-${u.role}`}>{roleLabel(u.role)}</span></td>
-                          <td><span className={`ad-status ${u.is_active ? 'active' : 'inactive'}`}><span className="ad-status-dot" />{u.is_active ? 'Active' : 'Inactive'}</span></td>
-                          <td style={{ color: '#aaa', fontSize: '0.82rem' }}>{dateLabel(u.created_at)}</td>
-                          <td>
-                            {u.role !== 'admin' && (
-                              <div className="ad-action-btns">
-                                {u.is_active
-                                  ? <button className="ad-btn-deactivate" onClick={() => handleDeactivate(u.id, u.full_name)}>Deactivate</button>
-                                  : <button className="ad-btn-reactivate" onClick={() => handleReactivate(u.id, u.full_name)}>Reactivate</button>}
-                                <button className="ad-btn-reactivate" onClick={() => openEditUser(u)}>Edit</button>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                      {accountUsers.length === 0 && <tr><td colSpan={7} className="ad-empty">No users found</td></tr>}
-                    </tbody>
-                  </table></div>
-                )}
-              </div>
-            </div>
+            <UserManagementPanel
+              users={accountUsers}
+              loading={loadingUsers}
+              onAddUser={() => { setShowModal(true); setFormMsg({ type: '', text: '' }); setFieldErrors({}); }}
+              onEditUser={openEditUser}
+              onDeactivate={handleDeactivate}
+              onReactivate={handleReactivate}
+            />
           )}
 
           {/* ── WORKERS ── */}
