@@ -1,4 +1,4 @@
-const { validateWorkerLink } = require('./worker-access');
+const { resolveWorkerLink, removeCreatedWorker } = require('./worker-access');
 require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 
 const express  = require('express');
@@ -54,16 +54,22 @@ app.use('/api/user', require('./routes/user'));
 // ══════════════════════════════════════════════════════════════
 app.put('/api/users/:id', requireAuth, requireRole('admin'), validateRequest, async (req, res) => {
   const { full_name, gmail, role, is_active, worker_id } = req.body;
+  let link;
   if (Number(req.params.id) === req.user.id && (role !== 'admin' || is_active === false)) return res.status(403).json({ error: 'You cannot remove your own administrator access.' });
   if (!full_name) return res.status(400).json({ error: 'Full name is required.' });
   try {
     const roleResult = await data.find('roles', { name: role }, "id", {});
     if (!roleResult.rows[0]) return res.status(400).json({ error: 'Invalid role.' });
 
-    const linkedWorker = await validateWorkerLink(role, worker_id, req.params.id);
+    const currentUser = (await data.users({ id: req.params.id }, 'worker_id')).rows[0];
+    if (!currentUser) return res.status(404).json({ error: 'User not found.' });
+    link = await resolveWorkerLink(role, worker_id, req.params.id, full_name, currentUser.worker_id);
+    const linkedWorker = link.workerId;
     await data.update('users', { id: req.params.id }, { worker_id: linkedWorker, full_name: full_name.trim(), gmail: gmail || null, role_id: roleResult.rows[0].id, is_active: is_active ?? true }, "*");
-    res.json({ success: true });
+    res.json({ success: true, worker: link.createdWorker });
   } catch (err) {
+    // A failed account update must not leave an unlinked auto-created worker.
+    try { await removeCreatedWorker(link?.createdWorker); } catch { /* cleanup is best effort */ }
     if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
     if (err.status) return res.status(err.status).json({ error: err.message });
     if (err.code === 11000) return res.status(409).json({ error: 'This worker already has an account.' });
@@ -162,6 +168,7 @@ app.get('/api/users', requireAuth, requireRole('admin'), validateRequest, async 
 // ══════════════════════════════════════════════════════════════
 app.post('/api/users', requireAuth, requireRole('admin'), validateRequest, async (req, res) => {
   const { full_name, email, password, role, gmail, worker_id } = req.body;
+  let link;
 
   if (!full_name || !email || !password || !role)
     return res.status(400).json({ error: 'All fields are required.' });
@@ -171,13 +178,15 @@ app.post('/api/users', requireAuth, requireRole('admin'), validateRequest, async
     if (!roleResult.rows[0])
       return res.status(400).json({ error: 'Invalid role.' });
 
-    const linkedWorker = await validateWorkerLink(role, worker_id);
+    link = await resolveWorkerLink(role, worker_id, null, full_name);
+    const linkedWorker = link.workerId;
     const hash = await bcrypt.hash(password, 12);
 
     const result = await data.insert('users', { worker_id: linkedWorker, role_id: roleResult.rows[0].id, full_name: full_name, email: email, password_hash: hash, gmail: gmail || null }, "id full_name email created_at");
 
-    res.status(201).json({ success: true, user: result.rows[0] });
+    res.status(201).json({ success: true, user: result.rows[0], worker: link.createdWorker });
   } catch (err) {
+    try { await removeCreatedWorker(link?.createdWorker); } catch { /* cleanup is best effort */ }
     if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
     if (err.status) return res.status(err.status).json({ error: err.message });
     if (err.code === 11000)

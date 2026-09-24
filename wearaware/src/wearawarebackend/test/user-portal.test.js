@@ -84,16 +84,26 @@ test('User role cannot reach admin, inspector or mutation endpoints, including s
   assert.equal((await request('/api/users', token(3, 'admin'))).status, 403);
   assert.equal((await request('/api/detections', token(3, 'user'), 'POST', {})).status, 403);
 });
-test('admin must link a real, unique worker when creating or editing a User account', async () => {
+test('admin can create a User account with an automatic worker profile or link a real unique worker', async () => {
   const admin = token(1, 'admin');
   const body = { full_name: 'Portal User', email: 'portal@wearaware.ph', password: 'Worker1234', role: 'user' };
-  assert.equal((await request('/api/users', admin, 'POST', body)).status, 400);
-  assert.equal((await request('/api/users', admin, 'POST', {...body, worker_id: 999})).status, 400);
-  assert.equal((await request('/api/users', admin, 'POST', {...body, worker_id: {$ne: null}})).status, 400);
-  assert.equal((await request('/api/users', admin, 'POST', {...body, worker_id: 11})).status, 409);
-  assert.equal((await request('/api/users', admin, 'POST', {...body, worker_id: 14})).status, 201);
+  const automatic = await request('/api/users', admin, 'POST', body);
+  assert.equal(automatic.status, 201);
+  const automaticPayload = await automatic.json();
+  assert.equal(automaticPayload.worker.full_name, 'Portal User');
+  assert.match(automaticPayload.worker.employee_id, /^WA-\d{4}$/);
+  assert.equal((await db.collection('users').findOne({ id: automaticPayload.user.id })).worker_id, automaticPayload.worker.id);
+  assert.equal((await request('/api/users', admin, 'POST', {...body, email: 'invalid-link@wearaware.ph', worker_id: 999})).status, 400);
+  assert.equal((await request('/api/users', admin, 'POST', {...body, email: 'invalid-object@wearaware.ph', worker_id: {$ne: null}})).status, 400);
+  assert.equal((await request('/api/users', admin, 'POST', {...body, email: 'claimed@wearaware.ph', worker_id: 11})).status, 409);
+  assert.equal((await request('/api/users', admin, 'POST', {...body, email: 'linked@wearaware.ph', worker_id: 14})).status, 201);
   assert.equal((await request('/api/users/6', admin, 'PUT', {full_name: body.full_name, role: body.role, worker_id: 14})).status, 409);
   await assert.rejects(db.collection('users').insertOne({id: 80, email: 'duplicate@test.local', worker_id: 14}), {code: 11000});
+  const automaticEdit = await request('/api/users/6', admin, 'PUT', {full_name: 'Unlinked', role: 'user', is_active: true});
+  assert.equal(automaticEdit.status, 200);
+  const editedPayload = await automaticEdit.json();
+  assert.equal(editedPayload.worker.full_name, 'Unlinked');
+  assert.equal((await db.collection('users').findOne({ id: 6 })).worker_id, editedPayload.worker.id);
   const edit = await request('/api/users/6', admin, 'PUT', {full_name: 'Unlinked', role: 'inspector', is_active: true});
   assert.equal(edit.status, 200);
   assert.equal((await db.collection('users').findOne({id: 6})).worker_id, null);

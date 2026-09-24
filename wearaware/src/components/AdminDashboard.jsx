@@ -585,10 +585,11 @@ export default function AdminDashboard({ setCurrentPage }) {
       const res  = await adminFetch(`${API}/users`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(newUser) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setFormMsg({ type: 'success', text: `User "${newUser.full_name}" created successfully!` });
+      setFormMsg({ type: 'success', text: data.worker ? `User account and worker profile for "${newUser.full_name}" created successfully.` : `User "${newUser.full_name}" created successfully!` });
       setNewUser({ full_name: '', email: '', password: '', role: 'inspector', gmail: '', worker_id: '' });
       setFieldErrors({});
       fetchUsers();
+      if (data.worker) fetchWorkers();
     } catch (err) { setFormMsg({ type: 'error', text: err.message }); }
     finally { setSubmitting(false); }
   };
@@ -653,8 +654,9 @@ export default function AdminDashboard({ setCurrentPage }) {
         setCurrentPage('login');
         return;
       }
-      setEditUserMsg({ type: 'success', text: 'User updated successfully!' });
+      setEditUserMsg({ type: 'success', text: data.worker ? 'User updated and worker profile created successfully!' : 'User updated successfully!' });
       fetchUsers();
+      if (data.worker) fetchWorkers();
     } catch (err) { setEditUserMsg({ type: 'error', text: err.message }); }
     finally { setEditUserSubmitting(false); }
   };
@@ -1355,12 +1357,8 @@ export default function AdminDashboard({ setCurrentPage }) {
               </div>
               {newUser.role === 'user' && (
                 <div className="ad-modal-field">
-                  <label className="ad-modal-label" htmlFor="newUser-worker">Linked worker *</label>
-                  <select id="newUser-worker" className="ad-modal-select" required value={newUser.worker_id} onChange={e => setNewUser(p => ({ ...p, worker_id: e.target.value }))}>
-                    <option value="">Select a worker</option>
-                    {workers.map(w => <option key={w.id} value={w.id} disabled={users.some(u => u.worker_id === w.id && u.id !== null)}>{w.employee_id} — {w.full_name}</option>)}
-                  </select>
-                  <span className="ad-panel-sub">This account can only view this worker’s profile, QR code, and compliance records. Register a worker first if the list is empty.</span>
+                  <label className="ad-modal-label">Worker profile</label>
+                  <span className="ad-panel-sub">A worker profile, employee ID, and QR identity will be created automatically for this User account. Assign the worker to a station later when needed.</span>
                 </div>
               )}
               <div className="ad-modal-footer">
@@ -1585,12 +1583,12 @@ export default function AdminDashboard({ setCurrentPage }) {
               </div>
               {editUserForm.role === 'user' && (
                 <div className="ad-modal-field">
-                  <label className="ad-modal-label" htmlFor="editUserForm-worker">Linked worker *</label>
-                  <select id="editUserForm-worker" className="ad-modal-select" required value={editUserForm.worker_id} onChange={e => setEditUserForm(p => ({ ...p, worker_id: e.target.value }))}>
-                    <option value="">Select a worker</option>
+                  <label className="ad-modal-label" htmlFor="editUserForm-worker">Linked worker</label>
+                  <select id="editUserForm-worker" className="ad-modal-select" value={editUserForm.worker_id} onChange={e => setEditUserForm(p => ({ ...p, worker_id: e.target.value }))}>
+                    <option value="">Create a worker profile automatically</option>
                     {workers.map(w => <option key={w.id} value={w.id} disabled={users.some(u => u.worker_id === w.id && u.id !== editingUser?.id)}>{w.employee_id} — {w.full_name}</option>)}
                   </select>
-                  <span className="ad-panel-sub">This account can only view this worker’s profile, QR code, and compliance records. Register a worker first if the list is empty.</span>
+                  <span className="ad-panel-sub">Leave this empty to create and link a worker profile automatically. Select an existing worker only when you need to link an existing record.</span>
                 </div>
               )}
               <div className="ad-modal-field">
