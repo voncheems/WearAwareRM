@@ -68,10 +68,10 @@ export default function UserDashboard({ setCurrentPage }) {
       <nav className="ins-nav" aria-label="User navigation"><div className="ins-nav-label">Your workspace</div>
         {tabs.map(([id, label, Icon]) => <button className={`ins-nav-item ${tab === id ? 'active' : ''}`} aria-current={tab === id ? 'page' : undefined} key={id} onClick={() => setTab(id)}>{createElement(Icon, { size: 18 })}{label}</button>)}
       </nav>
-      <div className="ins-sidebar-footer"><div className="ins-user-info"><div className="ins-avatar"><User size={19} /></div><div><div className="ins-user-name">{name}</div><div className="ins-user-role">User · Worker portal</div></div></div><button className="ins-logout" onClick={logout}>Sign out</button></div>
+      <div className="ins-sidebar-footer"><div className="ins-user-info"><div className="ins-avatar"><User size={19} /></div><div><div className="ins-user-name">{name}</div><div className="ins-user-role">Worker portal</div></div></div><button className="ins-logout" onClick={logout}>Sign out</button></div>
     </aside>
     <main className="ins-main">
-      <header className="ins-topbar"><div><h1 className="ins-topbar-title">{tabs.find(([id]) => id === tab)[1]}</h1><p className="ins-topbar-sub">Your safety record, at a glance.</p></div><div className="user-header-actions"><button className="ins-btn ins-btn-secondary" onClick={() => setRefresh(n => n + 1)} disabled={loading} aria-label="Refresh your records"><RefreshCw size={16} /></button><span className="ins-badge">USER</span></div></header>
+      <header className="ins-topbar"><div><h1 className="ins-topbar-title">{tabs.find(([id]) => id === tab)[1]}</h1><p className="ins-topbar-sub">Your safety record, at a glance.</p></div><div className="user-header-actions"><button className="ins-btn ins-btn-secondary" onClick={() => setRefresh(n => n + 1)} disabled={loading} aria-label="Refresh your records"><RefreshCw size={16} /></button><span className="ins-badge">WORKER</span></div></header>
       <div className="ins-content" key={tab} aria-busy={loading}>
         {error && <div className="ins-error-msg" role="alert">{error} <button className="ins-btn ins-btn-secondary" onClick={() => setRefresh(n => n + 1)}>Try again</button></div>}
         {loading ? <div className="ins-panel user-loading" role="status">Loading your safety records…</div> : data && <>

@@ -66,7 +66,7 @@ router.get('/activity', requireAuth, requireRole('admin'), validateRequest, asyn
     const userEvents = usersResult.rows.map(e => ({
       ts  : e.ts,
       icon: e.role === 'admin' ? '🛡️' : '👤',
-      text: `${e.role === 'admin' ? 'Admin' : e.role === 'user' ? 'User' : 'Inspector'} account created — ${e.actor}`,
+      text: `${e.role === 'admin' ? 'Admin' : e.role === 'user' ? 'Worker' : e.role === 'scanner' ? 'Scanner' : 'Inspector'} account created — ${e.actor}`,
       type: 'user',
       time: formatRelativeTime(e.ts),
     }));

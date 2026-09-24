@@ -17,6 +17,10 @@ function getAuthHeaders() {
   return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 }
 
+function roleLabel(role) {
+  return role === 'user' ? 'Worker' : role.charAt(0).toUpperCase() + role.slice(1);
+}
+
 async function adminFetch(url, options) {
   let response;
   try {
@@ -585,7 +589,7 @@ export default function AdminDashboard({ setCurrentPage }) {
       const res  = await adminFetch(`${API}/users`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(newUser) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setFormMsg({ type: 'success', text: data.worker ? `User account and worker profile for "${newUser.full_name}" created successfully.` : `User "${newUser.full_name}" created successfully!` });
+      setFormMsg({ type: 'success', text: data.worker ? `Worker account and profile for "${newUser.full_name}" created successfully.` : `${roleLabel(newUser.role)} account for "${newUser.full_name}" created successfully!` });
       setNewUser({ full_name: '', email: '', password: '', role: 'inspector', gmail: '', worker_id: '' });
       setFieldErrors({});
       fetchUsers();
@@ -654,7 +658,7 @@ export default function AdminDashboard({ setCurrentPage }) {
         setCurrentPage('login');
         return;
       }
-      setEditUserMsg({ type: 'success', text: data.worker ? 'User updated and worker profile created successfully!' : 'User updated successfully!' });
+      setEditUserMsg({ type: 'success', text: data.worker ? 'Worker account updated and profile created successfully!' : `${roleLabel(editUserForm.role)} account updated successfully!` });
       fetchUsers();
       if (data.worker) fetchWorkers();
     } catch (err) { setEditUserMsg({ type: 'error', text: err.message }); }
@@ -946,7 +950,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                       {users.slice(0, 5).map(u => (
                         <tr key={u.id}>
                           <td><div style={{ fontWeight: 600 }}>{u.full_name}</div><div style={{ fontSize: '0.78rem', color: '#aaa' }}>{u.email}</div></td>
-                          <td><span className={`ad-role-badge ad-role-${u.role}`}>{u.role}</span></td>
+                          <td><span className={`ad-role-badge ad-role-${u.role}`}>{roleLabel(u.role)}</span></td>
                           <td><span className={`ad-status ${u.is_active ? 'active' : 'inactive'}`}><span className="ad-status-dot" />{u.is_active ? 'Active' : 'Inactive'}</span></td>
                         </tr>
                       ))}
@@ -999,7 +1003,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                           <td style={{ fontWeight: 600 }}>{u.full_name}{u.role === 'user' && <div className="ad-panel-sub">{workers.find(w => w.id === u.worker_id)?.employee_id || 'Worker link missing'}</div>}</td>
                           <td style={{ color: '#666', fontSize: '0.85rem' }}>{u.email}</td>
                           <td style={{ color: '#666', fontSize: '0.85rem' }}>{u.gmail || <span style={{ color: '#ccc' }}>—</span>}</td>
-                          <td><span className={`ad-role-badge ad-role-${u.role}`}>{u.role}</span></td>
+                          <td><span className={`ad-role-badge ad-role-${u.role}`}>{roleLabel(u.role)}</span></td>
                           <td><span className={`ad-status ${u.is_active ? 'active' : 'inactive'}`}><span className="ad-status-dot" />{u.is_active ? 'Active' : 'Inactive'}</span></td>
                           <td style={{ color: '#aaa', fontSize: '0.82rem' }}>{new Date(u.created_at).toLocaleDateString()}</td>
                           <td>
@@ -1354,7 +1358,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                   <option value="inspector">Inspector</option>
                   <option value="scanner">Scanner (checkpoint device)</option>
                   <option value="admin">Admin</option>
-                  <option value="user">User (worker portal)</option>
+                  <option value="user">Worker</option>
                 </select>
               </div>
               {newUser.role === 'user' && (
@@ -1581,7 +1585,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                   <option value="inspector">Inspector</option>
                   <option value="scanner">Scanner (checkpoint device)</option>
                   <option value="admin">Admin</option>
-                  <option value="user">User (worker portal)</option>
+                  <option value="user">Worker</option>
                 </select>
               </div>
               {editUserForm.role === 'user' && (
