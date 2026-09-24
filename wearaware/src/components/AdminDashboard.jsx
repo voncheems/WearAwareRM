@@ -339,8 +339,15 @@ export default function AdminDashboard({ setCurrentPage }) {
         adminFetch(`${API}/admin/detections`, { headers: getAuthHeaders() }),
         adminFetch(`${API}/admin/stats`,      { headers: getAuthHeaders() }),
       ]);
-      if (detRes.ok)   setDetections(await detRes.json());
-      if (statsRes.ok) setDetStats(await statsRes.json());
+      const detectionData = await detRes.json();
+      const statsData = await statsRes.json();
+      if (!Array.isArray(detectionData)) {
+        throw new Error('The server returned an invalid detection list.');
+      }
+      setDetections(detectionData);
+      setDetStats(statsData && typeof statsData === 'object' && !Array.isArray(statsData)
+        ? statsData
+        : { total: 0, violations: 0, compliant: 0, compliance_rate: 100 });
     } catch (err) { setLoadErrors(prev => ({ ...prev, 'Detections': err.message })); }
     finally { setDetLoading(false); }
   };
@@ -350,7 +357,9 @@ export default function AdminDashboard({ setCurrentPage }) {
     setLoadErrors(prev => ({ ...prev, 'Activity': '' }));
     try {
       const res = await adminFetch(`${API}/admin/activity`, { headers: getAuthHeaders() });
-      if (res.ok) setActivity(await res.json());
+      const data = await res.json();
+      if (!Array.isArray(data)) throw new Error('The server returned an invalid activity list.');
+      setActivity(data);
     } catch (err) { setLoadErrors(prev => ({ ...prev, 'Activity': err.message })); }
     finally { setActLoading(false); }
   };
@@ -382,7 +391,9 @@ export default function AdminDashboard({ setCurrentPage }) {
     setLoadErrors(prev => ({ ...prev, 'Password requests': '' }));
     try {
       const res = await adminFetch(`${API}/admin/password-requests`, { headers: getAuthHeaders() });
-      if (res.ok) setPwRequests(await res.json());
+      const data = await res.json();
+      if (!Array.isArray(data)) throw new Error('The server returned an invalid password request list.');
+      setPwRequests(data);
     } catch (err) { setLoadErrors(prev => ({ ...prev, 'Password requests': err.message })); }
     finally { setPwLoading(false); }
   };
@@ -793,10 +804,15 @@ export default function AdminDashboard({ setCurrentPage }) {
 
   const resetFilters = () => { setFilterStation('All Stations'); setFilterInspector('All Inspectors'); setFilterDate(''); setFilterViolation('All Types'); };
 
-  const stationOptions   = ['All Stations',   ...new Set(detections.map(d => d.station).filter(Boolean))];
-  const inspectorOptions = ['All Inspectors', ...new Set(detections.map(d => d.inspector).filter(Boolean))];
+  // Every API result is checked before this point. Keep these fallbacks too so a
+  // malformed response can show an error instead of taking down the whole dashboard.
+  const detectionRecords = Array.isArray(detections) ? detections.filter(detection => detection && typeof detection === 'object') : [];
+  const activityRecords = Array.isArray(activity) ? activity.filter(record => record && typeof record === 'object') : [];
+  const passwordRequests = Array.isArray(pwRequests) ? pwRequests.filter(request => request && typeof request === 'object') : [];
+  const stationOptions   = ['All Stations',   ...new Set(detectionRecords.map(d => d.station).filter(Boolean))];
+  const inspectorOptions = ['All Inspectors', ...new Set(detectionRecords.map(d => d.inspector).filter(Boolean))];
 
-  const filteredDetections = detections.filter(d => {
+  const filteredDetections = detectionRecords.filter(d => {
     if (filterStation   !== 'All Stations'   && d.station   !== filterStation)   return false;
     if (filterInspector !== 'All Inspectors' && d.inspector !== filterInspector) return false;
     if (filterDate && d.date !== filterDate)                                      return false;
@@ -814,7 +830,7 @@ export default function AdminDashboard({ setCurrentPage }) {
     { id: 'stations',   icon: <MapPin size={18} />,          label: 'Stations'           },
     { id: 'detections', icon: <ScanLine size={18} />,        label: 'Detection Log'      },
     { id: 'activity',   icon: <Clock size={18} />,           label: 'Activity Log'       },
-    { id: 'pwrequests', icon: <KeyRound size={18} />,        label: `Password Requests${pwRequests.filter(r=>r.status==='pending').length > 0 ? ` (${pwRequests.filter(r=>r.status==='pending').length})` : ''}` },
+    { id: 'pwrequests', icon: <KeyRound size={18} />,        label: `Password Requests${passwordRequests.filter(r=>r.status==='pending').length > 0 ? ` (${passwordRequests.filter(r=>r.status==='pending').length})` : ''}` },
   ];
 
   const getDeviceLabel = (deviceId) => {
