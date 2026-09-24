@@ -1316,9 +1316,10 @@ export default function AdminDashboard({ setCurrentPage }) {
 
       {/* Add User Modal */}
       {showModal && (
-        <div className="ad-modal-overlay" onClick={(e) => e.target === e.currentTarget && setShowModal(false)}>
-          <div className="ad-modal">
-            <div className="ad-modal-title">Add New User</div>
+        <div className="ad-modal-overlay">
+          <div className="ad-modal" role="dialog" aria-modal="true" aria-labelledby="add-user-title">
+            {/* This dialog only closes through Cancel after a drag/select gesture inside the form. */}
+            <div id="add-user-title" className="ad-modal-title">Add New User</div>
             <div className="ad-modal-sub">Create an account and assign a role</div>
             <form className="ad-modal-form" onSubmit={handleAddUser}>
               {formMsg.text && <div className={formMsg.type === 'success' ? 'ad-success-msg' : 'ad-error-msg'}>{formMsg.text}</div>}
