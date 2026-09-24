@@ -1,0 +1,17 @@
+.ppe-page { min-height: 100vh; color: #1d2b1a; background: radial-gradient(circle at top right, #e8f1de 0, transparent 32%), #f5f7f2; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif; }
+.ppe-page-header { min-height: 72px; padding: 0 5vw; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #dde5d6; background: rgba(255,255,255,.82); backdrop-filter: blur(16px); }
+.ppe-page-brand { display: flex; align-items: center; gap: .55rem; border: 0; background: transparent; font-weight: 800; font-size: 1.15rem; color: #253021; cursor: pointer; }
+.ppe-page-brand span { color: #789167; }
+.ppe-page-back { display: inline-flex; align-items: center; gap: .45rem; border: 1px solid #cfd9c6; border-radius: 999px; padding: .55rem .9rem; background: #fff; color: #34422e; font: inherit; font-size: .85rem; font-weight: 700; cursor: pointer; }
+.ppe-page-back:hover { border-color: #789167; color: #526847; }
+.ppe-page-content { width: min(1180px, 90vw); margin: 0 auto; padding: 3.5rem 0 4rem; }
+.ppe-page-intro { max-width: 690px; margin-bottom: 2rem; }
+.ppe-page-kicker { display: inline-flex; align-items: center; gap: .4rem; color: #617957; letter-spacing: .12em; font-size: .72rem; font-weight: 800; }
+.ppe-page-intro h1 { margin: .7rem 0 .5rem; font-size: clamp(2.2rem, 5vw, 4.2rem); letter-spacing: -.065em; line-height: .98; }
+.ppe-page-intro p { max-width: 590px; color: #61705a; font-size: 1rem; line-height: 1.65; }
+.ppe-page-assignment { display: inline-flex; align-items: center; gap: .55rem; margin-top: 1.1rem; padding: .7rem .9rem; border-radius: 12px; background: #e7f2e4; color: #385238; font-size: .86rem; }
+.ppe-page-assignment svg:last-child { color: #4f7d4e; }
+.ppe-page-status { padding: 2rem; border: 1px solid #dbe4d4; border-radius: 16px; background: #fff; color: #53624d; text-align: center; }
+.ppe-page-status.error { color: #a12c2c; border-color: #f1c7c7; }
+.ppe-page-status button { display: block; margin: 1rem auto 0; border: 0; background: #789167; color: #fff; border-radius: 8px; padding: .6rem .9rem; font: inherit; cursor: pointer; }
+@media (max-width: 640px) { .ppe-page-header { padding: 0 1rem; } .ppe-page-back { font-size: 0; padding: .6rem; } .ppe-page-back svg { margin: 0; } .ppe-page-content { width: min(92vw, 1180px); padding-top: 2.25rem; } }

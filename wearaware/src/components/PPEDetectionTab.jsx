@@ -27,11 +27,12 @@ function initials(name) {
   return name ? name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : '?';
 }
 
-export default function PPEDetectionTab({ onScanComplete }) {
-  const [phase,           setPhase]           = useState(PHASE.QR);
-  const [worker,          setWorker]          = useState(null);
+export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) {
+  const isWorkerSelfCheck = Boolean(fixedWorker?.id);
+  const [phase,           setPhase]           = useState(() => isWorkerSelfCheck ? PHASE.PPE : PHASE.QR);
+  const [worker,          setWorker]          = useState(() => fixedWorker || null);
   const [qrError,         setQrError]         = useState('');
-  const [qrScanning,      setQrScanning]      = useState(true);
+  const [qrScanning,      setQrScanning]      = useState(() => !isWorkerSelfCheck);
   const [camFrame,        setCamFrame]        = useState(null);
   const [camResult,       setCamResult]       = useState(null);
   const [timeLeft,        setTimeLeft]        = useState(PPE_TIMEOUT_SEC);
@@ -62,6 +63,14 @@ export default function PPEDetectionTab({ onScanComplete }) {
   useEffect(() => { onScanCompleteRef.current = onScanComplete; }, [onScanComplete]);
   useEffect(() => { phaseRef.current = phase; }, [phase]);
   useEffect(() => { workerRef.current = worker; }, [worker]);
+
+  // A worker starts a check for their own linked profile. The backend still
+  // verifies ownership before saving, so the browser cannot choose another worker.
+  useEffect(() => {
+    if (!fixedWorker?.id) return;
+    workerRef.current = fixedWorker;
+    setWorker(fixedWorker);
+  }, [fixedWorker]);
 
   // ── Start camera once on mount ────────────────────────────────
   useEffect(() => {
@@ -403,20 +412,21 @@ export default function PPEDetectionTab({ onScanComplete }) {
     missCountRef.current  = 0;
     finishCalledRef.current = false;
     lastResultRef.current   = null;
-    phaseRef.current = PHASE.QR;
-    workerRef.current = null;
+    const nextPhase = isWorkerSelfCheck ? PHASE.PPE : PHASE.QR;
+    phaseRef.current = nextPhase;
+    workerRef.current = fixedWorker || null;
     setScanning(false);
     setResetCountdown(0);
-    setWorker(null);
+    setWorker(fixedWorker || null);
     setVerdict(null);
     setCamResult(null);
     setCamFrame(null);
     setCompliantStreak(0);
     setTimeLeft(PPE_TIMEOUT_SEC);
-    setQrScanning(true);
+    setQrScanning(!isWorkerSelfCheck);
     setQrError('');
-    setPhase(PHASE.QR);
-  }, []);
+    setPhase(nextPhase);
+  }, [fixedWorker, isWorkerSelfCheck]);
 
   // Every finished scan returns to the next worker, including service errors.
   useEffect(() => {
@@ -444,10 +454,10 @@ export default function PPEDetectionTab({ onScanComplete }) {
       {/* Stats row */}
       <div className="ppe-stat-row">
         {[
-          { val: totalScans,    label: 'Workers Scanned', color: ''      },
+          { val: totalScans,    label: isWorkerSelfCheck ? 'Checks completed' : 'Workers Scanned', color: ''      },
           { val: totalPassed,   label: 'Passed',          color: 'green' },
           { val: totalFailed,   label: 'Failed',          color: 'red'   },
-          { val: `${complianceRate}%`, label: 'Compliance Rate', color: complianceRate >= 80 ? 'green' : 'red' },
+          { val: `${complianceRate}%`, label: 'Compliance rate', color: complianceRate >= 80 ? 'green' : 'red' },
         ].map(s => (
           <div className="ppe-mini-stat" key={s.label}>
             <div className={`ppe-mini-stat-val ${s.color}`}>{s.val}</div>
@@ -460,9 +470,9 @@ export default function PPEDetectionTab({ onScanComplete }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem',
         marginBottom: '1.25rem', fontSize: '0.82rem', fontWeight: 700 }}>
         {[
-          { key: PHASE.QR,   label: '① Scan Worker ID' },
-          { key: PHASE.PPE,  label: '② PPE Inspection'  },
-          { key: PHASE.DONE, label: '③ Verdict'         },
+          ...(isWorkerSelfCheck ? [] : [{ key: PHASE.QR, label: '① Scan Worker ID' }]),
+          { key: PHASE.PPE,  label: isWorkerSelfCheck ? '① PPE Inspection' : '② PPE Inspection'  },
+          { key: PHASE.DONE, label: isWorkerSelfCheck ? '② Verdict' : '③ Verdict'         },
         ].map((step, i, arr) => (
           <React.Fragment key={step.key}>
             <div style={{
@@ -539,7 +549,7 @@ export default function PPEDetectionTab({ onScanComplete }) {
             fontSize: '0.8rem', color: '#94a3b8', fontWeight: 600 }}>
             {phase === PHASE.QR   && '📋 Hold QR ID card up to the camera'}
             {phase === PHASE.PPE  && (scanning ? '🔍 Scanning PPE...' : '👀 Watching for PPE...')}
-            {phase === PHASE.DONE && (saving ? 'Saving scan…' : `Next worker in ${resetCountdown}s`)}
+            {phase === PHASE.DONE && (saving ? 'Saving scan…' : isWorkerSelfCheck ? `Ready again in ${resetCountdown}s` : `Next worker in ${resetCountdown}s`)}
           </div>
 
 

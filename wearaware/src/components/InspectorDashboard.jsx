@@ -1,11 +1,9 @@
 import { escapeHtml, printDocument, safePhoto } from '../utils/print';
-import { lazy, Suspense } from 'react';
 import React, { useState, useEffect, useMemo } from 'react';
 import './InspectorDashboard.css';
 import './InspectorTheme.css';
-const PPEDetectionTab = lazy(() => import('./PPEDetectionTab'));
 import {
-  AlertTriangle, ScanLine, MapPin, TrendingUp, User,
+  AlertTriangle, MapPin, TrendingUp, User,
   ClipboardList, CheckCircle, BarChart3, HardHat, Radio, Calendar,
   Phone, ChevronUp, ChevronDown, X, Mail, Shield, Clock, KeyRound, ArrowUpRight
 } from 'lucide-react';
@@ -539,7 +537,6 @@ export default function InspectorDashboard({ setCurrentPage }) {
 
   const navItems = [
     { id: 'violations', icon: <AlertTriangle size={18} />, label: 'Violation History' },
-    { id: 'ppe',        icon: <ScanLine size={18} />,      label: 'PPE Detection'     },
     { id: 'proof',      icon: <CheckCircle size={18} />,   label: 'Proof Photos'      },
     { id: 'stations',   icon: <MapPin size={18} />,        label: 'My Stations'       },
     { id: 'analytics',  icon: <TrendingUp size={18} />,    label: 'Analytics'         },
@@ -578,7 +575,6 @@ export default function InspectorDashboard({ setCurrentPage }) {
           <div>
             <div className="ins-topbar-title">
               {activeTab === 'violations' && 'Violation History'}
-              {activeTab === 'ppe'        && 'PPE Detection'}
               {activeTab === 'proof'      && 'Proof Photos'}
               {activeTab === 'stations'   && 'My Stations'}
               {activeTab === 'analytics'  && 'Analytics'}
@@ -600,7 +596,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
                   <h1 id="ins-welcome-title">Every check.<br /><span>A safer start.</span></h1>
                   <p>Your checkpoint activity, records, and insights. All in one place.</p>
                   <div className="ins-welcome-actions">
-                    <button className="ins-btn ins-welcome-primary" onClick={() => setActiveTab('ppe')}>Start an inspection <ArrowUpRight size={17} /></button>
+                    <button className="ins-btn ins-welcome-primary" onClick={() => setCurrentPage('scanner')}>Start an inspection <ArrowUpRight size={17} /></button>
                     <button className="ins-btn ins-welcome-secondary" onClick={() => setActiveTab('stations')}>View my stations</button>
                   </div>
                 </div>
@@ -747,9 +743,6 @@ export default function InspectorDashboard({ setCurrentPage }) {
               </div>
             </>
           )}
-
-          {/* ── PPE DETECTION ── */}
-          {activeTab === 'ppe' && <Suspense fallback={<p>Opening scanner…</p>}><PPEDetectionTab onScanComplete={fetchDetections} /></Suspense>}
 
           {/* ── MY STATIONS ── */}
           {activeTab === 'stations' && (

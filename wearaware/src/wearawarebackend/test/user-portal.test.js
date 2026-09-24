@@ -77,12 +77,13 @@ test('no scans are distinct from perfect compliance and missing links fail close
   assert.equal((await request('/api/user/dashboard')).status, 401);
   assert.equal((await request('/api/user/dashboard', token(2, 'inspector'))).status, 403);
 });
-test('User role cannot reach admin, inspector or mutation endpoints, including stale role claims', async () => {
+test('User role cannot reach admin or inspector endpoints, and a PPE check still requires valid input', async () => {
   for (const path of ['/api/users', '/api/admin/detections', '/api/inspector/stations']) {
     assert.equal((await request(path, token(3, 'user'))).status, 403);
   }
   assert.equal((await request('/api/users', token(3, 'admin'))).status, 403);
-  assert.equal((await request('/api/detections', token(3, 'user'), 'POST', {})).status, 403);
+  // Workers may submit their own PPE check, but cannot bypass request validation.
+  assert.equal((await request('/api/detections', token(3, 'user'), 'POST', {})).status, 400);
 });
 test('admin can create a User account with an automatic worker profile or link a real unique worker', async () => {
   const admin = token(1, 'admin');

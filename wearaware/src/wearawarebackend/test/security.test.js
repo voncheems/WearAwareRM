@@ -87,6 +87,15 @@ test('inspector reads and scan writes are confined to assigned stations', async 
   assert.equal(response.status, 201);
   const record = await db.collection('detections').findOne({ id: (await response.json()).detection_id });
   assert.equal(record.device_id, 1); assert.equal(await db.collection('devices').countDocuments(), 2);
+
+  // A worker can create only their own check. The station assignment, not a
+  // browser-provided inspector value, makes it appear in the right dashboard.
+  const workerAuth = token(4, 'user');
+  assert.equal((await call('/api/detections', workerAuth, 'POST', { worker_id: 12, result: 'compliant' })).status, 403);
+  const ownCheck = await call('/api/detections', workerAuth, 'POST', { worker_id: 11, result: 'compliant' });
+  assert.equal(ownCheck.status, 201);
+  const ownRecord = await db.collection('detections').findOne({ id: (await ownCheck.json()).detection_id });
+  assert.equal(ownRecord.inspector_id, 2); assert.equal(ownRecord.device_id, 1); assert.equal(ownRecord.worker_id, 11);
 });
 test('recovery is generic, stores only hashes, enforces expiry and consumes a link once', async () => {
   const request = await call('/api/auth/forgot-password', null, 'POST', { email: 'worker@example.test' });
@@ -145,7 +154,7 @@ test('production refuses insecure configuration and HTTP including forged forwar
     assert.equal(response.status, 426); assert.match(response.headers.get('strict-transport-security'), /max-age=31536000/);
   } finally { process.env.NODE_ENV = 'test'; await new Promise(r => temporary.close(r)); }
 });
-test('AI uploads require inspector authentication and forward confidence and service credentials privately', async () => {
+test('AI uploads require an authorized scanner and forward confidence and service credentials privately', async () => {
   let received = null;
   const mock = httpModule.createServer((req, res) => { received = { url: req.url, key: req.headers['x-api-key'] }; req.resume(); res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ detections: [], total_detections: 0, is_compliant: false })); });
   mock.listen(0, '127.0.0.1'); await once(mock, 'listening'); process.env.AI_API_URL = `http://127.0.0.1:${mock.address().port}`;

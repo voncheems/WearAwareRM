@@ -293,7 +293,7 @@ app.patch('/api/inspector/profile', requireAuth, requireRole('inspector'), valid
 // ══════════════════════════════════════════════════════════════
 //  POST /api/detections  ✅ UPDATED — now saves worker_id
 // ══════════════════════════════════════════════════════════════
-app.post('/api/detections', requireAuth, requireRole('inspector'), validateRequest, async (req, res) => {
+app.post('/api/detections', requireAuth, requireRole('inspector', 'user'), validateRequest, async (req, res) => {
   const {
     result,
     missing_ppe     = [],
@@ -311,16 +311,26 @@ app.post('/api/detections', requireAuth, requireRole('inspector'), validateReque
   try {
     const worker = (await data.find('workers', { id: worker_id, status: 'active' }, 'id device_id')).rows[0];
     if (!worker?.device_id) return res.status(403).json({ error: 'Worker is not assigned to an active checkpoint.' });
-    const station = (await data.find('devices', { id: worker.device_id, inspector_id: req.user.id, is_active: true }, 'id')).rows[0];
-    if (!station) return res.status(403).json({ error: 'This worker is not assigned to your active station.' });
+    const station = (await data.find('devices', { id: worker.device_id, is_active: true }, 'id inspector_id')).rows[0];
+    if (!station?.inspector_id) return res.status(403).json({ error: 'This worker has no inspector assigned to their active station.' });
+
+    if (req.user.role === 'inspector' && station.inspector_id !== req.user.id)
+      return res.status(403).json({ error: 'This worker is not assigned to your active station.' });
+    if (req.user.role === 'user') {
+      const account = (await data.users({ id: req.user.id }, 'worker_id')).rows[0];
+      if (!Number.isSafeInteger(account?.worker_id) || account.worker_id !== worker.id)
+        return res.status(403).json({ error: 'You can only record a PPE check for your own worker profile.' });
+    }
     // The registered worker/station relationship determines the station, never a browser UUID.
     const deviceDbId = station.id;
+    // A worker check is always owned by the inspector assigned to its station.
+    const assignedInspectorId = station.inspector_id;
 
-    const det = await data.insert('detections', { device_id: deviceDbId, inspector_id: req.user.id, result: result, missing_ppe: missing_ppe, detected_ppe: detected_ppe, confidence_score: confidence_score || null, worker_id: worker_id || null, photo_url: photo_url || null }, "id");
+    const det = await data.insert('detections', { device_id: deviceDbId, inspector_id: assignedInspectorId, result: result, missing_ppe: missing_ppe, detected_ppe: detected_ppe, confidence_score: confidence_score || null, worker_id: worker_id || null, photo_url: photo_url || null }, "id");
     const detectionId = det.rows[0].id;
 
     if (result === 'violation') {
-      await data.insert('notifications', { detection_id: detectionId, inspector_id: req.user.id }, "*");
+      await data.insert('notifications', { detection_id: detectionId, inspector_id: assignedInspectorId }, "*");
 
       // ── Look up worker name and employee ID ──
       let workerName = null;
@@ -349,7 +359,7 @@ app.post('/api/detections', requireAuth, requireRole('inspector'), validateReque
         detection_id:       detectionId,
       };
 
-      if (wss) await wss.broadcastToInspector(req.user.id, alertPayload);
+      if (wss) await wss.broadcastToInspector(assignedInspectorId, alertPayload);
     }
 
     res.status(201).json({ success: true, detection_id: detectionId });

@@ -20,10 +20,10 @@ router.get('/', requireAuth, requireRole('admin', 'inspector'), validateRequest,
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/workers/by-employee-id/:employee_id
-//  Lookup worker by QR scan — inspectors can only scan workers
-//  assigned to their own stations. Admins have no restriction.
+//  Lookup worker by QR scan. Inspectors can only scan workers assigned to
+//  their stations; a worker account can only load its own linked record.
 // ══════════════════════════════════════════════════════════════
-router.get('/by-employee-id/:employee_id', requireAuth, requireRole('admin', 'inspector'), validateRequest, async (req, res) => {
+router.get('/by-employee-id/:employee_id', requireAuth, requireRole('admin', 'inspector', 'user'), validateRequest, async (req, res) => {
   try {
     const result = await data.workers({ employee_id: req.params.employee_id });
 
@@ -46,6 +46,15 @@ router.get('/by-employee-id/:employee_id', requireAuth, requireRole('admin', 'in
       // Worker must be active
       if (worker.status !== 'active')
         return res.status(403).json({ error: `Worker is ${worker.status === 'on_leave' ? 'on leave' : 'terminated'} and cannot be scanned.` });
+    }
+
+    // ── Workers: never allow one worker account to load another worker ──
+    if (req.user.role === 'user') {
+      const account = (await data.users({ id: req.user.id }, 'worker_id')).rows[0];
+      if (!Number.isSafeInteger(account?.worker_id) || account.worker_id !== worker.id)
+        return res.status(403).json({ error: 'You can only start a PPE check for your own worker profile.' });
+      if (worker.status !== 'active' || !worker.device_id)
+        return res.status(403).json({ error: 'Your worker profile is not assigned to an active checkpoint.' });
     }
 
     res.json(worker);

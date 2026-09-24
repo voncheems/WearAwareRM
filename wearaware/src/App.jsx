@@ -11,6 +11,7 @@ import ExpertisePage from './components/ExpertisePage';
 import ContactPage from './components/ContactPage';
 import AdminDashboard from './components/AdminDashboard';
 import InspectorDashboard from './components/InspectorDashboard.jsx';
+import PPEDetectionPage from './components/PPEDetectionPage.jsx';
 
 function App() {
   const [resetToken, setResetToken] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get('reset') || '');
@@ -106,6 +107,7 @@ function App() {
         {currentPage === 'user' && <UserDashboard setCurrentPage={handlePageChange} />}
         {currentPage === 'admin'      && <AdminDashboard     setCurrentPage={handlePageChange} />}
         {currentPage === 'inspector'  && <InspectorDashboard setCurrentPage={handlePageChange} />}
+        {currentPage === 'scanner'    && <PPEDetectionPage  setCurrentPage={handlePageChange} />}
       </div>
     </div>
   );
