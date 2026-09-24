@@ -409,6 +409,17 @@ app.use(safeErrors);
 
 // ── Start ───────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
+function startupFailureMessage(err) {
+  const message = String(err?.message || '');
+  if (err?.code === 'EADDRINUSE') return `Port ${PORT} is already in use.`;
+  if (/Production requires an AI_API_KEY/.test(message)) return 'Startup configuration error: set AI_API_KEY to a random value of at least 32 characters.';
+  if (/JWT_SECRET/.test(message)) return 'Startup configuration error: set a strong JWT_SECRET of at least 32 characters.';
+  if (/CORS_ORIGINS|FRONTEND_URL/.test(message)) return 'Startup configuration error: FRONTEND_URL and CORS_ORIGINS must be the HTTPS Vercel URL.';
+  if (/Production MongoDB/.test(message)) return 'Startup configuration error: MONGODB_URI must be an Atlas URI with credentials and TLS.';
+  if (/Database initialization is incomplete/.test(message)) return 'Database initialization is incomplete. Use the Atlas database containing the WearAware migration and data.';
+  if (err?.name === 'MongoServerSelectionError' || /authentication failed|bad auth|ECONNREFUSED|timed out/i.test(message)) return 'Database connection failed. Check the Atlas URI, database-user password, and Atlas Network Access rule.';
+  return 'Backend startup failed. Check the required Render environment variables and Atlas connection.';
+}
 async function start() {
   assertProductionConfig();
   const db = await connectDatabase();
@@ -436,9 +447,9 @@ async function start() {
 }
 if (require.main === module) {
   start().catch(async err => {
-    console.error(err.code === 'EADDRINUSE' ? `Port ${PORT} is already in use. Stop the existing WearAware backend before starting another copy.` : 'Backend startup failed. Verify security configuration, database connectivity and initialization.');
+    console.error(startupFailureMessage(err));
     await closeDatabase();
     process.exitCode = 1;
   });
 }
-module.exports = { app, start };
+module.exports = { app, start, startupFailureMessage };
