@@ -245,10 +245,13 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
       if (!passed && videoRef.current) {
         try {
           const snap = document.createElement('canvas');
-          snap.width  = videoRef.current.videoWidth  || 640;
-          snap.height = videoRef.current.videoHeight || 480;
+          const sourceWidth = videoRef.current.videoWidth || 640;
+          const sourceHeight = videoRef.current.videoHeight || 480;
+          const scale = Math.min(1, 640 / sourceWidth);
+          snap.width = Math.round(sourceWidth * scale);
+          snap.height = Math.round(sourceHeight * scale);
           snap.getContext('2d').drawImage(videoRef.current, 0, 0, snap.width, snap.height);
-          photoBase64 = snap.toDataURL('image/jpeg', 0.75);
+          photoBase64 = snap.toDataURL('image/jpeg', 0.68);
         } catch (e) {
           console.warn('Snapshot failed:', e);
         }

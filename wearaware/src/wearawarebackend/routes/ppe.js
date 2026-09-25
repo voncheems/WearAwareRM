@@ -14,6 +14,9 @@ router.post('/detect', requireAuth, requireRole('scanner'), limiter(60, 60 * 100
     if (url.protocol !== 'https:' && !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) return res.status(503).json({ error: 'Detection service requires a secure connection.' });
     // FastAPI declares conf as a query parameter, not a multipart form field.
     url.searchParams.set('conf', String(conf));
+    // The live browser video remains visible. Returning an annotated base64 image
+    // for every inference adds a large tunnel round trip with no effect on verdicts.
+    url.searchParams.set('return_image', 'false');
     const form = new FormData();
     form.append('file', new Blob([req.file.buffer], { type: req.file.mimetype }), 'ppe-image');
     const response = await fetch(url, { method: 'POST', headers: { 'X-API-Key': process.env.AI_API_KEY }, body: form, signal: AbortSignal.timeout(25000), redirect: 'error' });

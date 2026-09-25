@@ -164,7 +164,7 @@ test('AI uploads require an authorized scanning account and forward confidence a
     const send = async (auth, size = 16) => { const form = new FormData(); form.append('conf', '0.35'); form.append('file', new Blob([new Uint8Array(size)], { type: 'image/jpeg' }), 'frame.jpg'); return fetch(base + '/api/ppe/detect', { method: 'POST', headers: auth ? { Authorization: `Bearer ${auth}` } : {}, body: form }); };
     assert.equal((await send(null)).status, 401); assert.equal((await send(token(1))).status, 403); assert.equal(received, null);
     assert.equal((await send(token(3))).status, 403); assert.equal(received, null);
-    assert.equal((await send(token(6, 'scanner'))).status, 200); assert.equal(received.url, '/detect?conf=0.35'); assert.equal(received.key, process.env.AI_API_KEY);
+    assert.equal((await send(token(6, 'scanner'))).status, 200); assert.equal(received.url, '/detect?conf=0.35&return_image=false'); assert.equal(received.key, process.env.AI_API_KEY);
     assert.equal((await send(token(6, 'scanner'), 2 * 1024 * 1024 + 1)).status, 413);
   } finally { await new Promise(r => mock.close(r)); }
 });
