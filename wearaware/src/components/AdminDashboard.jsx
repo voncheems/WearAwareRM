@@ -5,7 +5,7 @@ import './AdminTheme.css';
 import ComplianceLineGraph from './ComplianceLineGraph';
 import QRCode from 'qrcode';
 import {
-  LayoutDashboard, Users, HardHat, MapPin, ScanLine, Clock, KeyRound,
+  LayoutDashboard, Users, HardHat, MapPin, ScanLine, KeyRound,
   ClipboardList, AlertTriangle, RefreshCw, QrCode, Download, Printer, ShieldCheck, ArrowUpRight
 } from 'lucide-react';
 import WearAwareLogo from './Wearawarelogo';
@@ -343,8 +343,6 @@ export default function AdminDashboard({ setCurrentPage }) {
   const [detections,    setDetections]    = useState([]);
   const [detStats,      setDetStats]      = useState({ total: 0, violations: 0, compliant: 0, compliance_rate: 100 });
   const [detLoading,    setDetLoading]    = useState(true);
-  const [activity,      setActivity]      = useState([]);
-  const [actLoading,    setActLoading]    = useState(false);
   const [auditLogs,     setAuditLogs]     = useState([]);
   const [auditLoading,  setAuditLoading]  = useState(false);
   const [auditCategory, setAuditCategory] = useState('all');
@@ -396,7 +394,7 @@ export default function AdminDashboard({ setCurrentPage }) {
   const [pwLoading,      setPwLoading]      = useState(false);
   const [resetLink, setResetLink] = useState('');
 
-  useEffect(() => { fetchUsers(); fetchDetections(); fetchActivity(); fetchAuditLogs(); fetchWorkers(); fetchDevices(); fetchPwRequests(); }, []);
+  useEffect(() => { fetchUsers(); fetchDetections(); fetchAuditLogs(); fetchWorkers(); fetchDevices(); fetchPwRequests(); }, []);
   useEffect(() => {
     // Keep navigation available even if an older responsive stylesheet is cached.
     sidebarRef.current?.style.setProperty('display', 'flex', 'important');
@@ -433,18 +431,6 @@ export default function AdminDashboard({ setCurrentPage }) {
         : { total: 0, violations: 0, compliant: 0, compliance_rate: 100 });
     } catch (err) { setLoadErrors(prev => ({ ...prev, 'Detections': err.message })); }
     finally { setDetLoading(false); }
-  };
-
-  const fetchActivity = async () => {
-    setActLoading(true);
-    setLoadErrors(prev => ({ ...prev, 'Activity': '' }));
-    try {
-      const res = await adminFetch(`${API}/admin/activity`, { headers: getAuthHeaders() });
-      const data = await res.json();
-      if (!Array.isArray(data)) throw new Error('The server returned an invalid activity list.');
-      setActivity(data);
-    } catch (err) { setLoadErrors(prev => ({ ...prev, 'Activity': err.message })); }
-    finally { setActLoading(false); }
   };
 
   const fetchAuditLogs = async () => {
@@ -902,7 +888,6 @@ export default function AdminDashboard({ setCurrentPage }) {
   // Every API result is checked before this point. Keep these fallbacks too so a
   // malformed response can show an error instead of taking down the whole dashboard.
   const detectionRecords = Array.isArray(detections) ? detections.filter(detection => detection && typeof detection === 'object') : [];
-  const activityRecords = Array.isArray(activity) ? activity.filter(record => record && typeof record === 'object') : [];
   const passwordRequests = Array.isArray(pwRequests) ? pwRequests.filter(request => request && typeof request === 'object') : [];
   const auditRecords = Array.isArray(auditLogs) ? auditLogs.filter(record => record && typeof record === 'object') : [];
   const filteredAuditLogs = auditCategory === 'all' ? auditRecords : auditRecords.filter(record => record.category === auditCategory);
@@ -926,7 +911,6 @@ export default function AdminDashboard({ setCurrentPage }) {
     { id: 'workers',    icon: <HardHat size={18} />,         label: 'Worker Registry'    },
     { id: 'stations',   icon: <MapPin size={18} />,          label: 'Stations'           },
     { id: 'detections', icon: <ScanLine size={18} />,        label: 'Detection Log'      },
-    { id: 'activity',   icon: <Clock size={18} />,           label: 'Activity Log'       },
     { id: 'audit',      icon: <ClipboardList size={18} />,   label: 'Audit Logs'         },
     { id: 'pwrequests', icon: <KeyRound size={18} />,        label: `Password Requests${passwordRequests.filter(r=>r.status==='pending').length > 0 ? ` (${passwordRequests.filter(r=>r.status==='pending').length})` : ''}` },
   ];
@@ -987,7 +971,6 @@ export default function AdminDashboard({ setCurrentPage }) {
               {activeTab === 'workers'    && 'Worker Registry'}
               {activeTab === 'stations'   && 'Station Management'}
               {activeTab === 'detections' && 'Detection Log'}
-              {activeTab === 'activity'   && 'Activity Log'}
               {activeTab === 'audit'      && 'Audit Logs'}
               {activeTab === 'pwrequests' && 'Password Reset Requests'}
             </div>
@@ -1383,34 +1366,6 @@ export default function AdminDashboard({ setCurrentPage }) {
                   </table></div>
                 )}
               </div>
-            </div>
-          )}
-
-          {/* ── ACTIVITY ── */}
-          {activeTab === 'activity' && (
-            <div className="admin-surface">
-              <div className="ad-panel-header">
-                <div><div className="ad-panel-title">Activity Log</div><div className="ad-panel-sub">Recent system events — user registrations &amp; checkpoint scans</div></div>
-                <button className="ad-refresh-btn" onClick={fetchActivity} disabled={actLoading}>{actLoading ? '…' : '↻ Refresh'}</button>
-              </div>
-              {actLoading ? <div className="ad-empty">Loading activity…</div>
-              : activity.length === 0 ? <div className="ad-empty">No activity yet — scans and user registrations will appear here</div>
-              : (
-                <div className="ad-activity">
-                  {activity.map((a, i) => (
-                    <div className="ad-activity-item" key={i}>
-                      <div className="ad-activity-dot-wrap">
-                        <div className="ad-activity-dot" style={{ background: a.type === 'detection' ? (a.text.includes('violation') ? '#e53e3e' : '#38a169') : 'linear-gradient(135deg, #607e4d, #91a77f)' }} />
-                        {i < activity.length - 1 && <div className="ad-activity-line" />}
-                      </div>
-                      <div>
-                        <div className="ad-activity-text"><span style={{ marginRight: '0.4rem' }}>{a.icon}</span>{a.text}</div>
-                        <div className="ad-activity-time">{a.time}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           )}
 
