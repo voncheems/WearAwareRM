@@ -1,6 +1,6 @@
 const { MongoClient } = require('mongodb');
 
-const TABLES = ['roles', 'users', 'devices', 'workers', 'detections', 'notifications', 'password_reset_requests'];
+const TABLES = ['roles', 'users', 'devices', 'workers', 'detections', 'notifications', 'password_reset_requests', 'audit_logs'];
 let client;
 let database;
 
@@ -34,6 +34,7 @@ async function ensureIndexes(db) {
     ['detections', { device_id: 1 }], ['detections', { worker_id: 1 }],
     ['detections', { detected_at: -1 }], ['notifications', { inspector_id: 1, is_read: 1 }],
     ['notifications', { detection_id: 1 }], ['password_reset_requests', { email: 1, status: 1 }],
+    ['audit_logs', { occurred_at: -1 }], ['audit_logs', { category: 1, occurred_at: -1 }],
   ]) await db.collection(table).createIndex(keys);
 }
 async function ensureRole(db, name) {

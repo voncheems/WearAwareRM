@@ -3,6 +3,7 @@ const express = require('express');
 const router  = express.Router();
 
 const { data, requireAuth, requireRole } = require('../middleware');
+const { recordAudit } = require('../audit');
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/devices  — admin + inspector
@@ -26,6 +27,7 @@ router.patch('/:id/assign', requireAuth, requireRole('admin'), validateRequest, 
   try {
     const result = await data.update('devices', { id: req.params.id }, { inspector_id: inspector_id || null }, "id label location inspector_id");
     if (!result.rows[0]) return res.status(404).json({ error: 'Device not found.' });
+    await recordAudit({ category: 'action', action: 'Assigned station inspector', actor: req.user, target: result.rows[0].label, details: inspector_id ? `Inspector ID ${inspector_id}` : 'Assignment cleared' });
     res.json({ success: true, device: result.rows[0] });
   } catch (err) {
     if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
@@ -49,6 +51,7 @@ router.post('/', requireAuth, requireRole('admin'), validateRequest, async (req,
 
     const result = await data.insert('devices', { device_id: deviceUuid, label: label.trim(), location: location?.trim() || null, required_ppe: required_ppe || ['helmet', 'vest'], inspector_id: inspector_id || null }, "id device_id label location required_ppe inspector_id is_active");
 
+    await recordAudit({ category: 'action', action: 'Created station', actor: req.user, target: result.rows[0].label });
     res.status(201).json({ success: true, device: result.rows[0] });
   } catch (err) {
     if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
@@ -69,6 +72,7 @@ router.put('/:id', requireAuth, requireRole('admin'), validateRequest, async (re
   try {
     const result = await data.update('devices', { id: req.params.id }, { label: label.trim(), location: location?.trim() || null, required_ppe: required_ppe || ['helmet', 'vest'], inspector_id: inspector_id || null, is_active: is_active ?? true }, "id label location required_ppe inspector_id is_active");
     if (!result.rows[0]) return res.status(404).json({ error: 'Station not found.' });
+    await recordAudit({ category: 'action', action: 'Updated station', actor: req.user, target: result.rows[0].label });
     res.json({ success: true, device: result.rows[0] });
   } catch (err) {
     if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });

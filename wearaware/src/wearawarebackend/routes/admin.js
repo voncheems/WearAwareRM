@@ -3,6 +3,21 @@ const express = require('express');
 const router  = express.Router();
 
 const { data, requireAuth, requireRole } = require('../middleware');
+const { getDatabase } = require('../database');
+
+router.get('/audit-logs', requireAuth, requireRole('admin'), validateRequest, async (req, res) => {
+  try {
+    const rows = await getDatabase().collection('audit_logs')
+      .find({}, { projection: { _id: 0 } })
+      .sort({ occurred_at: -1 })
+      .limit(300)
+      .toArray();
+    res.json(rows);
+  } catch (err) {
+    if (err.code === 121 || err.status === 400) return res.status(400).json({ error: 'Invalid audit log request.' });
+    res.status(500).json({ error: 'Failed to fetch audit logs.' });
+  }
+});
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/admin/detections  — includes worker name

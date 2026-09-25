@@ -3,6 +3,7 @@ const express = require('express');
 const router  = express.Router();
 
 const { data, requireAuth, requireRole } = require('../middleware');
+const { recordAudit } = require('../audit');
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/workers  — admin + inspector
@@ -83,6 +84,7 @@ router.post('/', requireAuth, requireRole('admin'), validateRequest, async (req,
 
     const result = await data.insert('workers', { employee_id: employee_id, full_name: full_name.trim(), position: position?.trim() || null, device_id: device_id || null, contact_number: contact_number?.trim() || null, status: status || 'active' }, "id employee_id full_name position device_id contact_number status created_at");
 
+    await recordAudit({ category: 'action', action: 'Created worker profile', actor: req.user, target: result.rows[0].employee_id, details: result.rows[0].full_name });
     res.status(201).json({ success: true, worker: result.rows[0] });
   } catch (err) {
     if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
@@ -100,6 +102,7 @@ router.patch('/:id/status', requireAuth, requireRole('admin'), validateRequest, 
   try {
     const result = await data.update('workers', { id: req.params.id }, { status: req.body.status }, 'id employee_id full_name position device_id contact_number status');
     if (!result.rows[0]) return res.status(404).json({ error: 'Worker not found.' });
+    await recordAudit({ category: 'action', action: 'Changed worker status', actor: req.user, target: result.rows[0].employee_id, details: result.rows[0].status });
     res.json({ success: true, worker: result.rows[0] });
   } catch (err) { next(err); }
 });
@@ -114,6 +117,7 @@ router.put('/:id', requireAuth, requireRole('admin'), validateRequest, async (re
     const result = await data.update('workers', { id: req.params.id }, { full_name: full_name.trim(), position: position?.trim() || null, device_id: device_id || null, contact_number: contact_number?.trim() || null, status: status || 'active' }, "id employee_id full_name position device_id contact_number status");
 
     if (!result.rows[0]) return res.status(404).json({ error: 'Worker not found.' });
+    await recordAudit({ category: 'action', action: 'Updated worker profile', actor: req.user, target: result.rows[0].employee_id, details: result.rows[0].full_name });
     res.json({ success: true, worker: result.rows[0] });
   } catch (err) {
     if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });

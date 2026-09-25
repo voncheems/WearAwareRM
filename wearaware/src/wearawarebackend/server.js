@@ -6,7 +6,8 @@ const { configureSecurity, assertProductionConfig, safeErrors } = require('./sec
 const { validateRequest } = require('./validation');
 const { installRecovery } = require('./password-recovery');
 const { createAlerts } = require('./alerts');
-const { applyDatabaseSecurity, verifyDatabaseSecurity, cleanLegacyPasswords } = require('./database-security');
+const { applyDatabaseSecurity, verifyDatabaseSecurity, cleanLegacyPasswords, ensureAuditLogCollection } = require('./database-security');
+const { recordAudit } = require('./audit');
 const bcrypt   = require('bcrypt');
 const jwt      = require('jsonwebtoken');
 const http = require('node:http');
@@ -66,6 +67,7 @@ app.put('/api/users/:id', requireAuth, requireRole('admin'), validateRequest, as
     link = await resolveWorkerLink(role, worker_id, req.params.id, full_name, currentUser.worker_id);
     const linkedWorker = link.workerId;
     await data.update('users', { id: req.params.id }, { worker_id: linkedWorker, full_name: full_name.trim(), gmail: gmail || null, role_id: roleResult.rows[0].id, is_active: is_active ?? true }, "*");
+    await recordAudit({ category: 'action', action: 'Updated user account', actor: req.user, target: String(req.params.id), details: full_name.trim() });
     res.json({ success: true, worker: link.createdWorker });
   } catch (err) {
     // A failed account update must not leave an unlinked auto-created worker.
@@ -99,17 +101,21 @@ app.post('/api/auth/login', validateRequest, async (req, res) => {
 
     if (!user) {
       await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
+      await recordAudit({ category: 'login_attempt', action: 'Sign in failed', actorEmail: email, details: 'Unknown email or incorrect password' });
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
     if (!user.is_active || user.password_reset_required) {
       await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
+      await recordAudit({ category: 'login_attempt', action: 'Sign in failed', actor: user, actorEmail: email, details: 'Inactive or reset-required account' });
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
     const match = await bcrypt.compare(password, user.password_hash);
-    if (!match)
+    if (!match) {
+      await recordAudit({ category: 'login_attempt', action: 'Sign in failed', actor: user, actorEmail: email, details: 'Incorrect password' });
       return res.status(401).json({ error: 'Invalid email or password.' });
+    }
 
     const token = jwt.sign(
       { id: user.id, email: user.email, role: user.role, full_name: user.full_name, session_version: user.session_version || 0 },
@@ -117,6 +123,7 @@ app.post('/api/auth/login', validateRequest, async (req, res) => {
       { expiresIn: '8h', algorithm: 'HS256' }
     );
 
+    await recordAudit({ category: 'login', action: 'Signed in', actor: user, target: user.email });
     res.json({
       token,
       user: {
@@ -184,6 +191,7 @@ app.post('/api/users', requireAuth, requireRole('admin'), validateRequest, async
 
     const result = await data.insert('users', { worker_id: linkedWorker, role_id: roleResult.rows[0].id, full_name: full_name, email: email, password_hash: hash, gmail: gmail || null }, "id full_name email created_at");
 
+    await recordAudit({ category: 'user_creation', action: `Created ${role} account`, actor: req.user, target: email, details: full_name });
     res.status(201).json({ success: true, user: result.rows[0], worker: link.createdWorker });
   } catch (err) {
     try { await removeCreatedWorker(link?.createdWorker); } catch { /* cleanup is best effort */ }
@@ -203,6 +211,7 @@ app.patch('/api/users/:id/deactivate', requireAuth, requireRole('admin'), valida
     const account = (await data.users({ id: req.params.id }, 'role')).rows[0];
     if (account?.role === 'admin') return res.status(403).json({ error: 'Cannot deactivate an administrator account.' });
     await data.update('users', { id: req.params.id }, { is_active: false }, "*");
+    await recordAudit({ category: 'action', action: 'Deactivated user account', actor: req.user, target: String(req.params.id) });
     res.json({ success: true });
   } catch (err) {
     if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
@@ -216,6 +225,7 @@ app.patch('/api/users/:id/deactivate', requireAuth, requireRole('admin'), valida
 app.patch('/api/users/:id/reactivate', requireAuth, requireRole('admin'), validateRequest, async (req, res) => {
   try {
     await data.update('users', { id: req.params.id }, { is_active: true }, "*");
+    await recordAudit({ category: 'action', action: 'Reactivated user account', actor: req.user, target: String(req.params.id) });
     res.json({ success: true });
   } catch (err) {
     if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
@@ -321,6 +331,7 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
 
     const det = await data.insert('detections', { device_id: deviceDbId, inspector_id: assignedInspectorId, result: result, missing_ppe: missing_ppe, detected_ppe: detected_ppe, confidence_score: confidence_score || null, worker_id: worker_id || null, photo_url: photo_url || null }, "id");
     const detectionId = det.rows[0].id;
+    await recordAudit({ category: 'action', action: 'Recorded PPE check', actor: req.user, target: String(worker_id), details: result });
 
     if (result === 'violation') {
       await data.insert('notifications', { detection_id: detectionId, inspector_id: assignedInspectorId }, "*");
@@ -442,6 +453,7 @@ async function start() {
   const db = await connectDatabase();
   const migration = await db.collection('_migration').findOne({ _id: 'postgres-v1' });
   if (migration?.status !== 'complete') throw new Error('Database initialization is incomplete. Run the verified migration first.');
+  await ensureAuditLogCollection(db);
   await ensureIndexes(db);
   await ensureUserRole(db);
   await ensureScannerRole(db);

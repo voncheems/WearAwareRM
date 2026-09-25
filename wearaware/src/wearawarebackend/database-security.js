@@ -9,15 +9,24 @@ const fields = {
   detections: { worker_id: reference, device_id: number, inspector_id: reference, result: { enum: ['compliant', 'violation'] }, detected_ppe: { bsonType: 'array', maxItems: 8, items: { bsonType: 'string' } }, missing_ppe: { bsonType: 'array', maxItems: 8, items: { bsonType: 'string' } } },
   notifications: { detection_id: number, inspector_id: number, is_read: { bsonType: 'bool' } },
   password_reset_requests: { email: str, status: { enum: ['pending', 'issued', 'resolved'] }, temp_password: { bsonType: 'null' }, token_hash: { bsonType: 'string', pattern: '^[a-f0-9]{64}$' }, expires_at: { bsonType: 'date' } },
+  audit_logs: { category: str, action: str, actor_id: reference, actor_name: str, actor_role: str, actor_email: str, target: str, details: str, occurred_at: { bsonType: 'date' } },
 };
+function validatorFor(name, properties) {
+  const required = { roles: ['name'], users: ['email', 'role_id', 'password_hash'], workers: ['employee_id', 'full_name'], devices: ['device_id', 'label'], detections: ['device_id', 'result'], notifications: ['detection_id', 'inspector_id'], password_reset_requests: ['email', 'status'], audit_logs: ['category', 'action', 'occurred_at'] }[name];
+  return { $jsonSchema: { bsonType: 'object', required: ['id', ...required], properties: { id: number, ...properties } } };
+}
 async function applyDatabaseSecurity(db) {
   for (const [name, properties] of Object.entries(fields)) {
-    const validator = { $jsonSchema: { bsonType: 'object', required: ['id', ...({ roles: ['name'], users: ['email', 'role_id', 'password_hash'], workers: ['employee_id', 'full_name'], devices: ['device_id', 'label'], detections: ['device_id', 'result'], notifications: ['detection_id', 'inspector_id'], password_reset_requests: ['email', 'status'] }[name])], properties: { id: number, ...properties } } };
+    const validator = validatorFor(name, properties);
     const exists = await db.listCollections({ name }, { nameOnly: true }).hasNext();
     if (exists) await db.command({ collMod: name, validator, validationLevel: 'strict', validationAction: 'error' });
     else await db.createCollection(name, { validator, validationLevel: 'strict', validationAction: 'error' });
   }
   await db.collection('password_reset_requests').createIndex({ token_hash: 1 }, { unique: true, partialFilterExpression: { token_hash: { $type: 'string' } } });
+}
+async function ensureAuditLogCollection(db) {
+  if (await db.listCollections({ name: 'audit_logs' }, { nameOnly: true }).hasNext()) return;
+  await db.createCollection('audit_logs', { validator: validatorFor('audit_logs', fields.audit_logs), validationLevel: 'strict', validationAction: 'error' });
 }
 async function verifyDatabaseSecurity(db) {
   const status = await db.command({ connectionStatus: 1 });
@@ -41,4 +50,4 @@ async function cleanLegacyPasswords(db) {
     });
   } finally { await session.endSession(); }
 }
-module.exports = { applyDatabaseSecurity, verifyDatabaseSecurity, cleanLegacyPasswords };
+module.exports = { applyDatabaseSecurity, verifyDatabaseSecurity, cleanLegacyPasswords, ensureAuditLogCollection };

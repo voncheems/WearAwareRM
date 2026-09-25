@@ -1,7 +1,9 @@
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env'), quiet: true });
 const { Client } = require('pg');
 const { createHash } = require('crypto');
-const { TABLES, connectDatabase, closeDatabase, ensureIndexes } = require('../database');
+const { TABLES: DATABASE_TABLES, connectDatabase, closeDatabase, ensureIndexes } = require('../database');
+// Audit entries begin after the MongoDB migration; they have no PostgreSQL source table.
+const TABLES = DATABASE_TABLES.filter(table => table !== 'audit_logs');
 
 function canonical(value) {
   if (value instanceof Date) return value.toISOString();

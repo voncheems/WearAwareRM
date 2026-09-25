@@ -345,6 +345,9 @@ export default function AdminDashboard({ setCurrentPage }) {
   const [detLoading,    setDetLoading]    = useState(true);
   const [activity,      setActivity]      = useState([]);
   const [actLoading,    setActLoading]    = useState(false);
+  const [auditLogs,     setAuditLogs]     = useState([]);
+  const [auditLoading,  setAuditLoading]  = useState(false);
+  const [auditCategory, setAuditCategory] = useState('all');
   const [showModal,     setShowModal]     = useState(false);
   const [formMsg,       setFormMsg]       = useState({ type: '', text: '' });
   const [fieldErrors,   setFieldErrors]   = useState({});
@@ -393,7 +396,7 @@ export default function AdminDashboard({ setCurrentPage }) {
   const [pwLoading,      setPwLoading]      = useState(false);
   const [resetLink, setResetLink] = useState('');
 
-  useEffect(() => { fetchUsers(); fetchDetections(); fetchActivity(); fetchWorkers(); fetchDevices(); fetchPwRequests(); }, []);
+  useEffect(() => { fetchUsers(); fetchDetections(); fetchActivity(); fetchAuditLogs(); fetchWorkers(); fetchDevices(); fetchPwRequests(); }, []);
   useEffect(() => {
     // Keep navigation available even if an older responsive stylesheet is cached.
     sidebarRef.current?.style.setProperty('display', 'flex', 'important');
@@ -442,6 +445,18 @@ export default function AdminDashboard({ setCurrentPage }) {
       setActivity(data);
     } catch (err) { setLoadErrors(prev => ({ ...prev, 'Activity': err.message })); }
     finally { setActLoading(false); }
+  };
+
+  const fetchAuditLogs = async () => {
+    setAuditLoading(true);
+    setLoadErrors(prev => ({ ...prev, 'Audit logs': '' }));
+    try {
+      const res = await adminFetch(`${API}/admin/audit-logs`, { headers: getAuthHeaders() });
+      const data = await res.json();
+      if (!Array.isArray(data)) throw new Error('The server returned an invalid audit log list.');
+      setAuditLogs(data);
+    } catch (err) { setLoadErrors(prev => ({ ...prev, 'Audit logs': err.message })); }
+    finally { setAuditLoading(false); }
   };
 
   const fetchWorkers = async () => {
@@ -889,6 +904,8 @@ export default function AdminDashboard({ setCurrentPage }) {
   const detectionRecords = Array.isArray(detections) ? detections.filter(detection => detection && typeof detection === 'object') : [];
   const activityRecords = Array.isArray(activity) ? activity.filter(record => record && typeof record === 'object') : [];
   const passwordRequests = Array.isArray(pwRequests) ? pwRequests.filter(request => request && typeof request === 'object') : [];
+  const auditRecords = Array.isArray(auditLogs) ? auditLogs.filter(record => record && typeof record === 'object') : [];
+  const filteredAuditLogs = auditCategory === 'all' ? auditRecords : auditRecords.filter(record => record.category === auditCategory);
   const stationOptions   = ['All Stations',   ...new Set(detectionRecords.map(d => d.station).filter(Boolean))];
   const inspectorOptions = ['All Inspectors', ...new Set(detectionRecords.map(d => d.inspector).filter(Boolean))];
 
@@ -910,6 +927,7 @@ export default function AdminDashboard({ setCurrentPage }) {
     { id: 'stations',   icon: <MapPin size={18} />,          label: 'Stations'           },
     { id: 'detections', icon: <ScanLine size={18} />,        label: 'Detection Log'      },
     { id: 'activity',   icon: <Clock size={18} />,           label: 'Activity Log'       },
+    { id: 'audit',      icon: <ClipboardList size={18} />,   label: 'Audit Logs'         },
     { id: 'pwrequests', icon: <KeyRound size={18} />,        label: `Password Requests${passwordRequests.filter(r=>r.status==='pending').length > 0 ? ` (${passwordRequests.filter(r=>r.status==='pending').length})` : ''}` },
   ];
 
@@ -970,6 +988,7 @@ export default function AdminDashboard({ setCurrentPage }) {
               {activeTab === 'stations'   && 'Station Management'}
               {activeTab === 'detections' && 'Detection Log'}
               {activeTab === 'activity'   && 'Activity Log'}
+              {activeTab === 'audit'      && 'Audit Logs'}
               {activeTab === 'pwrequests' && 'Password Reset Requests'}
             </div>
             <div className="ad-topbar-sub">Welcome back, {user.full_name || 'Admin'}</div>
@@ -1391,6 +1410,49 @@ export default function AdminDashboard({ setCurrentPage }) {
                     </div>
                   ))}
                 </div>
+              )}
+            </div>
+          )}
+
+          {/* ── AUDIT LOGS ── */}
+          {activeTab === 'audit' && (
+            <div className="admin-surface">
+              <div className="ad-panel-header">
+                <div>
+                  <div className="ad-panel-title">Audit Logs</div>
+                  <div className="ad-panel-sub">Authentication, account creation, and system actions</div>
+                </div>
+                <button className="ad-refresh-btn" onClick={fetchAuditLogs} disabled={auditLoading}>{auditLoading ? '…' : '↻ Refresh'}</button>
+              </div>
+              <div className="ad-filters" style={{ marginBottom: '1rem' }}>
+                <div className="ad-filter-group">
+                  <label className="ad-filter-label" htmlFor="audit-category">Category</label>
+                  <select id="audit-category" className="ad-filter-select" value={auditCategory} onChange={event => setAuditCategory(event.target.value)}>
+                    <option value="all">All events</option>
+                    <option value="login">Successful logins</option>
+                    <option value="login_attempt">Failed login attempts</option>
+                    <option value="user_creation">User creations</option>
+                    <option value="action">Actions made</option>
+                  </select>
+                </div>
+              </div>
+              {auditLoading ? <div className="ad-empty">Loading audit logs…</div>
+              : filteredAuditLogs.length === 0 ? <div className="ad-empty">No audit events match this category yet.</div>
+              : (
+                <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Audit log records"><table className="ad-table">
+                  <thead><tr><th>When</th><th>Category</th><th>Actor</th><th>Action</th><th>Target / details</th></tr></thead>
+                  <tbody>
+                    {filteredAuditLogs.map(record => (
+                      <tr key={record.id}>
+                        <td style={{ color: '#667', fontSize: '0.82rem', whiteSpace: 'nowrap' }}>{dateLabel(record.occurred_at)} {new Date(record.occurred_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+                        <td><span className={`ad-role-badge ad-role-${record.category === 'login_attempt' ? 'user' : record.category === 'action' ? 'admin' : 'inspector'}`}>{record.category === 'login_attempt' ? 'Login attempt' : record.category === 'user_creation' ? 'User creation' : record.category === 'login' ? 'Login' : 'Action'}</span></td>
+                        <td><div style={{ fontWeight: 600 }}>{record.actor_name || 'Unknown'}</div><div style={{ color: '#889', fontSize: '0.78rem' }}>{record.actor_email || '—'}{record.actor_role ? ` · ${roleLabel(record.actor_role)}` : ''}</div></td>
+                        <td style={{ fontWeight: 600 }}>{record.action || '—'}</td>
+                        <td style={{ color: '#667', fontSize: '0.82rem' }}><div>{record.target || '—'}</div>{record.details && <div style={{ color: '#99a', marginTop: 2 }}>{record.details}</div>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table></div>
               )}
             </div>
           )}
