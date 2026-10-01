@@ -14,6 +14,7 @@ const checkpointCode = z.string().trim().min(2).max(40).regex(/^[A-Za-z0-9]+(?:-
 const profilePpe = z.array(ppeItem).min(1).max(32).transform(items => [...new Set(items)]);
 const complianceProfile = z.object({ name: text(120), description: optionalText(500), required_ppe: profilePpe, is_active: z.boolean().optional() }).strict();
 const station = z.object({ label: text(120), code: checkpointCode, description: optionalText(500), location: optionalText(200), checkpoint_type: z.enum(['entrance', 'exit', 'internal']), profile_id: optionalId, required_ppe: ppe.optional(), inspector_id: optionalId, is_active: z.boolean().optional() }).strict();
+const confidenceEvidence = z.array(z.object({ ppe: ppeItem, average_confidence: z.number().min(0).max(1), positive_frames: z.number().int().min(0).max(1000) }).strict()).max(32);
 const schemas = {
   'POST /api/auth/login': z.object({ email, password: z.string().min(1).max(1024) }).strict(),
   'POST /api/auth/forgot-password': z.object({ email, reason: optionalText(1000) }).strict(),
@@ -33,7 +34,7 @@ const schemas = {
   'PATCH /api/devices/:id/assign': z.object({ inspector_id: optionalId }).strict(),
   'PATCH /api/inspector/workers/:id/assign': z.object({ station_id: id }).strict(),
   'PATCH /api/admin/password-requests/:id/reset': z.object({}).strict(),
-  'POST /api/detections': z.object({ worker_id: id, checkpoint_id: id.optional(), device_uuid: text(100).optional(), result: z.enum(['compliant', 'violation']).optional(), detected_ppe: ppe.optional(), missing_ppe: ppe.optional(), confidence_score: z.number().min(0).max(1).nullable().optional(), photo_url: z.string().max(2800000).regex(/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/).nullable().optional() }).strict(),
+  'POST /api/detections': z.object({ worker_id: id, checkpoint_id: id.optional(), device_uuid: text(100).optional(), result: z.enum(['compliant', 'violation']).optional(), detected_ppe: ppe.optional(), missing_ppe: ppe.optional(), confidence_score: z.number().min(0).max(1).nullable().optional(), photo_url: z.string().max(2800000).regex(/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/).nullable().optional(), scan_session_id: z.string().uuid().optional(), session_started_at: z.coerce.date().optional(), session_ended_at: z.coerce.date().optional(), frame_count: z.number().int().min(1).max(1000).optional(), confidence_summary: confidenceEvidence.optional(), manual_review_required: z.boolean().optional() }).strict(),
 };
 function validateRequest(req, res, next) {
   if (req.params.id && !id.safeParse(req.params.id).success) return res.status(400).json({ error: 'Invalid record ID.' });

@@ -139,6 +139,18 @@ test('inspectors read only their stations while the dedicated scanner routes wri
   assert.equal(firstRecord.profile_id, reusableProfileId); assert.equal(firstRecord.profile_name, 'Test Warehouse');
   assert.equal(firstRecord.alert_type, 'compliant');
   assert.deepEqual(firstRecord.required_ppe, ['helmet', 'vest']); assert.deepEqual(firstRecord.missing_ppe, []);
+  const scanSessionId = '4ff73444-2c84-43d7-bb89-148529020d02';
+  const sessionPayload = { worker_id: 11, checkpoint_id: 1, detected_ppe: ['helmet', 'vest'], confidence_score: 0.88, scan_session_id: scanSessionId, session_started_at: '2026-10-01T10:00:00.000Z', session_ended_at: '2026-10-01T10:00:05.000Z', frame_count: 4, confidence_summary: [{ ppe: 'helmet', average_confidence: 0.9, positive_frames: 4 }, { ppe: 'vest', average_confidence: 0.86, positive_frames: 3 }], manual_review_required: false };
+  const beforeSessions = await db.collection('detections').countDocuments({ scan_session_id: scanSessionId });
+  const sessionResponse = await call('/api/detections', scannerAuth, 'POST', sessionPayload);
+  const sessionBody = await sessionResponse.clone().json();
+  assert.equal(sessionResponse.status, 201, JSON.stringify(sessionBody));
+  const duplicateResponse = await call('/api/detections', scannerAuth, 'POST', sessionPayload);
+  assert.equal(duplicateResponse.status, 200); assert.equal((await duplicateResponse.json()).duplicate, true);
+  assert.equal(await db.collection('detections').countDocuments({ scan_session_id: scanSessionId }), beforeSessions + 1);
+  const sessionRecord = await db.collection('detections').findOne({ scan_session_id: scanSessionId });
+  assert.equal(sessionRecord.session_status, 'completed'); assert.equal(sessionRecord.frame_count, 4);
+  assert.equal(sessionRecord.session_started_at.toISOString(), sessionPayload.session_started_at);
   assert.equal((await call('/api/detections', scannerAuth, 'POST', { worker_id: 11, checkpoint_id: 2, detected_ppe: ['helmet', 'vest'] })).status, 409);
   const scannerCheck = await call('/api/detections', scannerAuth, 'POST', { worker_id: 12, checkpoint_id: 2, detected_ppe: ['gloves', 'goggles'], confidence_score: 0.91 });
   assert.equal(scannerCheck.status, 201);
@@ -210,7 +222,7 @@ test('production refuses insecure configuration and HTTP including forged forwar
 });
 test('AI uploads require an authorized scanning account and forward confidence and service credentials privately', async () => {
   let received = null;
-  const mock = httpModule.createServer((req, res) => { received = { url: req.url, key: req.headers['x-api-key'] }; req.resume(); res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ detections: [], total_detections: 0, is_compliant: false })); });
+  const mock = httpModule.createServer((req, res) => { received = { url: req.url, key: req.headers['x-api-key'] }; req.resume(); res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ detections: [{ class_name: 'human', confidence: 0.92, bbox: { x1: 10, y1: 10, x2: 200, y2: 400 } }], total_detections: 1, is_compliant: false })); });
   mock.listen(0, '127.0.0.1'); await once(mock, 'listening'); process.env.AI_API_URL = `http://127.0.0.1:${mock.address().port}`;
   try {
     const send = async (auth, size = 16) => { const form = new FormData(); form.append('conf', '0.35'); form.append('file', new Blob([new Uint8Array(size)], { type: 'image/jpeg' }), 'frame.jpg'); return fetch(base + '/api/ppe/detect', { method: 'POST', headers: auth ? { Authorization: `Bearer ${auth}` } : {}, body: form }); };
@@ -218,7 +230,7 @@ test('AI uploads require an authorized scanning account and forward confidence a
     assert.equal((await send(token(3))).status, 403); assert.equal(received, null);
     const allowed = await send(token(6, 'scanner'));
     assert.equal(allowed.status, 200); assert.equal(received.url, '/detect?conf=0.35&return_image=false'); assert.equal(received.key, process.env.AI_API_KEY);
-    const observations = await allowed.json(); assert.deepEqual(observations.detected_ppe, []); assert.equal('is_compliant' in observations, false);
+    const observations = await allowed.json(); assert.deepEqual(observations.detected_ppe, []); assert.equal(observations.person_count, 1); assert.equal(observations.person_detections[0].class_name, 'human'); assert.equal('is_compliant' in observations, false);
     assert.equal((await send(token(6, 'scanner'), 2 * 1024 * 1024 + 1)).status, 413);
   } finally { await new Promise(r => mock.close(r)); }
 });

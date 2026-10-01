@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { classifyLocalAlert, detectedPpeFromAi, evaluateCompliance, filterAiDetections, normalizePpeList } = require('../ppe-compliance');
+const { classifyLocalAlert, detectedPpeFromAi, evaluateCompliance, filterAiDetections, filterPersonDetections, normalizePpeList } = require('../ppe-compliance');
 
 test('AI observations are normalized without deciding checkpoint compliance', () => {
   const detected = detectedPpeFromAi([
@@ -24,6 +24,16 @@ test('low-confidence forehead helmet matches and their inferred violations are r
     { class_name: 'no-vest', confidence: 0, inferred: true },
   ]);
   assert.deepEqual(actualHelmet.map(item => item.class_name), ['helmet', 'no-vest']);
+});
+
+test('person observations are exposed separately and require stable confidence', () => {
+  const people = filterPersonDetections([
+    { class_name: 'human', confidence: 0.91 },
+    { class_name: 'person', confidence: 0.49 },
+    { class_name: 'helmet', confidence: 0.92 },
+  ]);
+  assert.equal(people.length, 1);
+  assert.equal(people[0].class_name, 'human');
 });
 
 test('checkpoint requirements determine missing PPE and the final result', () => {

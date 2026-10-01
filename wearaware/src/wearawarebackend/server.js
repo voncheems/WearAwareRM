@@ -314,9 +314,16 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
     worker_id,
     checkpoint_id,
     photo_url       = null,
+    scan_session_id = null,
+    session_started_at = null,
+    session_ended_at = null,
+    frame_count = null,
+    confidence_summary = [],
+    manual_review_required = false,
   } = req.body;
 
   try {
+    if (session_started_at && session_ended_at && session_ended_at < session_started_at) return res.status(400).json({ error: 'Session end time must follow its start time.' });
     const worker = (await data.find('workers', { id: worker_id, status: 'active' }, 'id device_id')).rows[0];
     if (!worker?.device_id) return res.status(403).json({ error: 'Worker is not assigned to an active checkpoint.' });
     if (checkpoint_id && Number(checkpoint_id) !== Number(worker.device_id)) return res.status(409).json({ error: 'The worker is assigned to a different checkpoint. Scan the worker again.' });
@@ -324,11 +331,34 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
     if (!station?.inspector_id) return res.status(403).json({ error: 'This worker has no inspector assigned to their active station.' });
     const profile = station.profile_id && (await data.find('compliance_profiles', { id: station.profile_id }, 'id name')).rows[0];
 
+    const responseFor = (record, duplicate = false) => ({
+      success: true,
+      duplicate,
+      detection_id: record.id,
+      scan_session_id: record.scan_session_id || scan_session_id,
+      checkpoint: { id: station.id, name: station.label, code: station.code, profile_id: profile?.id || null, profile_name: profile?.name || null },
+      result: record.result,
+      is_compliant: record.result === 'compliant',
+      alert_type: record.alert_type,
+      required_ppe: record.required_ppe || [],
+      detected_ppe: record.detected_ppe || [],
+      missing_ppe: record.missing_ppe || [],
+    });
+
+    if (scan_session_id) {
+      const existing = (await data.find('detections', { scan_session_id }, 'id scan_session_id worker_id device_id result alert_type required_ppe detected_ppe missing_ppe')).rows[0];
+      if (existing) {
+        if (Number(existing.worker_id) !== Number(worker_id) || Number(existing.device_id) !== Number(station.id)) return res.status(409).json({ error: 'This scan session belongs to a different worker or checkpoint.' });
+        return res.status(200).json(responseFor(existing, true));
+      }
+    }
+
     // The database checkpoint configuration is authoritative. Client-supplied
     // result and missing-PPE fields are ignored for backward compatibility.
     const deviceDbId = station.id;
     const assignedInspectorId = station.inspector_id;
-    const compliance = classifyLocalAlert(evaluateCompliance(station.required_ppe || [], detected_ppe), confidence_score);
+    let compliance = classifyLocalAlert(evaluateCompliance(station.required_ppe || [], detected_ppe), confidence_score);
+    if (manual_review_required) compliance = { ...compliance, result: 'violation', is_compliant: false, alert_type: 'manual_review' };
 
     const det = await data.insert('detections', {
       device_id: deviceDbId,
@@ -345,6 +375,14 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
       confidence_score: confidence_score ?? null,
       worker_id,
       photo_url: photo_url || null,
+      ...(scan_session_id ? {
+        scan_session_id,
+        session_status: 'completed',
+        session_started_at,
+        session_ended_at,
+        frame_count,
+        confidence_summary,
+      } : {}),
     }, 'id');
     const detectionId = det.rows[0].id;
     await recordAudit({ category: 'action', action: 'Recorded PPE check', actor: req.user, target: String(worker_id), details: `${station.label}: ${compliance.alert_type}` });
@@ -381,13 +419,12 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
       if (wss) await wss.broadcastToInspector(assignedInspectorId, alertPayload);
     }
 
-    res.status(201).json({
-      success: true,
-      detection_id: detectionId,
-      checkpoint: { id: station.id, name: station.label, code: station.code, profile_id: profile?.id || null, profile_name: profile?.name || null },
-      ...compliance,
-    });
+    res.status(201).json(responseFor({ id: detectionId, scan_session_id, ...compliance }));
   } catch (err) {
+    if (err.code === 11000 && scan_session_id) {
+      const existing = (await data.find('detections', { scan_session_id }, 'id scan_session_id worker_id device_id result alert_type required_ppe detected_ppe missing_ppe')).rows[0];
+      if (existing && Number(existing.worker_id) === Number(worker_id)) return res.status(200).json({ success: true, duplicate: true, detection_id: existing.id, scan_session_id, result: existing.result, is_compliant: existing.result === 'compliant', alert_type: existing.alert_type, required_ppe: existing.required_ppe, detected_ppe: existing.detected_ppe, missing_ppe: existing.missing_ppe });
+    }
     if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
     console.error('Request handler failed.');
     res.status(500).json({ error: 'Failed to save detection.' });

@@ -1,52 +1,39 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import * as ZXingBrowser from '@zxing/browser';
 import jsQRDecoder from 'jsqr';
-
 import { API } from '../config/api';
+import { aggregateSessionFrames, frameEvidenceScore, SCAN_SESSION_CONFIG, SCAN_SESSION_STATE, sessionStatusCopy } from '../config/scan-session';
 import { ALERT_TYPES, emitLocalAlert } from '../utils/local-alerts';
 
-// QR decoders are bundled locally so no third-party scripts run on login/reset pages.
-
-const SCAN_INTERVAL_MS     = 1000;   // refresh boxes once per second when the AI is ready
-const COMPLIANT_STREAK_REQ = 3;      // consecutive compliant scans needed to PASS
-const PPE_TIMEOUT_SEC      = 15;     // seconds before forced verdict
-const MISS_THRESHOLD       = 5;      // consecutive empty scans before clearing display
-const DETECTION_TIMEOUT_MS = 35000;  // includes Vercel-to-tunnel round trip on demo deployments
+const DETECTION_TIMEOUT_MS = 35000;
 const WORKER_LOOKUP_TIMEOUT_MS = 30000;
 const SAVE_DETECTION_TIMEOUT_MS = 30000;
-const SAME_WORKER_CLEAR_GAP_MS = 2500;
-
-const PHASE = { QR: 'qr', PPE: 'ppe', DONE: 'done' };
+const PHASE = { QR: 'qr', PPE: 'ppe' };
 
 function getDeviceUUID() {
   let id = localStorage.getItem('ppe_device_uuid');
   if (!id) { id = crypto.randomUUID(); localStorage.setItem('ppe_device_uuid', id); }
   return id;
 }
-
-function initials(name) {
-  return name ? name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : '?';
+function initials(name) { return name ? name.split(' ').map(part => part[0]).join('').toUpperCase().slice(0, 2) : '?'; }
+function ppeLabel(value) {
+  return ({ helmet: 'Helmet', vest: 'Safety Vest', gloves: 'Gloves', goggles: 'Goggles', boots: 'Safety Shoes', mask: 'Face Mask', human: 'Person', person: 'Person' })[value]
+    || String(value).replace(/-/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
 }
-
 function evaluateCheckpoint(requiredPpe = [], detectedPpe = []) {
+  const required = [...new Set(Array.isArray(requiredPpe) ? requiredPpe : [])];
   const detected = [...new Set(Array.isArray(detectedPpe) ? detectedPpe : [])];
   const present = new Set(detected);
-  const required = [...new Set(Array.isArray(requiredPpe) ? requiredPpe : [])];
   const missing = required.filter(item => !present.has(item));
   return { required, detected, missing, isCompliant: missing.length === 0 };
-}
-
-function ppeLabel(value) {
-  return ({ helmet: 'Helmet', vest: 'Safety Vest', gloves: 'Gloves', goggles: 'Goggles', boots: 'Safety Shoes', mask: 'Face Mask' })[value]
-    || String(value).replace(/-/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
 function DetectionOverlay({ detections }) {
   const boxes = (Array.isArray(detections) ? detections : []).flatMap((detection, index) => {
     const box = detection?.bbox;
-    const coordinates = [box?.x1, box?.y1, box?.x2, box?.y2].map(Number);
-    if (!coordinates.every(Number.isFinite)) return [];
-    const [x1, y1, x2, y2] = coordinates;
+    const values = [box?.x1, box?.y1, box?.x2, box?.y2].map(Number);
+    if (!values.every(Number.isFinite)) return [];
+    const [x1, y1, x2, y2] = values;
     const left = Math.max(0, Math.min(100, x1 / 640 * 100));
     const top = Math.max(0, Math.min(100, y1 / 480 * 100));
     const right = Math.max(left, Math.min(100, x2 / 640 * 100));
@@ -54,922 +41,389 @@ function DetectionOverlay({ detections }) {
     if (right - left < 0.5 || bottom - top < 0.5) return [];
     return [{ detection, index, left, top, width: right - left, height: bottom - top }];
   });
-
-  if (boxes.length === 0) return null;
-  return <div className="ppe-box-overlay" aria-hidden="true">
-    {boxes.map(({ detection, index, left, top, width, height }) => {
-      const name = String(detection.class_name || 'PPE');
-      const violation = detection.violation === true || name.startsWith('no-');
-      const confidence = Number(detection.confidence);
-      const confidenceLabel = detection.inferred
-        ? 'inferred'
-        : Number.isFinite(confidence) ? `${Math.round(confidence * 100)}%` : '';
-      return <div
-        className={`ppe-detection-box ${violation ? 'violation' : 'present'}${detection.inferred ? ' inferred' : ''}${top < 8 ? ' near-top' : ''}`}
-        key={`${name}-${index}`}
-        style={{ left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` }}
-      >
-        <span>{ppeLabel(name)}{confidenceLabel ? ` · ${confidenceLabel}` : ''}</span>
-      </div>;
-    })}
-  </div>;
+  return boxes.length ? <div className="ppe-box-overlay" aria-hidden="true">{boxes.map(({ detection, index, left, top, width, height }) => {
+    const name = String(detection.class_name || 'PPE').toLowerCase();
+    const isPerson = ['human', 'person'].includes(name);
+    const violation = detection.violation === true || name.startsWith('no-');
+    const confidence = Number(detection.confidence);
+    const confidenceLabel = detection.inferred ? 'inferred' : Number.isFinite(confidence) ? `${Math.round(confidence * 100)}%` : '';
+    return <div className={`ppe-detection-box ${isPerson ? 'person' : violation ? 'violation' : 'present'}${detection.inferred ? ' inferred' : ''}${top < 8 ? ' near-top' : ''}`} key={`${name}-${index}`} style={{ left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` }}><span>{ppeLabel(name)}{confidenceLabel ? ` · ${confidenceLabel}` : ''}</span></div>;
+  })}</div> : null;
 }
 
 export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, selectedCheckpoint = null, soundEnabled = true, resultDurationMs = 5000 }) {
   const isWorkerSelfCheck = Boolean(fixedWorker?.id);
-  const [phase,           setPhase]           = useState(() => isWorkerSelfCheck ? PHASE.PPE : PHASE.QR);
-  const [worker,          setWorker]          = useState(() => fixedWorker || null);
-  const [checkpoint,      setCheckpoint]      = useState(() => selectedCheckpoint || fixedWorker?.checkpoint || null);
-  const [qrError,         setQrError]         = useState('');
-  const [qrScanning,      setQrScanning]      = useState(() => !isWorkerSelfCheck);
-  const [camResult,       setCamResult]       = useState(null);
-  const [timeLeft,        setTimeLeft]        = useState(PPE_TIMEOUT_SEC);
-  const [compliantStreak, setCompliantStreak] = useState(0);
-  const [scanning,        setScanning]        = useState(false);
-  const [verdict,         setVerdict]         = useState(null);
-  const [resetCountdown,  setResetCountdown]  = useState(0);
-  const [sessionLog,      setSessionLog]      = useState([]);
+  const [phase, setPhase] = useState(() => isWorkerSelfCheck ? PHASE.PPE : PHASE.QR);
+  const [worker, setWorker] = useState(() => fixedWorker || null);
+  const [checkpoint, setCheckpoint] = useState(() => selectedCheckpoint || fixedWorker?.checkpoint || null);
+  const [qrError, setQrError] = useState('');
+  const [qrScanning, setQrScanning] = useState(() => !isWorkerSelfCheck);
+  const [camResult, setCamResult] = useState(null);
+  const [scanning, setScanning] = useState(false);
+  const [verdict, setVerdict] = useState(null);
+  const [sessionState, setSessionState] = useState(SCAN_SESSION_STATE.IDLE);
+  const [frameCount, setFrameCount] = useState(0);
+  const [scanProgress, setScanProgress] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(Math.ceil(SCAN_SESSION_CONFIG.scanDurationMs / 1000));
+  const [resetCountdown, setResetCountdown] = useState(0);
+  const [sessionLog, setSessionLog] = useState([]);
   const [saving, setSaving] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
+  const [scanCycle, setScanCycle] = useState(0);
 
-  const videoRef       = useRef(null);
-  const streamRef      = useRef(null);
-  const runningRef     = useRef(false);
-  const busyRef        = useRef(false);
-  const missCountRef   = useRef(0);
-  const streakRef      = useRef(0);
-  const timerRef       = useRef(null);
-  const ppeLoopRef     = useRef(null);
-  const qrLoopRef      = useRef(null);
-  const phaseRef        = useRef(PHASE.QR);
-  const workerRef       = useRef(null);
-  const checkpointRef   = useRef(selectedCheckpoint || fixedWorker?.checkpoint || null);
-  const finishCalledRef = useRef(false);
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const runningRef = useRef(false);
+  const busyRef = useRef(false);
+  const ppeLoopRef = useRef(null);
+  const qrLoopRef = useRef(null);
+  const phaseRef = useRef(phase);
+  const workerRef = useRef(worker);
+  const checkpointRef = useRef(checkpoint);
+  const sessionStateRef = useRef(sessionState);
+  const sessionRef = useRef(null);
+  const timersRef = useRef(new Set());
+  const requestControllerRef = useRef(null);
+  const cycleRef = useRef(0);
   const onScanCompleteRef = useRef(onScanComplete);
   const mountedRef = useRef(false);
-  const lastResultRef   = useRef(null);   // tracks last non-empty detection result
-  const alertEmittedRef = useRef(false);
-  const blockedEmployeeRef = useRef(null);
-  const blockedSeenAtRef = useRef(0);
 
   useEffect(() => { onScanCompleteRef.current = onScanComplete; }, [onScanComplete]);
   useEffect(() => { phaseRef.current = phase; }, [phase]);
   useEffect(() => { workerRef.current = worker; }, [worker]);
   useEffect(() => { checkpointRef.current = checkpoint; }, [checkpoint]);
+
+  const transition = useCallback(next => {
+    sessionStateRef.current = next;
+    if (mountedRef.current) setSessionState(next);
+  }, []);
+  const clearTimers = useCallback(() => {
+    for (const timer of timersRef.current) window.clearTimeout(timer);
+    timersRef.current.clear();
+  }, []);
+  const schedule = useCallback((callback, delay) => {
+    const timer = window.setTimeout(() => { timersRef.current.delete(timer); callback(); }, delay);
+    timersRef.current.add(timer);
+    return timer;
+  }, []);
+
   useEffect(() => {
     if (!selectedCheckpoint) return;
     checkpointRef.current = selectedCheckpoint;
     setCheckpoint(selectedCheckpoint);
   }, [selectedCheckpoint]);
-
-  // A worker starts a check for their own linked profile. The backend still
-  // verifies ownership before saving, so the browser cannot choose another worker.
   useEffect(() => {
     if (!fixedWorker?.id) return;
     workerRef.current = fixedWorker;
     setWorker(fixedWorker);
-    if (fixedWorker.checkpoint) {
-      checkpointRef.current = fixedWorker.checkpoint;
-      setCheckpoint(fixedWorker.checkpoint);
-    }
+    if (fixedWorker.checkpoint) { checkpointRef.current = fixedWorker.checkpoint; setCheckpoint(fixedWorker.checkpoint); }
   }, [fixedWorker]);
 
-  // ── Start camera once on mount ────────────────────────────────
   useEffect(() => {
     let cancelled = false;
     mountedRef.current = true;
-    const start = async () => {
+    (async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'environment' }
-        });
-        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'environment' } });
+        if (cancelled) { stream.getTracks().forEach(track => track.stop()); return; }
         streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play().catch(() => {});
-        }
-        if (!cancelled) { runningRef.current = true; setCameraReady(true); }
-      } catch (err) {
-        if (!cancelled) setQrError('Could not access camera: ' + err.message);
-      }
-    };
-    start();
+        if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play().catch(() => {}); }
+        runningRef.current = true;
+        setCameraReady(true);
+      } catch (error) { if (!cancelled) setQrError(`Could not access camera: ${error.message}`); }
+    })();
     return () => {
       cancelled = true;
       mountedRef.current = false;
       runningRef.current = false;
-      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
-      clearInterval(qrLoopRef.current);
-      clearInterval(ppeLoopRef.current);
-      clearInterval(timerRef.current);
+      requestControllerRef.current?.abort();
+      clearTimers();
+      window.clearInterval(qrLoopRef.current);
+      window.clearInterval(ppeLoopRef.current);
+      streamRef.current?.getTracks().forEach(track => track.stop());
     };
-  }, []);
+  }, [clearTimers]);
 
-  // ── PHASE 1: QR scan loop ─────────────────────────────────────
   useEffect(() => {
-    if (phase !== PHASE.QR || !cameraReady) {
-      clearInterval(qrLoopRef.current);
-      return;
-    }
-
+    if (phase !== PHASE.QR || !cameraReady) { window.clearInterval(qrLoopRef.current); return undefined; }
     setQrScanning(true);
     setQrError('');
-
     let stopped = false;
     let lookingUp = false;
-    const lookupWorker = async (employeeId) => {
+    const lookupWorker = async employeeId => {
       if (stopped || lookingUp || phaseRef.current !== PHASE.QR) return;
-      if (blockedEmployeeRef.current === employeeId) {
-        const now = Date.now();
-        const clearGap = now - blockedSeenAtRef.current;
-        blockedSeenAtRef.current = now;
-        if (clearGap < SAME_WORKER_CLEAR_GAP_MS) {
-          setQrError('Waiting for the previous worker to leave the scanning area.');
-          return;
-        }
-        blockedEmployeeRef.current = null;
-      } else if (blockedEmployeeRef.current) {
-        blockedEmployeeRef.current = null;
-      }
       lookingUp = true;
       setQrScanning(false);
       try {
-        let res;
+        let response;
         for (let attempt = 0; attempt < 2; attempt += 1) {
           try {
-            res = await fetch(`${API}/workers/by-employee-id/${encodeURIComponent(employeeId)}`, {
-              headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-              signal: AbortSignal.timeout(WORKER_LOOKUP_TIMEOUT_MS),
-            });
+            response = await fetch(`${API}/workers/by-employee-id/${encodeURIComponent(employeeId)}`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }, signal: AbortSignal.timeout(WORKER_LOOKUP_TIMEOUT_MS) });
             break;
-          } catch (err) {
-            if (attempt === 0 && ['TimeoutError', 'TypeError'].includes(err.name) && !stopped) continue;
-            throw err;
+          } catch (error) {
+            if (attempt === 0 && ['TimeoutError', 'TypeError'].includes(error.name) && !stopped) continue;
+            throw error;
           }
         }
-        if (!res.ok) throw new Error(res.status === 404
-          ? `Worker "${employeeId}" not found. Try a registered ID.`
-          : 'Unable to look up this worker. Check your connection and access.');
-        const data = await res.json();
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(response.status === 404 ? `Worker "${employeeId}" not found. Try a registered ID.` : body.error || 'Unable to look up this worker.');
+        if (!body.checkpoint?.id || !Array.isArray(body.checkpoint.required_ppe)) throw new Error('This worker’s checkpoint configuration is unavailable.');
+        if (selectedCheckpoint && Number(body.checkpoint.id) !== Number(selectedCheckpoint.id)) throw new Error(`This worker is assigned to ${body.checkpoint.label}, not ${selectedCheckpoint.label}.`);
         if (stopped) return;
-        if (!data.checkpoint?.id || !Array.isArray(data.checkpoint.required_ppe)) {
-          throw new Error('This worker’s checkpoint configuration is unavailable. Ask an administrator to review it.');
-        }
-        if (selectedCheckpoint && Number(data.checkpoint.id) !== Number(selectedCheckpoint.id)) {
-          throw new Error(`This worker is assigned to ${data.checkpoint.label}, not this scanner’s registered checkpoint (${selectedCheckpoint.label}). Ask an administrator to review the assignment.`);
-        }
-        workerRef.current = data;
-        checkpointRef.current = data.checkpoint;
-        finishCalledRef.current = false;
-        phaseRef.current = PHASE.PPE;
-        setWorker(data);
-        setCheckpoint(data.checkpoint);
+        workerRef.current = body;
+        checkpointRef.current = body.checkpoint;
+        setWorker(body);
+        setCheckpoint(body.checkpoint);
         setQrError('');
+        setVerdict(null);
+        transition(SCAN_SESSION_STATE.IDLE);
+        phaseRef.current = PHASE.PPE;
         setPhase(PHASE.PPE);
-      } catch (err) {
+      } catch (error) {
         if (!stopped) {
-          setQrError(err.name === 'TimeoutError'
-            ? 'Worker lookup took too long. Check the backend tunnel and scan the QR code again.'
-            : err.name === 'AbortError'
-              ? 'The connection was interrupted. Scan the QR code again.'
-            : err.message);
+          setQrError(error.name === 'TimeoutError' ? 'Worker lookup took too long. Check the backend and scan again.' : error.name === 'AbortError' ? 'The connection was interrupted. Scan again.' : error.message);
           setQrScanning(true);
         }
       } finally { lookingUp = false; }
     };
-
-    // ZXing handles screen glare much better than jsQR
-    // Falls back to jsQR if ZXing isn't available
-    const ZXing = ZXingBrowser;
-    const jsQR  = jsQRDecoder;
-
-    if (!ZXing && !jsQR) {
-      setQrError('QR library not loaded — check your index.html script tags.');
-      return;
-    }
-
-    // ZXing continuously decodes from video element
-    if (ZXing?.BrowserQRCodeReader) {
-      const zxReader = new ZXing.BrowserQRCodeReader();
+    if (ZXingBrowser?.BrowserQRCodeReader) {
+      const reader = new ZXingBrowser.BrowserQRCodeReader();
       let controls;
-      zxReader.decodeFromVideoElement(videoRef.current, (result) => {
-        if (stopped || !result || phaseRef.current !== PHASE.QR) return;
-        lookupWorker(result.getText().trim());
-      }).then(value => { controls = value; if (stopped) controls.stop(); }).catch(() => { if (!stopped) setQrError('Unable to start the QR scanner. Please retry.'); });
-      qrLoopRef.current = null;
+      reader.decodeFromVideoElement(videoRef.current, result => { if (!stopped && result && phaseRef.current === PHASE.QR) lookupWorker(result.getText().trim()); }).then(value => { controls = value; if (stopped) controls.stop(); }).catch(() => { if (!stopped) setQrError('Unable to start the QR scanner. Please retry.'); });
       return () => { stopped = true; controls?.stop(); };
     }
-
-    // jsQR fallback — faster interval + both inversion modes for screen glare
-    qrLoopRef.current = setInterval(() => {
+    qrLoopRef.current = window.setInterval(() => {
       if (!videoRef.current || !runningRef.current) return;
-      const video  = videoRef.current;
       const canvas = document.createElement('canvas');
-      canvas.width  = video.videoWidth  || 640;
-      canvas.height = video.videoHeight || 480;
-      const ctx    = canvas.getContext('2d');
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const img  = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const code = jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' });
-      if (code?.data) {
-        lookupWorker(code.data.trim());
-      }
+      canvas.width = videoRef.current.videoWidth || 640;
+      canvas.height = videoRef.current.videoHeight || 480;
+      const context = canvas.getContext('2d');
+      context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+      const image = context.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQRDecoder(image.data, image.width, image.height, { inversionAttempts: 'attemptBoth' });
+      if (code?.data) lookupWorker(code.data.trim());
     }, 300);
+    return () => { stopped = true; window.clearInterval(qrLoopRef.current); };
+  }, [cameraReady, phase, selectedCheckpoint, transition]);
 
-    return () => { stopped = true; clearInterval(qrLoopRef.current); };
-  }, [phase, cameraReady, selectedCheckpoint]);
+  const resetScanner = useCallback((manual = false) => {
+    cycleRef.current += 1;
+    setScanCycle(value => value + 1);
+    requestControllerRef.current?.abort();
+    sessionRef.current?.saveController?.abort();
+    clearTimers();
+    sessionRef.current = null;
+    busyRef.current = false;
+    setSaving(false); setScanning(false); setVerdict(null); setCamResult(null); setFrameCount(0); setScanProgress(0);
+    setTimeLeft(Math.ceil(SCAN_SESSION_CONFIG.scanDurationMs / 1000)); setResetCountdown(0); setQrError('');
+    transition(SCAN_SESSION_STATE.IDLE);
+    const retainWorker = manual && workerRef.current;
+    const nextWorker = retainWorker ? workerRef.current : fixedWorker || null;
+    const nextCheckpoint = retainWorker ? checkpointRef.current : selectedCheckpoint || fixedWorker?.checkpoint || null;
+    const nextPhase = nextWorker ? PHASE.PPE : PHASE.QR;
+    workerRef.current = nextWorker; checkpointRef.current = nextCheckpoint; phaseRef.current = nextPhase;
+    setWorker(nextWorker); setCheckpoint(nextCheckpoint); setQrScanning(nextPhase === PHASE.QR); setPhase(nextPhase);
+  }, [clearTimers, fixedWorker, selectedCheckpoint, transition]);
 
-  // ── PHASE 3: Finish & log ─────────────────────────────────────
-  const finishScan = useCallback(async (_passed, lastData) => {
-    if (finishCalledRef.current) return;
-    finishCalledRef.current = true;
-    phaseRef.current = PHASE.DONE;
+  const beginCooldown = useCallback(() => {
+    if ([SCAN_SESSION_STATE.RESETTING, SCAN_SESSION_STATE.IDLE].includes(sessionStateRef.current)) return;
+    transition(SCAN_SESSION_STATE.RESETTING);
+    setResetCountdown(Math.max(1, Math.ceil(SCAN_SESSION_CONFIG.cooldownMs / 1000)));
+    schedule(() => resetScanner(false), SCAN_SESSION_CONFIG.cooldownMs);
+  }, [resetScanner, schedule, transition]);
+
+  const finishScan = useCallback(async session => {
+    if (!session || session.finishing || sessionRef.current?.id !== session.id) return;
+    session.finishing = true;
+    session.endedAt = new Date();
+    transition(SCAN_SESSION_STATE.PROCESSING);
     setScanning(false);
-
-    const checkpointConfig = checkpointRef.current;
-    const evaluation = evaluateCheckpoint(checkpointConfig?.required_ppe, lastData?.detected_ppe);
-    let { missing, detected } = evaluation;
-    let passed = evaluation.isCompliant;
-    let alertType = null;
-    const w = workerRef.current;
-    const isNoDetection = !lastData || lastData.total_detections === 0;
-
-    setPhase(PHASE.DONE);
-    setVerdict({ pass: isNoDetection ? false : passed, missing, detected, required: evaluation.required, alertType: isNoDetection ? ALERT_TYPES.MANUAL_REVIEW : null, noDetection: false });
-
+    const aggregate = aggregateSessionFrames(session.frames, checkpointRef.current?.required_ppe);
     setSaving(true);
-    const logId = Date.now();
-    setSessionLog(prev => [{
-      id        : logId,
-      time      : new Date().toLocaleTimeString(),
-      workerName: w?.full_name   || 'Unknown',
-      employeeId: w?.employee_id || '—',
-      pass      : passed,
-      alertType : 'pending',
-      missing,
-      detected,
-    }, ...prev].slice(0, 50));
-
+    setVerdict({ pass: aggregate.result === 'compliant', alertType: aggregate.alert_type, missing: aggregate.missing_ppe, detected: aggregate.detected_ppe, required: aggregate.required_ppe, confidence: aggregate.confidence_score, frameCount: aggregate.frame_count });
     try {
-      const token = localStorage.getItem('token');
-      const real  = (lastData?.detections || []).filter(d => !d.inferred);
-      const confidenceValues = real.map(detection => Number(detection.confidence)).filter(Number.isFinite);
-      const conf  = confidenceValues.length
-        ? Math.round((confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length) * 100) / 100
-        : null;
-
-      // Capture snapshot from webcam for violations only
-      let photoBase64 = null;
-      if (!passed && videoRef.current) {
-        try {
-          const snap = document.createElement('canvas');
-          const sourceWidth = videoRef.current.videoWidth || 640;
-          const sourceHeight = videoRef.current.videoHeight || 480;
-          const scale = Math.min(1, 640 / sourceWidth);
-          snap.width = Math.round(sourceWidth * scale);
-          snap.height = Math.round(sourceHeight * scale);
-          snap.getContext('2d').drawImage(videoRef.current, 0, 0, snap.width, snap.height);
-          photoBase64 = snap.toDataURL('image/jpeg', 0.68);
-        } catch (e) {
-          console.warn('Snapshot failed:', e);
-        }
-      }
-
-      const saved = await fetch(`${API}/detections`, {
-        method : 'POST',
-        signal : AbortSignal.timeout(SAVE_DETECTION_TIMEOUT_MS),
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body   : JSON.stringify({
-          device_uuid     : getDeviceUUID(),
-          detected_ppe    : detected,
-          worker_id       : w?.id || null,
-          checkpoint_id   : checkpointConfig?.id,
-          confidence_score: conf,
-          photo_url       : photoBase64,
+      const controller = new AbortController();
+      session.saveController = controller;
+      const response = await fetch(`${API}/detections`, {
+        method: 'POST',
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(SAVE_DETECTION_TIMEOUT_MS)]),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+        body: JSON.stringify({
+          device_uuid: getDeviceUUID(), worker_id: workerRef.current?.id, checkpoint_id: checkpointRef.current?.id,
+          detected_ppe: aggregate.detected_ppe, confidence_score: aggregate.confidence_score,
+          photo_url: aggregate.alert_type === ALERT_TYPES.COMPLIANT ? null : session.bestSnapshot,
+          scan_session_id: session.id, session_started_at: session.startedAt.toISOString(), session_ended_at: session.endedAt.toISOString(),
+          frame_count: aggregate.frame_count, confidence_summary: aggregate.confidence_summary, manual_review_required: aggregate.manual_review_required,
         }),
       });
-      const savedData = await saved.json().catch(() => ({}));
-      if (!saved.ok) throw new Error(savedData.error || 'The scan could not be saved. Please retry.');
-      missing = savedData.missing_ppe || missing;
-      detected = savedData.detected_ppe || detected;
-      passed = savedData.result === 'compliant';
-      alertType = savedData.alert_type || (passed ? ALERT_TYPES.COMPLIANT : ALERT_TYPES.NON_COMPLIANT);
-      setVerdict({ pass: passed, alertType, missing, detected, required: savedData.required_ppe || evaluation.required, confidence: conf, noDetection: false });
-      setSessionLog(prev => prev.map(entry => entry.id === logId ? { ...entry, pass: passed, alertType, missing, detected } : entry));
-      if (!alertEmittedRef.current) {
-        alertEmittedRef.current = true;
-        await emitLocalAlert({
-          alertType,
-          detectionId: savedData.detection_id,
-          checkpoint: savedData.checkpoint || checkpointConfig,
-          worker: { id: w?.id, employeeId: w?.employee_id, name: w?.full_name },
-          missingPpe: missing,
-          detectedPpe: detected,
-          occurredAt: new Date().toISOString(),
-        }, soundEnabled);
+      const saved = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(saved.error || 'The scan could not be saved.');
+      if (!mountedRef.current || sessionRef.current?.id !== session.id) return;
+      const alertType = saved.alert_type || aggregate.alert_type;
+      const pass = saved.result === 'compliant';
+      const finalVerdict = { pass, alertType, missing: saved.missing_ppe || aggregate.missing_ppe, detected: saved.detected_ppe || aggregate.detected_ppe, required: saved.required_ppe || aggregate.required_ppe, confidence: aggregate.confidence_score, frameCount: aggregate.frame_count };
+      setVerdict(finalVerdict);
+      setSessionLog(previous => [{ id: session.id, time: new Date().toLocaleTimeString(), workerName: workerRef.current?.full_name || 'Unknown', employeeId: workerRef.current?.employee_id || '—', pass, alertType, missing: finalVerdict.missing }, ...previous].slice(0, 50));
+      if (!session.alertEmitted) {
+        session.alertEmitted = true;
+        await emitLocalAlert({ alertType, detectionId: saved.detection_id, scanSessionId: session.id, checkpoint: saved.checkpoint || checkpointRef.current, worker: { id: workerRef.current?.id, employeeId: workerRef.current?.employee_id, name: workerRef.current?.full_name }, missingPpe: finalVerdict.missing, detectedPpe: finalVerdict.detected, occurredAt: session.endedAt.toISOString() }, soundEnabled);
       }
-    } catch (err) {
-      if (!mountedRef.current) return;
-      setQrError(err.name === 'TimeoutError'
-        ? 'The scan could not be saved before the connection timed out. Check the backend tunnel and scan again.'
-        : err.message);
-      setSessionLog(prev => prev.filter(entry => entry.id !== logId));
-      setVerdict({ pass: false, missing: [], detected: [], noDetection: true });
-      return;
+      Promise.resolve(onScanCompleteRef.current?.()).catch(() => {});
+    } catch (error) {
+      if (error.name === 'AbortError' || !mountedRef.current || sessionRef.current?.id !== session.id) return;
+      setQrError(error.name === 'TimeoutError' ? 'The completed session could not be saved before the connection timed out.' : error.message);
+      setVerdict({ pass: false, missing: [], detected: [], noDetection: true, alertType: ALERT_TYPES.MANUAL_REVIEW, frameCount: aggregate.frame_count });
     } finally {
-      if (mountedRef.current) setSaving(false);
+      if (mountedRef.current && sessionRef.current?.id === session.id) setSaving(false);
     }
+    if (!mountedRef.current || sessionRef.current?.id !== session.id) return;
+    transition(SCAN_SESSION_STATE.RESULT);
+    schedule(() => {
+      if (sessionRef.current?.id === session.id) { session.absentSince = null; transition(SCAN_SESSION_STATE.WAITING_FOR_EXIT); }
+    }, Math.max(1000, resultDurationMs));
+  }, [resultDurationMs, schedule, soundEnabled, transition]);
 
-    if (mountedRef.current) {
-      Promise.resolve().then(() => onScanCompleteRef.current?.()).catch(() => {
-        // A dashboard refresh failure must not stop the scanner.
-      });
-    }
-  }, [soundEnabled]);
-
-  // ── PHASE 2: PPE scan + countdown ────────────────────────────
   useEffect(() => {
-    if (phase !== PHASE.PPE) {
-      clearInterval(ppeLoopRef.current);
-      clearInterval(timerRef.current);
-      return;
-    }
-
-    let cancelled = false;
-    const controller = new AbortController();
-
-    // Reset all PPE state
-    lastResultRef.current = null;
-    setQrError('');
-    streakRef.current    = 0;
-    missCountRef.current = 0;
-    busyRef.current      = false;
-    setCompliantStreak(0);
-    setCamResult(null);
-    setTimeLeft(PPE_TIMEOUT_SEC);
-
-    // Countdown
-    let remaining = PPE_TIMEOUT_SEC;
-    timerRef.current = setInterval(() => {
-      remaining -= 1;
-      setTimeLeft(remaining);
-      if (remaining <= 0) {
-        clearInterval(timerRef.current);
-        clearInterval(ppeLoopRef.current);
-        finishScan(false, lastResultRef.current);  // pass last known result
+    if (phase !== PHASE.PPE || !cameraReady || !worker) { window.clearInterval(ppeLoopRef.current); return undefined; }
+    let stopped = false;
+    const effectCycle = cycleRef.current;
+    const addFrame = (session, data, canvas) => {
+      const frame = { ...data, captured_at: new Date().toISOString() };
+      session.frames.push(frame);
+      const score = frameEvidenceScore(frame);
+      if (score > session.bestScore) {
+        session.bestScore = score;
+        try { session.bestSnapshot = canvas.toDataURL('image/jpeg', 0.68); } catch { session.bestSnapshot = null; }
       }
-    }, 1000);
-
-    // PPE detection loop
-    ppeLoopRef.current = setInterval(async () => {
-      if (busyRef.current || !videoRef.current || !runningRef.current) return;
-      if (phaseRef.current !== PHASE.PPE) return;
-
-      busyRef.current = true;
-      setScanning(true);
-
-      const canvas  = document.createElement('canvas');
-      canvas.width  = 640;
-      canvas.height = 480;
-      canvas.getContext('2d').drawImage(videoRef.current, 0, 0, 640, 480);
-
-      canvas.toBlob(async (blob) => {
-        if (cancelled) return;
-        if (!blob || phaseRef.current !== PHASE.PPE) {
-          busyRef.current = false;
-          setScanning(false);
+      const elapsed = Date.now() - session.startedAt.getTime();
+      setFrameCount(session.frames.length);
+      setScanProgress(Math.min(100, Math.round(elapsed / SCAN_SESSION_CONFIG.scanDurationMs * 100)));
+      setTimeLeft(Math.max(0, Math.ceil((SCAN_SESSION_CONFIG.scanDurationMs - elapsed) / 1000)));
+    };
+    const startSession = (data, canvas) => {
+      clearTimers();
+      const session = { id: crypto.randomUUID(), startedAt: new Date(), frames: [], bestScore: -1, bestSnapshot: null, absentSince: null, finishing: false, alertEmitted: false };
+      sessionRef.current = session;
+      setFrameCount(0); setScanProgress(0); setTimeLeft(Math.ceil(SCAN_SESSION_CONFIG.scanDurationMs / 1000)); setVerdict(null); setQrError('');
+      transition(SCAN_SESSION_STATE.PERSON_DETECTED);
+      schedule(() => { if (sessionRef.current?.id === session.id && sessionStateRef.current === SCAN_SESSION_STATE.PERSON_DETECTED) transition(SCAN_SESSION_STATE.SCANNING); }, SCAN_SESSION_CONFIG.personDetectedDelayMs);
+      schedule(() => finishScan(session), SCAN_SESSION_CONFIG.scanDurationMs);
+      addFrame(session, data, canvas);
+    };
+    const cancelIncomplete = () => {
+      const session = sessionRef.current;
+      if (!session || session.finishing) return;
+      clearTimers(); sessionRef.current = null; setScanning(false); setCamResult(null);
+      setVerdict({ incomplete: true, pass: false, missing: [], detected: [], frameCount: session.frames.length });
+      transition(SCAN_SESSION_STATE.INCOMPLETE);
+      schedule(beginCooldown, SCAN_SESSION_CONFIG.incompleteMessageMs);
+    };
+    const processObservation = (data, canvas) => {
+      const personCount = Number.isInteger(data.person_count) ? data.person_count : (data.detections || []).filter(detection => ['human', 'person'].includes(String(detection.class_name).toLowerCase())).length;
+      const observation = { ...data, person_count: personCount };
+      const evaluation = evaluateCheckpoint(checkpointRef.current?.required_ppe, data.detected_ppe);
+      setCamResult({ ...observation, compliant: evaluation.detected, violations: evaluation.missing, is_checkpoint_compliant: evaluation.isCompliant });
+      const state = sessionStateRef.current;
+      if ([SCAN_SESSION_STATE.IDLE, SCAN_SESSION_STATE.MULTIPLE_PEOPLE].includes(state)) {
+        if (personCount > 1) { transition(SCAN_SESSION_STATE.MULTIPLE_PEOPLE); return; }
+        if (personCount === 0) { if (state === SCAN_SESSION_STATE.MULTIPLE_PEOPLE) transition(SCAN_SESSION_STATE.IDLE); return; }
+        startSession(observation, canvas);
+        return;
+      }
+      if ([SCAN_SESSION_STATE.PERSON_DETECTED, SCAN_SESSION_STATE.SCANNING].includes(state)) {
+        const session = sessionRef.current;
+        if (!session || session.finishing) return;
+        if (personCount > 1) { clearTimers(); sessionRef.current = null; setFrameCount(0); setScanProgress(0); transition(SCAN_SESSION_STATE.MULTIPLE_PEOPLE); return; }
+        if (personCount === 0) {
+          if (!session.absentSince) session.absentSince = Date.now();
+          if (Date.now() - session.absentSince >= SCAN_SESSION_CONFIG.personExitDelayMs) cancelIncomplete();
           return;
         }
-        try {
-          const fd = new FormData();
-          fd.append('file', blob, 'ppe.jpg');
-          fd.append('conf', 0.35);
-          const res  = await fetch(`${API}/ppe/detect`, { method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }, body: fd, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(DETECTION_TIMEOUT_MS)]) });
-          if (!res.ok) throw new Error('Detection service unavailable. Please retry.');
-          const data = await res.json();
-          if (cancelled || phaseRef.current !== PHASE.PPE) return;
-
-          if (data.total_detections > 0) {
-            const evaluation = evaluateCheckpoint(checkpointRef.current?.required_ppe, data.detected_ppe);
-            const evaluatedData = {
-              ...data,
-              required_ppe: evaluation.required,
-              compliant: evaluation.detected,
-              violations: evaluation.missing,
-              missing_ppe: evaluation.missing,
-              is_checkpoint_compliant: evaluation.isCompliant,
-            };
-            missCountRef.current = 0;
-            setCamResult(evaluatedData);
-            // Always track last real result so timer expiry has data to log
-            lastResultRef.current = evaluatedData;
-
-            if (evaluatedData.is_checkpoint_compliant) {
-              streakRef.current += 1;
-              setCompliantStreak(streakRef.current);
-              if (streakRef.current >= COMPLIANT_STREAK_REQ) {
-                clearInterval(ppeLoopRef.current);
-                clearInterval(timerRef.current);
-                finishScan(true, evaluatedData);
-              }
-            } else {
-              streakRef.current = 0;
-              setCompliantStreak(0);
-            }
-          } else {
-            missCountRef.current += 1;
-            if (missCountRef.current >= MISS_THRESHOLD) {
-              setCamResult(null);
-              missCountRef.current = 0;
-              streakRef.current    = 0;
-              setCompliantStreak(0);
-            }
-          }
-        } catch (err) {
-          if (cancelled || phaseRef.current !== PHASE.PPE) return;
-          lastResultRef.current = null;
-          setQrError(err.name === 'TimeoutError'
-            ? 'The PPE scan took too long. Check the backend tunnel and try again.'
-            : err.message);
-          clearInterval(timerRef.current); clearInterval(ppeLoopRef.current);
-          finishScan(false, null);
-        } finally {
-          if (!cancelled) { busyRef.current = false; setScanning(false); }
-        }
-      }, 'image/jpeg', 0.85);
-    }, SCAN_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      controller.abort();
-      clearInterval(ppeLoopRef.current);
-      clearInterval(timerRef.current);
+        session.absentSince = null;
+        addFrame(session, observation, canvas);
+        return;
+      }
+      if (state === SCAN_SESSION_STATE.WAITING_FOR_EXIT) {
+        const session = sessionRef.current;
+        if (!session) return;
+        if (personCount === 0) {
+          if (!session.absentSince) session.absentSince = Date.now();
+          if (Date.now() - session.absentSince >= SCAN_SESSION_CONFIG.personExitDelayMs) beginCooldown();
+        } else session.absentSince = null;
+      }
     };
-  }, [phase, finishScan]);
+    const detect = async () => {
+      if (stopped || busyRef.current || !videoRef.current || !runningRef.current || phaseRef.current !== PHASE.PPE) return;
+      busyRef.current = true; setScanning(true);
+      const canvas = document.createElement('canvas'); canvas.width = 640; canvas.height = 480;
+      canvas.getContext('2d').drawImage(videoRef.current, 0, 0, 640, 480);
+      try {
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.82));
+        if (!blob || stopped || effectCycle !== cycleRef.current) return;
+        const form = new FormData(); form.append('file', blob, 'ppe.jpg'); form.append('conf', String(SCAN_SESSION_CONFIG.detectionConfidence));
+        const controller = new AbortController(); requestControllerRef.current = controller;
+        const response = await fetch(`${API}/ppe/detect`, { method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }, body: form, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(DETECTION_TIMEOUT_MS)]) });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || 'Detection service unavailable. Please retry.');
+        if (!stopped && effectCycle === cycleRef.current && phaseRef.current === PHASE.PPE) { setQrError(''); processObservation(body, canvas); }
+      } catch (error) {
+        if (!stopped && effectCycle === cycleRef.current && error.name !== 'AbortError') setQrError(error.name === 'TimeoutError' ? 'The PPE scan took too long. The current session is still protected from duplicates.' : error.message);
+      } finally {
+        if (!stopped && effectCycle === cycleRef.current) { busyRef.current = false; setScanning(false); }
+      }
+    };
+    detect();
+    ppeLoopRef.current = window.setInterval(detect, SCAN_SESSION_CONFIG.inferenceIntervalMs);
+    return () => { stopped = true; requestControllerRef.current?.abort(); window.clearInterval(ppeLoopRef.current); busyRef.current = false; };
+  }, [beginCooldown, cameraReady, clearTimers, finishScan, phase, scanCycle, schedule, transition, worker]);
 
-  const resetToQR = useCallback((manual = false) => {
-    clearInterval(ppeLoopRef.current);
-    clearInterval(timerRef.current);
-    clearInterval(qrLoopRef.current);
-    busyRef.current       = false;
-    streakRef.current     = 0;
-    missCountRef.current  = 0;
-    finishCalledRef.current = false;
-    alertEmittedRef.current = false;
-    lastResultRef.current   = null;
-    if (!manual && workerRef.current?.employee_id) {
-      blockedEmployeeRef.current = workerRef.current.employee_id;
-      blockedSeenAtRef.current = Date.now();
-    } else if (manual) {
-      blockedEmployeeRef.current = null;
-      blockedSeenAtRef.current = 0;
-    }
-    const nextPhase = isWorkerSelfCheck ? PHASE.PPE : PHASE.QR;
-    phaseRef.current = nextPhase;
-    workerRef.current = fixedWorker || null;
-    checkpointRef.current = selectedCheckpoint || fixedWorker?.checkpoint || null;
-    setScanning(false);
-    setResetCountdown(0);
-    setWorker(fixedWorker || null);
-    setCheckpoint(selectedCheckpoint || fixedWorker?.checkpoint || null);
-    setVerdict(null);
-    setCamResult(null);
-    setCompliantStreak(0);
-    setTimeLeft(PPE_TIMEOUT_SEC);
-    setQrScanning(!isWorkerSelfCheck);
-    setQrError('');
-    setPhase(nextPhase);
-  }, [fixedWorker, isWorkerSelfCheck, selectedCheckpoint]);
-
-  // Every finished scan returns to the next worker, including service errors.
-  useEffect(() => {
-    if (phase !== PHASE.DONE || saving) return;
-    let countdown = Math.max(3, Math.round(resultDurationMs / 1000));
-    setResetCountdown(countdown);
-    const interval = setInterval(() => {
-      countdown -= 1;
-      setResetCountdown(countdown);
-      if (countdown <= 0) resetToQR(false);
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [phase, saving, resetToQR, resultDurationMs]);
-
-  // ── Session stats ─────────────────────────────────────────────
-  const totalScans     = sessionLog.length;
-  const totalPassed    = sessionLog.filter(l => l.pass).length;
-  const totalFailed    = sessionLog.filter(l => !l.pass).length;
-  const complianceRate = totalScans === 0 ? 100 : Math.round((totalPassed / totalScans) * 100);
+  const totalScans = sessionLog.length;
+  const totalPassed = sessionLog.filter(entry => entry.pass).length;
+  const totalFailed = sessionLog.filter(entry => !entry.pass).length;
+  const complianceRate = totalScans ? Math.round(totalPassed / totalScans * 100) : 100;
   const manualReview = verdict?.alertType === ALERT_TYPES.MANUAL_REVIEW;
+  const resultVisible = [SCAN_SESSION_STATE.PROCESSING, SCAN_SESSION_STATE.RESULT, SCAN_SESSION_STATE.WAITING_FOR_EXIT, SCAN_SESSION_STATE.RESETTING, SCAN_SESSION_STATE.INCOMPLETE].includes(sessionState);
+  const [statusTitle, statusDetail] = sessionStatusCopy(sessionState, frameCount);
 
-  // ── Render ────────────────────────────────────────────────────
-  return (
-    <div>
+  return <div>
+    <div className="ppe-stat-row">{[
+      { val: totalScans, label: isWorkerSelfCheck ? 'Checks completed' : 'Workers Scanned', color: '' },
+      { val: totalPassed, label: 'Passed', color: 'green' }, { val: totalFailed, label: 'Failed', color: 'red' },
+      { val: `${complianceRate}%`, label: 'Compliance rate', color: complianceRate >= 80 ? 'green' : 'red' },
+    ].map(item => <div className="ppe-mini-stat" key={item.label}><div className={`ppe-mini-stat-val ${item.color}`}>{item.val}</div><div className="ppe-mini-stat-label">{item.label}</div></div>)}</div>
 
-      {/* Stats row */}
-      <div className="ppe-stat-row">
-        {[
-          { val: totalScans,    label: isWorkerSelfCheck ? 'Checks completed' : 'Workers Scanned', color: ''      },
-          { val: totalPassed,   label: 'Passed',          color: 'green' },
-          { val: totalFailed,   label: 'Failed',          color: 'red'   },
-          { val: `${complianceRate}%`, label: 'Compliance rate', color: complianceRate >= 80 ? 'green' : 'red' },
-        ].map(s => (
-          <div className="ppe-mini-stat" key={s.label}>
-            <div className={`ppe-mini-stat-val ${s.color}`}>{s.val}</div>
-            <div className="ppe-mini-stat-label">{s.label}</div>
-          </div>
-        ))}
+    <div className="ppe-session-steps">{!isWorkerSelfCheck && <span className={phase === PHASE.QR ? 'active' : ''}>① Scan Worker ID</span>}<i>→</i><span className={phase === PHASE.PPE && !resultVisible ? 'active' : ''}>{isWorkerSelfCheck ? '①' : '②'} Scan Session</span><i>→</i><span className={resultVisible ? 'active' : ''}>{isWorkerSelfCheck ? '②' : '③'} Result</span></div>
+
+    <div className="ppe-detect-grid">
+      <div>
+        <div className={`ppe-camera-shell ${resultVisible ? manualReview ? 'review' : verdict?.pass ? 'pass' : 'fail' : ''}`}>
+          <div className="ppe-video-stage"><video ref={videoRef} autoPlay muted playsInline />{phase === PHASE.PPE && <DetectionOverlay detections={camResult?.detections} />}{phase === PHASE.QR && <div className="ppe-qr-mask"><div className="ppe-qr-target" /></div>}</div>
+          {scanning && phase === PHASE.PPE && <div className="ppe-scanning-pulse" />}
+        </div>
+        <div className={`ppe-session-status state-${sessionState}`} role="status" aria-live="polite"><strong>{phase === PHASE.QR ? 'SCAN WORKER ID' : statusTitle}</strong><span>{phase === PHASE.QR ? 'Hold the QR card steady in front of the camera.' : statusDetail}</span></div>
       </div>
 
-      {/* Step indicator */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem',
-        marginBottom: '1.25rem', fontSize: '0.82rem', fontWeight: 700 }}>
-        {[
-          ...(isWorkerSelfCheck ? [] : [{ key: PHASE.QR, label: '① Scan Worker ID' }]),
-          { key: PHASE.PPE,  label: isWorkerSelfCheck ? '① PPE Inspection' : '② PPE Inspection'  },
-          { key: PHASE.DONE, label: isWorkerSelfCheck ? '② Verdict' : '③ Verdict'         },
-        ].map((step, i, arr) => (
-          <React.Fragment key={step.key}>
-            <div style={{
-              padding: '0.35rem 0.9rem', borderRadius: 20,
-              background: phase === step.key ? '#0f766e' : '#f1f5f9',
-              color: phase === step.key ? '#fff' : '#94a3b8',
-              transition: 'all 0.3s',
-            }}>
-              {step.label}
-            </div>
-            {i < arr.length - 1 && <span style={{ color: '#cbd5e1' }}>→</span>}
-          </React.Fragment>
-        ))}
-      </div>
+      <div>
+        {phase === PHASE.QR && <section className="ppe-qr-panel"><div className="ppe-panel-icon">📋</div><h3>Scan Worker ID</h3><p>Ask the worker to hold their QR ID card steady in front of the camera.</p>{qrScanning && <div className="ppe-inline-status"><div className="ins-spinner" /> Scanning for QR…</div>}{qrError && <div className="ppe-error-box">⚠️ {qrError}</div>}</section>}
 
-      <div className="ppe-detect-grid">
+        {phase === PHASE.PPE && worker && !resultVisible && <>
+          <section className="ppe-worker-card"><div className="ppe-worker-avatar">{initials(worker.full_name)}</div><div><strong>{worker.full_name}</strong><span>{worker.employee_id} · {worker.position || 'No position'}</span><small>● Active</small></div></section>
+          {checkpoint && <section className="ppe-checkpoint-card"><div><span>Checkpoint</span><strong>{checkpoint.label}</strong><small>{[checkpoint.code, checkpoint.location].filter(Boolean).join(' · ')}</small><small>{checkpoint.profile_name ? `${checkpoint.profile_name} profile` : 'Custom PPE requirements'}</small></div><div><span>Required PPE</span><div className="ppe-checkpoint-items">{checkpoint.required_ppe.length ? checkpoint.required_ppe.map(item => <b key={item}>{ppeLabel(item)}</b>) : <b>No PPE required</b>}</div></div></section>}
+          <section className={`ppe-progress-card state-${sessionState}`}><div><strong>{statusTitle}</strong><span>{statusDetail}</span></div>{[SCAN_SESSION_STATE.PERSON_DETECTED, SCAN_SESSION_STATE.SCANNING].includes(sessionState) && <><b>{timeLeft}s</b><div className="ppe-progress-track"><i style={{ width: `${scanProgress}%` }} /></div><small>{frameCount} stable frame{frameCount === 1 ? '' : 's'} collected</small></>}</section>
+          {camResult && <section className="ppe-live-result">{camResult.compliant?.length > 0 && <div><strong>✅ PPE Visible</strong><div className="ppe-detected-list">{camResult.compliant.map(item => <span key={item} className="ins-ppe-tag">{ppeLabel(item)}</span>)}</div></div>}{camResult.violations?.length > 0 && <div><strong className="missing">Current frame missing</strong><div className="ppe-detected-list">{camResult.violations.map(item => <span key={item} className="ins-ppe-tag missing">{ppeLabel(item)}</span>)}</div></div>}</section>}
+          {qrError && <div className="ppe-error-box">⚠️ {qrError}</div>}<button type="button" className="ppe-manual-reset" onClick={() => resetScanner(true)}>Reset Scanner</button>
+        </>}
 
-        {/* Camera feed */}
-        <div>
-          <div style={{
-            position: 'relative', borderRadius: 14, overflow: 'hidden',
-            border: `3px solid ${
-              phase === PHASE.DONE ? (manualReview ? '#f59e0b' : verdict?.pass ? '#22c55e' : '#ef4444')
-              : phase === PHASE.PPE ? (camResult?.is_checkpoint_compliant ? '#22c55e' : '#64748b')
-              : '#3b82f6'
-            }`,
-            transition: 'border-color 0.4s',
-            background: '#0f172a', minHeight: 320,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            <div className="ppe-video-stage">
-              <video ref={videoRef} autoPlay muted playsInline />
+        {phase === PHASE.PPE && worker && resultVisible && <>
+          <section className="ppe-worker-card"><div className="ppe-worker-avatar">{initials(worker.full_name)}</div><div><strong>{worker.full_name}</strong><span>{worker.employee_id}</span><small>{checkpoint?.label || 'Checkpoint'}</small></div></section>
+          <section className={`ppe-verdict-card ${verdict?.incomplete || verdict?.noDetection || manualReview ? 'review' : verdict?.pass ? 'pass' : 'fail'}`}><div>{verdict?.incomplete ? '⏱️' : verdict?.noDetection || manualReview ? '⚠️' : verdict?.pass ? '✅' : '🚨'}</div><h2>{verdict?.incomplete ? 'INSUFFICIENT SCAN' : verdict?.noDetection ? 'SCAN NOT RECORDED' : manualReview ? 'MANUAL INSPECTION REQUIRED' : verdict?.pass ? 'COMPLIANT' : 'NOT COMPLIANT'}</h2><p>{sessionState === SCAN_SESSION_STATE.PROCESSING || saving ? 'Saving one final session result…' : sessionState === SCAN_SESSION_STATE.WAITING_FOR_EXIT ? 'Please clear the scanning area.' : sessionState === SCAN_SESSION_STATE.RESETTING ? `Ready again in ${resetCountdown}s…` : `${verdict?.frameCount || 0} frames evaluated`}</p></section>
+          {verdict?.detected?.length > 0 && <div className="ppe-result-group"><strong>✅ PPE Present</strong><div className="ppe-detected-list">{verdict.detected.map(item => <span key={item} className="ins-ppe-tag">{ppeLabel(item)}</span>)}</div></div>}
+          {verdict?.missing?.length > 0 && <div className="ppe-result-group missing"><strong>🚨 Missing PPE</strong><div className="ppe-detected-list">{verdict.missing.map(item => <span key={item} className="ins-ppe-tag missing">{ppeLabel(item)}</span>)}</div></div>}
+          {qrError && <div className="ppe-error-box">⚠️ {qrError}</div>}<button type="button" className="ppe-manual-reset" onClick={() => resetScanner(true)}>Reset Scanner</button>
+        </>}
 
-              {phase === PHASE.PPE && <DetectionOverlay detections={camResult?.detections} />}
-
-              {/* QR targeting box */}
-              {phase === PHASE.QR && (
-                <div style={{
-                  position: 'absolute', inset: 0, display: 'flex',
-                  alignItems: 'center', justifyContent: 'center', pointerEvents: 'none',
-                }}>
-                  <div style={{
-                    width: 200, height: 200, border: '3px solid #60a5fa',
-                    borderRadius: 12, boxShadow: '0 0 0 9999px rgba(0,0,0,0.5)',
-                  }}>
-                    {/* Corner accents */}
-                    {[
-                      { top: -3, left: -3, borderTop: '4px solid #3b82f6', borderLeft: '4px solid #3b82f6' },
-                      { top: -3, right: -3, borderTop: '4px solid #3b82f6', borderRight: '4px solid #3b82f6' },
-                      { bottom: -3, left: -3, borderBottom: '4px solid #3b82f6', borderLeft: '4px solid #3b82f6' },
-                      { bottom: -3, right: -3, borderBottom: '4px solid #3b82f6', borderRight: '4px solid #3b82f6' },
-                    ].map((s, i) => (
-                      <div key={i} style={{ position: 'absolute', width: 20, height: 20, ...s }} />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Scanning pulse */}
-            {scanning && phase === PHASE.PPE && (
-              <div style={{
-                position: 'absolute', inset: 0, borderRadius: 11,
-                border: '3px solid rgba(99,202,253,0.5)',
-                animation: 'pulseBorder 1s ease-in-out infinite',
-                pointerEvents: 'none',
-              }} />
-            )}
-          </div>
-
-          <div style={{ marginTop: '0.75rem', textAlign: 'center',
-            fontSize: '0.8rem', color: '#94a3b8', fontWeight: 600 }}>
-            {phase === PHASE.QR   && '📋 Hold QR ID card up to the camera'}
-            {phase === PHASE.PPE  && (scanning ? '🔍 Scanning PPE...' : '👀 Watching for PPE...')}
-            {phase === PHASE.DONE && (saving ? 'Saving scan…' : isWorkerSelfCheck ? `Ready again in ${resetCountdown}s` : `Next worker in ${resetCountdown}s`)}
-          </div>
-
-
-        </div>
-
-        {/* Right panel */}
-        <div>
-
-          {/* ── QR phase panel ── */}
-          {phase === PHASE.QR && (
-            <div style={{
-              background: 'linear-gradient(135deg, #eff6ff, #dbeafe)',
-              border: '2px solid #93c5fd', borderRadius: 16,
-              padding: '2.5rem 1.5rem', textAlign: 'center',
-            }}>
-              <div style={{ fontSize: '3.5rem', marginBottom: '0.75rem' }}>📋</div>
-              <div style={{ fontWeight: 800, fontSize: '1.15rem', color: '#1e40af', marginBottom: '0.5rem' }}>
-                Scan Worker ID
-              </div>
-              <div style={{ fontSize: '0.85rem', color: '#3b82f6', marginBottom: '1.5rem', lineHeight: 1.5 }}>
-                Ask the worker to hold their QR ID card<br />steady in front of the camera
-              </div>
-              {qrScanning && (
-                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
-                  fontSize: '0.78rem', color: '#2563eb', fontWeight: 600,
-                  background: '#dbeafe', border: '1px solid #93c5fd',
-                  padding: '0.4rem 1.1rem', borderRadius: 20 }}>
-                  <div className="ins-spinner" style={{ borderTopColor: '#2563eb', borderColor: '#bfdbfe', width: 12, height: 12, borderWidth: 2 }} />
-                  Scanning for QR...
-                </div>
-              )}
-              {qrError && (
-                <div style={{ marginTop: '1rem', padding: '0.75rem 1rem',
-                  background: '#fef2f2', border: '1px solid #fca5a5',
-                  borderRadius: 8, color: '#dc2626', fontSize: '0.82rem' }}>
-                  ⚠️ {qrError}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ── PPE phase panel ── */}
-          {phase === PHASE.PPE && worker && (
-            <>
-              {/* Worker card */}
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: '1rem',
-                background: '#f8fafc', border: '1px solid #e2e8f0',
-                borderRadius: 12, padding: '1rem 1.25rem', marginBottom: '1.25rem',
-              }}>
-                <div style={{
-                  width: 50, height: 50, borderRadius: '50%', flexShrink: 0,
-                  background: 'linear-gradient(135deg, #667eea, #764ba2)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: '#fff', fontWeight: 800, fontSize: '1rem',
-                }}>
-                  {initials(worker.full_name)}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 800, fontSize: '1rem', color: '#1a202c' }}>{worker.full_name}</div>
-                  <div style={{ fontSize: '0.78rem', color: '#888' }}>{worker.employee_id} · {worker.position || 'No position'}</div>
-                  <div style={{ fontSize: '0.74rem', color: '#16a34a', fontWeight: 600, marginTop: 2 }}>● Active</div>
-                </div>
-              </div>
-
-              {checkpoint && (
-                <div className="ppe-checkpoint-card">
-                  <div>
-                    <span>Checkpoint</span>
-                    <strong>{checkpoint.label}</strong>
-                    <small>{[checkpoint.code, checkpoint.location].filter(Boolean).join(' · ')}</small>
-                    <small>{checkpoint.profile_name ? `${checkpoint.profile_name} profile` : 'Custom PPE requirements'}</small>
-                  </div>
-                  <div>
-                    <span>Required PPE</span>
-                    <div className="ppe-checkpoint-items">
-                      {checkpoint.required_ppe.length
-                        ? checkpoint.required_ppe.map(item => <b key={item}>{ppeLabel(item)}</b>)
-                        : <b>No PPE required</b>}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Countdown */}
-              <div style={{
-                background: timeLeft <= 5
-                  ? 'linear-gradient(135deg, #450a0a, #7f1d1d)'
-                  : 'linear-gradient(135deg, #0c4a6e, #0e7490)',
-                borderRadius: 12, padding: '1.25rem',
-                textAlign: 'center', marginBottom: '1.25rem',
-                border: `1px solid ${timeLeft <= 5 ? 'rgba(252,165,165,0.3)' : 'rgba(125,211,252,0.3)'}`,
-                transition: 'background 0.5s',
-              }}>
-                <div style={{ fontSize: '3rem', fontWeight: 900, lineHeight: 1,
-                  color: timeLeft <= 5 ? '#f87171' : '#7dd3fc' }}>
-                  {timeLeft}s
-                </div>
-                <div style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.55)', marginTop: 4 }}>
-                  {timeLeft <= 5 ? '⚠️ Time almost up!' : 'Put on all PPE to pass'}
-                </div>
-              </div>
-
-              {/* Compliance streak */}
-              <div style={{ marginBottom: '1.25rem' }}>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748b',
-                  textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.5rem' }}>
-                  Compliance Streak — {compliantStreak}/{COMPLIANT_STREAK_REQ}
-                </div>
-                <div style={{ display: 'flex', gap: '0.4rem' }}>
-                  {Array.from({ length: COMPLIANT_STREAK_REQ }).map((_, i) => (
-                    <div key={i} style={{
-                      flex: 1, height: 10, borderRadius: 5,
-                      background: i < compliantStreak ? '#22c55e' : '#e2e8f0',
-                      transition: 'background 0.3s',
-                    }} />
-                  ))}
-                </div>
-                <div style={{ fontSize: '0.73rem', color: '#94a3b8', marginTop: '0.35rem' }}>
-                  Hold still with all PPE on to pass
-                </div>
-              </div>
-
-              {/* Live detection */}
-              {camResult && (
-                <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: '0.9rem' }}>
-                  {camResult.compliant?.length > 0 && (
-                    <div style={{ marginBottom: '0.6rem' }}>
-                      <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#16a34a',
-                        textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: '0.35rem' }}>
-                        ✅ PPE On
-                      </div>
-                      <div className="ppe-detected-list">
-                        {camResult.compliant.map(c => <span key={c} className="ins-ppe-tag">{ppeLabel(c)}</span>)}
-                      </div>
-                    </div>
-                  )}
-                  {camResult.violations?.length > 0 && (
-                    <div>
-                      <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#dc2626',
-                        textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: '0.35rem' }}>
-                        🚨 Still Missing
-                      </div>
-                      <div className="ppe-detected-list">
-                        {camResult.violations.map(v => <span key={v} className="ins-ppe-tag missing">{ppeLabel(v)}</span>)}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </>
-          )}
-
-          {/* ── Done phase panel ── */}
-          {phase === PHASE.DONE && verdict && (
-            <>
-              {worker && (
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: '1rem',
-                  background: '#f8fafc', border: '1px solid #e2e8f0',
-                  borderRadius: 12, padding: '1rem 1.25rem', marginBottom: '1.25rem',
-                }}>
-                  <div style={{
-                    width: 50, height: 50, borderRadius: '50%', flexShrink: 0,
-                    background: 'linear-gradient(135deg, #667eea, #764ba2)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    color: '#fff', fontWeight: 800, fontSize: '1rem',
-                  }}>
-                    {initials(worker.full_name)}
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 800, color: '#1a202c' }}>{worker.full_name}</div>
-                    <div style={{ fontSize: '0.78rem', color: '#888' }}>{worker.employee_id}</div>
-                  </div>
-                </div>
-              )}
-
-              {/* ── No detection — rescan prompt ── */}
-              {verdict.noDetection ? (
-                <div style={{
-                  borderRadius: 18, padding: '2rem 1.5rem', textAlign: 'center',
-                  background: 'linear-gradient(145deg, #1c1917, #292524)',
-                  border: '1.5px solid rgba(251,191,36,0.3)',
-                  boxShadow: '0 8px 32px rgba(251,191,36,0.15)',
-                  marginBottom: '1.25rem',
-                }}>
-                  <div style={{ fontSize: '3.5rem', marginBottom: '0.5rem' }}>⚠️</div>
-                  <div style={{ fontSize: '1.4rem', fontWeight: 900, color: '#fbbf24', letterSpacing: '0.05em' }}>
-                    SCAN NOT RECORDED
-                  </div>
-                  <div style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.5)', marginTop: '0.5rem', marginBottom: '1.25rem' }}>
-                    {qrError || 'The result could not be saved. Please retry.'}
-                  </div>
-                  <button
-                    onClick={() => {
-                      finishCalledRef.current = false;
-                      setVerdict(null);
-                      phaseRef.current = PHASE.PPE;
-                      setPhase(PHASE.PPE);
-                    }}
-                    style={{
-                      padding: '0.65rem 2rem', borderRadius: 8, border: 'none',
-                      background: '#fbbf24', color: '#1c1917',
-                      fontWeight: 800, fontSize: '0.95rem', cursor: 'pointer',
-                      letterSpacing: '0.05em',
-                    }}>
-                    🔄 Rescan
-                  </button>
-                </div>
-              ) : (
-                <div style={{
-                  borderRadius: 18, padding: '2rem 1.5rem', textAlign: 'center',
-                  background: manualReview
-                    ? 'linear-gradient(145deg, #422006, #78350f)'
-                    : verdict.pass
-                    ? 'linear-gradient(145deg, #052e16, #14532d)'
-                    : 'linear-gradient(145deg, #450a0a, #7f1d1d)',
-                  boxShadow: manualReview
-                    ? '0 8px 32px rgba(245,158,11,0.32)'
-                    : verdict.pass
-                    ? '0 8px 32px rgba(22,163,74,0.35)'
-                    : '0 8px 32px rgba(220,38,38,0.35)',
-                  border: `1.5px solid ${manualReview ? 'rgba(253,186,116,0.42)' : verdict.pass ? 'rgba(134,239,172,0.3)' : 'rgba(252,165,165,0.3)'}`,
-                  marginBottom: '1.25rem',
-                }}>
-                  <div style={{ fontSize: '3.5rem', marginBottom: '0.5rem' }}>
-                    {manualReview ? '⚠️' : verdict.pass ? '✅' : '🚨'}
-                  </div>
-                  <div style={{
-                    fontSize: '1.7rem', fontWeight: 900, letterSpacing: '0.08em',
-                    color: manualReview ? '#fbbf24' : verdict.pass ? '#4ade80' : '#f87171',
-                  }}>
-                    {manualReview ? 'MANUAL INSPECTION REQUIRED' : verdict.pass ? 'COMPLIANT' : 'NOT COMPLIANT'}
-                  </div>
-                  <div style={{ marginTop: '.55rem', color: '#fff', fontSize: '1rem', fontWeight: 800, letterSpacing: '.06em' }}>{manualReview ? 'REVIEW REQUIRED' : verdict.pass ? 'CLEARED' : 'INSPECTION REQUIRED'}</div>
-                  <div style={{ marginTop: '.55rem', color: 'rgba(255,255,255,.58)', fontSize: '.78rem' }}>{checkpoint?.label || 'Checkpoint'}{checkpoint?.code ? ` · ${checkpoint.code}` : ''}</div>
-                  <div style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.35)', marginTop: '0.5rem' }}>
-                    {saving ? 'Saving scan…' : `Next worker in ${resetCountdown}s…`}
-                  </div>
-                </div>
-              )}
-
-              {verdict.detected?.length > 0 && (
-                <div style={{ marginBottom: '0.75rem' }}>
-                  <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#16a34a',
-                    textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: '0.4rem' }}>
-                    ✅ PPE Present
-                  </div>
-                  <div className="ppe-detected-list">
-                    {verdict.detected.map(c => <span key={c} className="ins-ppe-tag">{ppeLabel(c)}</span>)}
-                  </div>
-                </div>
-              )}
-              {verdict.missing?.length > 0 && (
-                <div>
-                  <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#dc2626',
-                    textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: '0.4rem' }}>
-                    🚨 Missing PPE
-                  </div>
-                  <div className="ppe-detected-list">
-                    {verdict.missing.map(v => <span key={v} className="ins-ppe-tag missing">{ppeLabel(v)}</span>)}
-                  </div>
-                </div>
-              )}
-              <button type="button" className="ppe-manual-reset" onClick={() => resetToQR(true)}>Reset Scanner</button>
-            </>
-          )}
-
-          {/* Session log */}
-          {sessionLog.length > 0 && (
-            <div style={{ marginTop: '1.5rem' }}>
-              <div style={{ fontSize: '0.7rem', fontWeight: 800, color: '#64748b',
-                textTransform: 'uppercase', letterSpacing: '0.12em',
-                marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ width: 8, height: 8, borderRadius: '50%',
-                  background: '#0f766e', display: 'inline-block' }} />
-                Recent Checkpoint Log
-              </div>
-              <table className="ppe-log-table">
-                <thead>
-                  <tr><th>Time</th><th>Worker</th><th>Verdict</th><th>Missing</th></tr>
-                </thead>
-                <tbody>
-                  {sessionLog.slice(0, 8).map(l => (
-                    <tr key={l.id}>
-                      <td style={{ color: '#888', fontSize: '0.78rem' }}>{l.time}</td>
-                      <td style={{ fontSize: '0.82rem' }}>
-                        <div style={{ fontWeight: 600 }}>{l.workerName}</div>
-                        <div style={{ color: '#aaa', fontSize: '0.72rem' }}>{l.employeeId}</div>
-                      </td>
-                      <td>
-                        <span className={`ins-vbadge ${l.pass ? 'no' : 'yes'}`} style={l.alertType === ALERT_TYPES.MANUAL_REVIEW ? { background: '#fff7ed', color: '#b45309' } : undefined}>
-                          {l.alertType === ALERT_TYPES.MANUAL_REVIEW ? '⚠ Review' : l.pass ? '✓ Pass' : '⚠ Fail'}
-                        </span>
-                      </td>
-                      <td style={{ fontSize: '0.78rem', color: '#e53e3e' }}>
-                        {l.missing.length > 0 ? l.missing.join(', ') : <span style={{ color: '#ccc' }}>—</span>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-        </div>
+        {sessionLog.length > 0 && <section className="ppe-recent-log"><h3><i /> Recent Checkpoint Log</h3><table className="ppe-log-table"><thead><tr><th>Time</th><th>Worker</th><th>Verdict</th><th>Missing</th></tr></thead><tbody>{sessionLog.slice(0, 8).map(entry => <tr key={entry.id}><td>{entry.time}</td><td><strong>{entry.workerName}</strong><small>{entry.employeeId}</small></td><td><span className={`ins-vbadge ${entry.pass ? 'no' : 'yes'}`} style={entry.alertType === ALERT_TYPES.MANUAL_REVIEW ? { background: '#fff7ed', color: '#b45309' } : undefined}>{entry.alertType === ALERT_TYPES.MANUAL_REVIEW ? '⚠ Review' : entry.pass ? '✓ Pass' : '⚠ Fail'}</span></td><td>{entry.missing.length ? entry.missing.map(ppeLabel).join(', ') : '—'}</td></tr>)}</tbody></table></section>}
       </div>
     </div>
-  );
+  </div>;
 }

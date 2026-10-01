@@ -2,7 +2,7 @@ const router = require('express').Router();
 const multer = require('multer');
 const { requireAuth, requireRole } = require('../middleware');
 const { limiter } = require('../security');
-const { detectedPpeFromAi, filterAiDetections } = require('../ppe-compliance');
+const { detectedPpeFromAi, filterAiDetections, filterPersonDetections } = require('../ppe-compliance');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 1, fieldSize: 20, parts: 2 },
   fileFilter(req, file, cb) { cb(null, ['image/jpeg', 'image/png'].includes(file.mimetype)); } });
 router.post('/detect', requireAuth, requireRole('scanner'), limiter(60, 60 * 1000, { keyGenerator: req => String(req.user.id) }), upload.single('file'), async (req, res, next) => {
@@ -24,12 +24,16 @@ router.post('/detect', requireAuth, requireRole('scanner'), limiter(60, 60 * 100
     if (!response.ok) return res.status(503).json({ error: 'Detection service is unavailable. Please retry the scan.' });
     const result = await response.json();
     if (!Array.isArray(result.detections) || !Number.isInteger(result.total_detections)) return res.status(502).json({ error: 'Invalid detection service response.' });
-    const detections = filterAiDetections(result.detections);
+    const ppeDetections = filterAiDetections(result.detections);
+    const personDetections = filterPersonDetections(result.detections);
+    const detections = [...personDetections, ...ppeDetections];
     // The AI reports observations only. WearAware evaluates those observations
     // against checkpoint requirements separately.
     res.json({
       detections,
-      detected_ppe: detectedPpeFromAi(detections),
+      person_detections: personDetections,
+      person_count: personDetections.length,
+      detected_ppe: detectedPpeFromAi(ppeDetections),
       total_detections: detections.length,
       inference_time_ms: Number.isFinite(result.inference_time_ms) ? result.inference_time_ms : null,
     });

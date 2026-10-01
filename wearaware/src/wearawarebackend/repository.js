@@ -10,7 +10,15 @@ function normalize(table, values) {
       if (!Number.isSafeInteger(n) || n < 1) throw new Error(`Invalid ${key}`);
       return [key, n];
     }
-    if (Array.isArray(value) && (!['required_ppe', 'detected_ppe', 'missing_ppe'].includes(key) || value.some(item => typeof item !== 'string'))) throw new Error(`Invalid ${key}`);
+    if (Array.isArray(value)) {
+      const validPpeList = ['required_ppe', 'detected_ppe', 'missing_ppe'].includes(key) && value.every(item => typeof item === 'string');
+      const validConfidenceSummary = key === 'confidence_summary' && value.every(item => item && typeof item === 'object' && !Array.isArray(item)
+        && Object.keys(item).length === 3
+        && typeof item.ppe === 'string'
+        && Number.isFinite(item.average_confidence)
+        && Number.isSafeInteger(item.positive_frames));
+      if (!validPpeList && !validConfidenceSummary) throw new Error(`Invalid ${key}`);
+    }
     if (['is_active', 'is_read'].includes(key) && value !== null && typeof value !== 'boolean') throw new Error(`Invalid ${key}`);
     // Values from requests must never become MongoDB query operators.
     if (value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date)) {
@@ -162,7 +170,7 @@ function createRepository(dbProvider = getDatabase) {
       pipeline.push(...join('devices', 'device_id', 'stationDoc'));
       if (view !== 'legacy') pipeline.push(...join('workers', 'worker_id', 'workerDoc'));
       if (view === 'admin') pipeline.push(...join('users', 'inspector_id', 'inspectorDoc'));
-      const fields = 'id device_id profile_id profile_name checkpoint_code alert_type result required_ppe missing_ppe detected_ppe' + (view === 'inspector' ? '' : ' confidence_score detected_at');
+      const fields = 'id device_id profile_id profile_name checkpoint_code alert_type result required_ppe missing_ppe detected_ppe scan_session_id session_status session_started_at session_ended_at frame_count confidence_summary' + (view === 'inspector' ? '' : ' confidence_score detected_at');
       pipeline.push({ $project: { ...project(fields), _timestamp: '$detected_at', station: { $ifNull: ['$checkpoint_name', { $ifNull: ['$stationDoc.label', null] }] },
         checkpoint: { id: '$device_id', name: { $ifNull: ['$checkpoint_name', { $ifNull: ['$stationDoc.label', null] }] }, code: { $ifNull: ['$checkpoint_code', { $ifNull: ['$stationDoc.code', null] }] } },
         has_photo: { $ne: [{ $ifNull: ['$photo_url', ''] }, ''] },

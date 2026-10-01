@@ -6,6 +6,7 @@ const AI_MIN_CONFIDENCE = Object.freeze({
   default: 0.35,
 });
 const MANUAL_REVIEW_CONFIDENCE = 0.55;
+const PERSON_MIN_CONFIDENCE = 0.50;
 
 const aliases = new Map([
   ['hard-hat', 'helmet'],
@@ -55,6 +56,17 @@ function filterAiDetections(detections = []) {
   });
 }
 
+function filterPersonDetections(detections = [], threshold = PERSON_MIN_CONFIDENCE) {
+  return (Array.isArray(detections) ? detections : []).filter(detection => {
+    const name = normalizePpeName(detection?.class_name);
+    const confidence = Number(detection?.confidence);
+    return ['human', 'person'].includes(name)
+      && detection?.inferred !== true
+      && Number.isFinite(confidence)
+      && confidence >= threshold;
+  });
+}
+
 function detectedPpeFromAi(detections = []) {
   const present = new Set();
   const absent = new Set();
@@ -96,4 +108,4 @@ function classifyLocalAlert(compliance, confidenceScore, threshold = MANUAL_REVI
   return { ...compliance, alert_type: compliance.result === 'compliant' ? 'compliant' : 'non_compliant' };
 }
 
-module.exports = { AI_MIN_CONFIDENCE, MANUAL_REVIEW_CONFIDENCE, normalizePpeName, normalizePpeList, filterAiDetections, detectedPpeFromAi, evaluateCompliance, classifyLocalAlert };
+module.exports = { AI_MIN_CONFIDENCE, MANUAL_REVIEW_CONFIDENCE, PERSON_MIN_CONFIDENCE, normalizePpeName, normalizePpeList, filterAiDetections, filterPersonDetections, detectedPpeFromAi, evaluateCompliance, classifyLocalAlert };
