@@ -21,7 +21,7 @@ router.get('/dashboard', validateRequest, async (req, res) => {
         { $match: filter }, { $sort: { detected_at: -1, id: -1 } },
         { $skip: (page - 1) * pageSize }, { $limit: pageSize },
         { $lookup: { from: 'devices', localField: 'device_id', foreignField: 'id', as: 'station' } },
-        { $project: { _id: 0, id: 1, result: 1, detected_at: 1, detected_ppe: 1, missing_ppe: 1,
+        { $project: { _id: 0, id: 1, result: 1, alert_type: 1, profile_name: 1, detected_at: 1, detected_ppe: 1, missing_ppe: 1,
           station: { $ifNull: [{ $arrayElemAt: ['$station.label', 0] }, 'Unassigned station'] } } },
       ]).toArray(),
     ]);

@@ -3,17 +3,18 @@ import * as ZXingBrowser from '@zxing/browser';
 import jsQRDecoder from 'jsqr';
 
 import { API } from '../config/api';
+import { ALERT_TYPES, emitLocalAlert } from '../utils/local-alerts';
 
 // QR decoders are bundled locally so no third-party scripts run on login/reset pages.
 
-const SCAN_INTERVAL_MS     = 1500;   // PPE detection every 1.5s
+const SCAN_INTERVAL_MS     = 1000;   // refresh boxes once per second when the AI is ready
 const COMPLIANT_STREAK_REQ = 3;      // consecutive compliant scans needed to PASS
 const PPE_TIMEOUT_SEC      = 15;     // seconds before forced verdict
-const RESET_DELAY_MS       = 10000;  // ms to show result before auto-reset
 const MISS_THRESHOLD       = 5;      // consecutive empty scans before clearing display
 const DETECTION_TIMEOUT_MS = 35000;  // includes Vercel-to-tunnel round trip on demo deployments
 const WORKER_LOOKUP_TIMEOUT_MS = 30000;
 const SAVE_DETECTION_TIMEOUT_MS = 30000;
+const SAME_WORKER_CLEAR_GAP_MS = 2500;
 
 const PHASE = { QR: 'qr', PPE: 'ppe', DONE: 'done' };
 
@@ -27,13 +28,60 @@ function initials(name) {
   return name ? name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : '?';
 }
 
-export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) {
+function evaluateCheckpoint(requiredPpe = [], detectedPpe = []) {
+  const detected = [...new Set(Array.isArray(detectedPpe) ? detectedPpe : [])];
+  const present = new Set(detected);
+  const required = [...new Set(Array.isArray(requiredPpe) ? requiredPpe : [])];
+  const missing = required.filter(item => !present.has(item));
+  return { required, detected, missing, isCompliant: missing.length === 0 };
+}
+
+function ppeLabel(value) {
+  return ({ helmet: 'Helmet', vest: 'Safety Vest', gloves: 'Gloves', goggles: 'Goggles', boots: 'Safety Shoes', mask: 'Face Mask' })[value]
+    || String(value).replace(/-/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
+}
+
+function DetectionOverlay({ detections }) {
+  const boxes = (Array.isArray(detections) ? detections : []).flatMap((detection, index) => {
+    const box = detection?.bbox;
+    const coordinates = [box?.x1, box?.y1, box?.x2, box?.y2].map(Number);
+    if (!coordinates.every(Number.isFinite)) return [];
+    const [x1, y1, x2, y2] = coordinates;
+    const left = Math.max(0, Math.min(100, x1 / 640 * 100));
+    const top = Math.max(0, Math.min(100, y1 / 480 * 100));
+    const right = Math.max(left, Math.min(100, x2 / 640 * 100));
+    const bottom = Math.max(top, Math.min(100, y2 / 480 * 100));
+    if (right - left < 0.5 || bottom - top < 0.5) return [];
+    return [{ detection, index, left, top, width: right - left, height: bottom - top }];
+  });
+
+  if (boxes.length === 0) return null;
+  return <div className="ppe-box-overlay" aria-hidden="true">
+    {boxes.map(({ detection, index, left, top, width, height }) => {
+      const name = String(detection.class_name || 'PPE');
+      const violation = detection.violation === true || name.startsWith('no-');
+      const confidence = Number(detection.confidence);
+      const confidenceLabel = detection.inferred
+        ? 'inferred'
+        : Number.isFinite(confidence) ? `${Math.round(confidence * 100)}%` : '';
+      return <div
+        className={`ppe-detection-box ${violation ? 'violation' : 'present'}${detection.inferred ? ' inferred' : ''}${top < 8 ? ' near-top' : ''}`}
+        key={`${name}-${index}`}
+        style={{ left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` }}
+      >
+        <span>{ppeLabel(name)}{confidenceLabel ? ` · ${confidenceLabel}` : ''}</span>
+      </div>;
+    })}
+  </div>;
+}
+
+export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, selectedCheckpoint = null, soundEnabled = true, resultDurationMs = 5000 }) {
   const isWorkerSelfCheck = Boolean(fixedWorker?.id);
   const [phase,           setPhase]           = useState(() => isWorkerSelfCheck ? PHASE.PPE : PHASE.QR);
   const [worker,          setWorker]          = useState(() => fixedWorker || null);
+  const [checkpoint,      setCheckpoint]      = useState(() => selectedCheckpoint || fixedWorker?.checkpoint || null);
   const [qrError,         setQrError]         = useState('');
   const [qrScanning,      setQrScanning]      = useState(() => !isWorkerSelfCheck);
-  const [camFrame,        setCamFrame]        = useState(null);
   const [camResult,       setCamResult]       = useState(null);
   const [timeLeft,        setTimeLeft]        = useState(PPE_TIMEOUT_SEC);
   const [compliantStreak, setCompliantStreak] = useState(0);
@@ -55,14 +103,24 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
   const qrLoopRef      = useRef(null);
   const phaseRef        = useRef(PHASE.QR);
   const workerRef       = useRef(null);
+  const checkpointRef   = useRef(selectedCheckpoint || fixedWorker?.checkpoint || null);
   const finishCalledRef = useRef(false);
   const onScanCompleteRef = useRef(onScanComplete);
   const mountedRef = useRef(false);
   const lastResultRef   = useRef(null);   // tracks last non-empty detection result
+  const alertEmittedRef = useRef(false);
+  const blockedEmployeeRef = useRef(null);
+  const blockedSeenAtRef = useRef(0);
 
   useEffect(() => { onScanCompleteRef.current = onScanComplete; }, [onScanComplete]);
   useEffect(() => { phaseRef.current = phase; }, [phase]);
   useEffect(() => { workerRef.current = worker; }, [worker]);
+  useEffect(() => { checkpointRef.current = checkpoint; }, [checkpoint]);
+  useEffect(() => {
+    if (!selectedCheckpoint) return;
+    checkpointRef.current = selectedCheckpoint;
+    setCheckpoint(selectedCheckpoint);
+  }, [selectedCheckpoint]);
 
   // A worker starts a check for their own linked profile. The backend still
   // verifies ownership before saving, so the browser cannot choose another worker.
@@ -70,6 +128,10 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
     if (!fixedWorker?.id) return;
     workerRef.current = fixedWorker;
     setWorker(fixedWorker);
+    if (fixedWorker.checkpoint) {
+      checkpointRef.current = fixedWorker.checkpoint;
+      setCheckpoint(fixedWorker.checkpoint);
+    }
   }, [fixedWorker]);
 
   // ── Start camera once on mount ────────────────────────────────
@@ -118,6 +180,18 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
     let lookingUp = false;
     const lookupWorker = async (employeeId) => {
       if (stopped || lookingUp || phaseRef.current !== PHASE.QR) return;
+      if (blockedEmployeeRef.current === employeeId) {
+        const now = Date.now();
+        const clearGap = now - blockedSeenAtRef.current;
+        blockedSeenAtRef.current = now;
+        if (clearGap < SAME_WORKER_CLEAR_GAP_MS) {
+          setQrError('Waiting for the previous worker to leave the scanning area.');
+          return;
+        }
+        blockedEmployeeRef.current = null;
+      } else if (blockedEmployeeRef.current) {
+        blockedEmployeeRef.current = null;
+      }
       lookingUp = true;
       setQrScanning(false);
       try {
@@ -139,10 +213,18 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
           : 'Unable to look up this worker. Check your connection and access.');
         const data = await res.json();
         if (stopped) return;
+        if (!data.checkpoint?.id || !Array.isArray(data.checkpoint.required_ppe)) {
+          throw new Error('This worker’s checkpoint configuration is unavailable. Ask an administrator to review it.');
+        }
+        if (selectedCheckpoint && Number(data.checkpoint.id) !== Number(selectedCheckpoint.id)) {
+          throw new Error(`This worker is assigned to ${data.checkpoint.label}, not this scanner’s registered checkpoint (${selectedCheckpoint.label}). Ask an administrator to review the assignment.`);
+        }
         workerRef.current = data;
+        checkpointRef.current = data.checkpoint;
         finishCalledRef.current = false;
         phaseRef.current = PHASE.PPE;
         setWorker(data);
+        setCheckpoint(data.checkpoint);
         setQrError('');
         setPhase(PHASE.PPE);
       } catch (err) {
@@ -196,30 +278,25 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
     }, 300);
 
     return () => { stopped = true; clearInterval(qrLoopRef.current); };
-  }, [phase, cameraReady]);
+  }, [phase, cameraReady, selectedCheckpoint]);
 
   // ── PHASE 3: Finish & log ─────────────────────────────────────
-  const finishScan = useCallback(async (passed, lastData) => {
+  const finishScan = useCallback(async (_passed, lastData) => {
     if (finishCalledRef.current) return;
     finishCalledRef.current = true;
     phaseRef.current = PHASE.DONE;
     setScanning(false);
 
-    const missing  = lastData?.violations || [];
-    const detected = lastData?.compliant  || [];
-    const w        = workerRef.current;
-
-    // If FAIL but no missing PPE detected (bad scan / no one in frame)
-    // show rescan prompt instead of logging a false violation
-    const isNoDetection = !passed && missing.length === 0;
-    if (isNoDetection) {
-      setVerdict({ pass: false, missing: [], detected: [], noDetection: true });
-      setPhase(PHASE.DONE);
-      return;  // Do not log an empty scan as a violation.
-    }
+    const checkpointConfig = checkpointRef.current;
+    const evaluation = evaluateCheckpoint(checkpointConfig?.required_ppe, lastData?.detected_ppe);
+    let { missing, detected } = evaluation;
+    let passed = evaluation.isCompliant;
+    let alertType = null;
+    const w = workerRef.current;
+    const isNoDetection = !lastData || lastData.total_detections === 0;
 
     setPhase(PHASE.DONE);
-    setVerdict({ pass: passed, missing, detected, noDetection: false });
+    setVerdict({ pass: isNoDetection ? false : passed, missing, detected, required: evaluation.required, alertType: isNoDetection ? ALERT_TYPES.MANUAL_REVIEW : null, noDetection: false });
 
     setSaving(true);
     const logId = Date.now();
@@ -229,6 +306,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
       workerName: w?.full_name   || 'Unknown',
       employeeId: w?.employee_id || '—',
       pass      : passed,
+      alertType : 'pending',
       missing,
       detected,
     }, ...prev].slice(0, 50));
@@ -236,8 +314,9 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
     try {
       const token = localStorage.getItem('token');
       const real  = (lastData?.detections || []).filter(d => !d.inferred);
-      const conf  = real.length
-        ? Math.round((real.reduce((s, d) => s + d.confidence, 0) / real.length) * 100) / 100
+      const confidenceValues = real.map(detection => Number(detection.confidence)).filter(Number.isFinite);
+      const conf  = confidenceValues.length
+        ? Math.round((confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length) * 100) / 100
         : null;
 
       // Capture snapshot from webcam for violations only
@@ -263,15 +342,33 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body   : JSON.stringify({
           device_uuid     : getDeviceUUID(),
-          result          : passed ? 'compliant' : 'violation',
-          missing_ppe     : missing,
           detected_ppe    : detected,
           worker_id       : w?.id || null,
+          checkpoint_id   : checkpointConfig?.id,
           confidence_score: conf,
           photo_url       : photoBase64,
         }),
       });
-      if (!saved.ok) throw new Error('The scan could not be saved. Please retry.');
+      const savedData = await saved.json().catch(() => ({}));
+      if (!saved.ok) throw new Error(savedData.error || 'The scan could not be saved. Please retry.');
+      missing = savedData.missing_ppe || missing;
+      detected = savedData.detected_ppe || detected;
+      passed = savedData.result === 'compliant';
+      alertType = savedData.alert_type || (passed ? ALERT_TYPES.COMPLIANT : ALERT_TYPES.NON_COMPLIANT);
+      setVerdict({ pass: passed, alertType, missing, detected, required: savedData.required_ppe || evaluation.required, confidence: conf, noDetection: false });
+      setSessionLog(prev => prev.map(entry => entry.id === logId ? { ...entry, pass: passed, alertType, missing, detected } : entry));
+      if (!alertEmittedRef.current) {
+        alertEmittedRef.current = true;
+        await emitLocalAlert({
+          alertType,
+          detectionId: savedData.detection_id,
+          checkpoint: savedData.checkpoint || checkpointConfig,
+          worker: { id: w?.id, employeeId: w?.employee_id, name: w?.full_name },
+          missingPpe: missing,
+          detectedPpe: detected,
+          occurredAt: new Date().toISOString(),
+        }, soundEnabled);
+      }
     } catch (err) {
       if (!mountedRef.current) return;
       setQrError(err.name === 'TimeoutError'
@@ -289,7 +386,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
         // A dashboard refresh failure must not stop the scanner.
       });
     }
-  }, []);
+  }, [soundEnabled]);
 
   // ── PHASE 2: PPE scan + countdown ────────────────────────────
   useEffect(() => {
@@ -310,7 +407,6 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
     busyRef.current      = false;
     setCompliantStreak(0);
     setCamResult(null);
-    setCamFrame(null);
     setTimeLeft(PPE_TIMEOUT_SEC);
 
     // Countdown
@@ -348,27 +444,34 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
         try {
           const fd = new FormData();
           fd.append('file', blob, 'ppe.jpg');
-          fd.append('conf', 0.25);
+          fd.append('conf', 0.35);
           const res  = await fetch(`${API}/ppe/detect`, { method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }, body: fd, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(DETECTION_TIMEOUT_MS)]) });
           if (!res.ok) throw new Error('Detection service unavailable. Please retry.');
           const data = await res.json();
           if (cancelled || phaseRef.current !== PHASE.PPE) return;
 
           if (data.total_detections > 0) {
+            const evaluation = evaluateCheckpoint(checkpointRef.current?.required_ppe, data.detected_ppe);
+            const evaluatedData = {
+              ...data,
+              required_ppe: evaluation.required,
+              compliant: evaluation.detected,
+              violations: evaluation.missing,
+              missing_ppe: evaluation.missing,
+              is_checkpoint_compliant: evaluation.isCompliant,
+            };
             missCountRef.current = 0;
-            setCamResult(data);
-            if (data.annotated_image) setCamFrame(`data:image/jpeg;base64,${data.annotated_image}`);
-
+            setCamResult(evaluatedData);
             // Always track last real result so timer expiry has data to log
-            lastResultRef.current = data;
+            lastResultRef.current = evaluatedData;
 
-            if (data.is_compliant) {
+            if (evaluatedData.is_checkpoint_compliant) {
               streakRef.current += 1;
               setCompliantStreak(streakRef.current);
               if (streakRef.current >= COMPLIANT_STREAK_REQ) {
                 clearInterval(ppeLoopRef.current);
                 clearInterval(timerRef.current);
-                finishScan(true, data);
+                finishScan(true, evaluatedData);
               }
             } else {
               streakRef.current = 0;
@@ -377,7 +480,6 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
           } else {
             missCountRef.current += 1;
             if (missCountRef.current >= MISS_THRESHOLD) {
-              setCamFrame(null);
               setCamResult(null);
               missCountRef.current = 0;
               streakRef.current    = 0;
@@ -406,7 +508,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
     };
   }, [phase, finishScan]);
 
-  const resetToQR = useCallback(() => {
+  const resetToQR = useCallback((manual = false) => {
     clearInterval(ppeLoopRef.current);
     clearInterval(timerRef.current);
     clearInterval(qrLoopRef.current);
@@ -414,41 +516,51 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
     streakRef.current     = 0;
     missCountRef.current  = 0;
     finishCalledRef.current = false;
+    alertEmittedRef.current = false;
     lastResultRef.current   = null;
+    if (!manual && workerRef.current?.employee_id) {
+      blockedEmployeeRef.current = workerRef.current.employee_id;
+      blockedSeenAtRef.current = Date.now();
+    } else if (manual) {
+      blockedEmployeeRef.current = null;
+      blockedSeenAtRef.current = 0;
+    }
     const nextPhase = isWorkerSelfCheck ? PHASE.PPE : PHASE.QR;
     phaseRef.current = nextPhase;
     workerRef.current = fixedWorker || null;
+    checkpointRef.current = selectedCheckpoint || fixedWorker?.checkpoint || null;
     setScanning(false);
     setResetCountdown(0);
     setWorker(fixedWorker || null);
+    setCheckpoint(selectedCheckpoint || fixedWorker?.checkpoint || null);
     setVerdict(null);
     setCamResult(null);
-    setCamFrame(null);
     setCompliantStreak(0);
     setTimeLeft(PPE_TIMEOUT_SEC);
     setQrScanning(!isWorkerSelfCheck);
     setQrError('');
     setPhase(nextPhase);
-  }, [fixedWorker, isWorkerSelfCheck]);
+  }, [fixedWorker, isWorkerSelfCheck, selectedCheckpoint]);
 
   // Every finished scan returns to the next worker, including service errors.
   useEffect(() => {
     if (phase !== PHASE.DONE || saving) return;
-    let countdown = RESET_DELAY_MS / 1000;
+    let countdown = Math.max(3, Math.round(resultDurationMs / 1000));
     setResetCountdown(countdown);
     const interval = setInterval(() => {
       countdown -= 1;
       setResetCountdown(countdown);
-      if (countdown <= 0) resetToQR();
+      if (countdown <= 0) resetToQR(false);
     }, 1000);
     return () => clearInterval(interval);
-  }, [phase, saving, resetToQR]);
+  }, [phase, saving, resetToQR, resultDurationMs]);
 
   // ── Session stats ─────────────────────────────────────────────
   const totalScans     = sessionLog.length;
   const totalPassed    = sessionLog.filter(l => l.pass).length;
   const totalFailed    = sessionLog.filter(l => !l.pass).length;
   const complianceRate = totalScans === 0 ? 100 : Math.round((totalPassed / totalScans) * 100);
+  const manualReview = verdict?.alertType === ALERT_TYPES.MANUAL_REVIEW;
 
   // ── Render ────────────────────────────────────────────────────
   return (
@@ -498,44 +610,42 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
           <div style={{
             position: 'relative', borderRadius: 14, overflow: 'hidden',
             border: `3px solid ${
-              phase === PHASE.DONE ? (verdict?.pass ? '#22c55e' : '#ef4444')
-              : phase === PHASE.PPE ? (camResult?.is_compliant ? '#22c55e' : '#64748b')
+              phase === PHASE.DONE ? (manualReview ? '#f59e0b' : verdict?.pass ? '#22c55e' : '#ef4444')
+              : phase === PHASE.PPE ? (camResult?.is_checkpoint_compliant ? '#22c55e' : '#64748b')
               : '#3b82f6'
             }`,
             transition: 'border-color 0.4s',
             background: '#0f172a', minHeight: 320,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            <video ref={videoRef} autoPlay muted playsInline style={{ width: '100%', borderRadius: 11 }} />
+            <div className="ppe-video-stage">
+              <video ref={videoRef} autoPlay muted playsInline />
 
-            {/* PPE annotated overlay */}
-            {camFrame && phase === PHASE.PPE && (
-              <img src={camFrame} alt="PPE detection"
-                style={{ position: 'absolute', top: 0, left: 0, width: '100%', borderRadius: 11 }} />
-            )}
+              {phase === PHASE.PPE && <DetectionOverlay detections={camResult?.detections} />}
 
-            {/* QR targeting box */}
-            {phase === PHASE.QR && (
-              <div style={{
-                position: 'absolute', inset: 0, display: 'flex',
-                alignItems: 'center', justifyContent: 'center', pointerEvents: 'none',
-              }}>
+              {/* QR targeting box */}
+              {phase === PHASE.QR && (
                 <div style={{
-                  width: 200, height: 200, border: '3px solid #60a5fa',
-                  borderRadius: 12, boxShadow: '0 0 0 9999px rgba(0,0,0,0.5)',
+                  position: 'absolute', inset: 0, display: 'flex',
+                  alignItems: 'center', justifyContent: 'center', pointerEvents: 'none',
                 }}>
-                  {/* Corner accents */}
-                  {[
-                    { top: -3, left: -3, borderTop: '4px solid #3b82f6', borderLeft: '4px solid #3b82f6' },
-                    { top: -3, right: -3, borderTop: '4px solid #3b82f6', borderRight: '4px solid #3b82f6' },
-                    { bottom: -3, left: -3, borderBottom: '4px solid #3b82f6', borderLeft: '4px solid #3b82f6' },
-                    { bottom: -3, right: -3, borderBottom: '4px solid #3b82f6', borderRight: '4px solid #3b82f6' },
-                  ].map((s, i) => (
-                    <div key={i} style={{ position: 'absolute', width: 20, height: 20, ...s }} />
-                  ))}
+                  <div style={{
+                    width: 200, height: 200, border: '3px solid #60a5fa',
+                    borderRadius: 12, boxShadow: '0 0 0 9999px rgba(0,0,0,0.5)',
+                  }}>
+                    {/* Corner accents */}
+                    {[
+                      { top: -3, left: -3, borderTop: '4px solid #3b82f6', borderLeft: '4px solid #3b82f6' },
+                      { top: -3, right: -3, borderTop: '4px solid #3b82f6', borderRight: '4px solid #3b82f6' },
+                      { bottom: -3, left: -3, borderBottom: '4px solid #3b82f6', borderLeft: '4px solid #3b82f6' },
+                      { bottom: -3, right: -3, borderBottom: '4px solid #3b82f6', borderRight: '4px solid #3b82f6' },
+                    ].map((s, i) => (
+                      <div key={i} style={{ position: 'absolute', width: 20, height: 20, ...s }} />
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
 
             {/* Scanning pulse */}
             {scanning && phase === PHASE.PPE && (
@@ -618,6 +728,25 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
                 </div>
               </div>
 
+              {checkpoint && (
+                <div className="ppe-checkpoint-card">
+                  <div>
+                    <span>Checkpoint</span>
+                    <strong>{checkpoint.label}</strong>
+                    <small>{[checkpoint.code, checkpoint.location].filter(Boolean).join(' · ')}</small>
+                    <small>{checkpoint.profile_name ? `${checkpoint.profile_name} profile` : 'Custom PPE requirements'}</small>
+                  </div>
+                  <div>
+                    <span>Required PPE</span>
+                    <div className="ppe-checkpoint-items">
+                      {checkpoint.required_ppe.length
+                        ? checkpoint.required_ppe.map(item => <b key={item}>{ppeLabel(item)}</b>)
+                        : <b>No PPE required</b>}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Countdown */}
               <div style={{
                 background: timeLeft <= 5
@@ -667,7 +796,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
                         ✅ PPE On
                       </div>
                       <div className="ppe-detected-list">
-                        {camResult.compliant.map(c => <span key={c} className="ins-ppe-tag">{c}</span>)}
+                        {camResult.compliant.map(c => <span key={c} className="ins-ppe-tag">{ppeLabel(c)}</span>)}
                       </div>
                     </div>
                   )}
@@ -678,7 +807,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
                         🚨 Still Missing
                       </div>
                       <div className="ppe-detected-list">
-                        {camResult.violations.map(v => <span key={v} className="ins-ppe-tag missing">{v}</span>)}
+                        {camResult.violations.map(v => <span key={v} className="ins-ppe-tag missing">{ppeLabel(v)}</span>)}
                       </div>
                     </div>
                   )}
@@ -722,10 +851,10 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
                 }}>
                   <div style={{ fontSize: '3.5rem', marginBottom: '0.5rem' }}>⚠️</div>
                   <div style={{ fontSize: '1.4rem', fontWeight: 900, color: '#fbbf24', letterSpacing: '0.05em' }}>
-                    {qrError ? 'SCAN NOT RECORDED' : 'NO PPE DETECTED'}
+                    SCAN NOT RECORDED
                   </div>
                   <div style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.5)', marginTop: '0.5rem', marginBottom: '1.25rem' }}>
-                    {qrError || 'Could not detect worker in frame — not logged as a violation'}
+                    {qrError || 'The result could not be saved. Please retry.'}
                   </div>
                   <button
                     onClick={() => {
@@ -746,24 +875,30 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
               ) : (
                 <div style={{
                   borderRadius: 18, padding: '2rem 1.5rem', textAlign: 'center',
-                  background: verdict.pass
+                  background: manualReview
+                    ? 'linear-gradient(145deg, #422006, #78350f)'
+                    : verdict.pass
                     ? 'linear-gradient(145deg, #052e16, #14532d)'
                     : 'linear-gradient(145deg, #450a0a, #7f1d1d)',
-                  boxShadow: verdict.pass
+                  boxShadow: manualReview
+                    ? '0 8px 32px rgba(245,158,11,0.32)'
+                    : verdict.pass
                     ? '0 8px 32px rgba(22,163,74,0.35)'
                     : '0 8px 32px rgba(220,38,38,0.35)',
-                  border: `1.5px solid ${verdict.pass ? 'rgba(134,239,172,0.3)' : 'rgba(252,165,165,0.3)'}`,
+                  border: `1.5px solid ${manualReview ? 'rgba(253,186,116,0.42)' : verdict.pass ? 'rgba(134,239,172,0.3)' : 'rgba(252,165,165,0.3)'}`,
                   marginBottom: '1.25rem',
                 }}>
                   <div style={{ fontSize: '3.5rem', marginBottom: '0.5rem' }}>
-                    {verdict.pass ? '✅' : '🚨'}
+                    {manualReview ? '⚠️' : verdict.pass ? '✅' : '🚨'}
                   </div>
                   <div style={{
                     fontSize: '1.7rem', fontWeight: 900, letterSpacing: '0.08em',
-                    color: verdict.pass ? '#4ade80' : '#f87171',
+                    color: manualReview ? '#fbbf24' : verdict.pass ? '#4ade80' : '#f87171',
                   }}>
-                    {verdict.pass ? 'CHECKPOINT PASSED' : 'CHECKPOINT FAILED'}
+                    {manualReview ? 'MANUAL INSPECTION REQUIRED' : verdict.pass ? 'COMPLIANT' : 'NOT COMPLIANT'}
                   </div>
+                  <div style={{ marginTop: '.55rem', color: '#fff', fontSize: '1rem', fontWeight: 800, letterSpacing: '.06em' }}>{manualReview ? 'REVIEW REQUIRED' : verdict.pass ? 'CLEARED' : 'INSPECTION REQUIRED'}</div>
+                  <div style={{ marginTop: '.55rem', color: 'rgba(255,255,255,.58)', fontSize: '.78rem' }}>{checkpoint?.label || 'Checkpoint'}{checkpoint?.code ? ` · ${checkpoint.code}` : ''}</div>
                   <div style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.35)', marginTop: '0.5rem' }}>
                     {saving ? 'Saving scan…' : `Next worker in ${resetCountdown}s…`}
                   </div>
@@ -777,7 +912,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
                     ✅ PPE Present
                   </div>
                   <div className="ppe-detected-list">
-                    {verdict.detected.map(c => <span key={c} className="ins-ppe-tag">{c}</span>)}
+                    {verdict.detected.map(c => <span key={c} className="ins-ppe-tag">{ppeLabel(c)}</span>)}
                   </div>
                 </div>
               )}
@@ -788,10 +923,11 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
                     🚨 Missing PPE
                   </div>
                   <div className="ppe-detected-list">
-                    {verdict.missing.map(v => <span key={v} className="ins-ppe-tag missing">{v}</span>)}
+                    {verdict.missing.map(v => <span key={v} className="ins-ppe-tag missing">{ppeLabel(v)}</span>)}
                   </div>
                 </div>
               )}
+              <button type="button" className="ppe-manual-reset" onClick={() => resetToQR(true)}>Reset Scanner</button>
             </>
           )}
 
@@ -818,8 +954,8 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null }) 
                         <div style={{ color: '#aaa', fontSize: '0.72rem' }}>{l.employeeId}</div>
                       </td>
                       <td>
-                        <span className={`ins-vbadge ${l.pass ? 'no' : 'yes'}`}>
-                          {l.pass ? '✓ Pass' : '⚠ Fail'}
+                        <span className={`ins-vbadge ${l.pass ? 'no' : 'yes'}`} style={l.alertType === ALERT_TYPES.MANUAL_REVIEW ? { background: '#fff7ed', color: '#b45309' } : undefined}>
+                          {l.alertType === ALERT_TYPES.MANUAL_REVIEW ? '⚠ Review' : l.pass ? '✓ Pass' : '⚠ Fail'}
                         </span>
                       </td>
                       <td style={{ fontSize: '0.78rem', color: '#e53e3e' }}>

@@ -37,9 +37,13 @@ router.get('/by-employee-id/:employee_id', requireAuth, requireRole('admin', 'sc
     if (req.user.role === 'scanner') {
       if (worker.status !== 'active' || !worker.device_id)
         return res.status(403).json({ error: 'This worker is not assigned to an active checkpoint.' });
-      const station = (await data.find('devices', { id: worker.device_id, is_active: true }, 'id inspector_id')).rows[0];
+      const station = (await data.find('devices', { id: worker.device_id, is_active: true }, 'id device_id code label description location checkpoint_type profile_id required_ppe inspector_id is_active')).rows[0];
       if (!station?.inspector_id)
         return res.status(403).json({ error: 'This worker’s station has no assigned inspector.' });
+      const profile = station.profile_id && (await data.find('compliance_profiles', { id: station.profile_id }, 'name')).rows[0];
+      const checkpoint = { ...station, profile_name: profile?.name || null };
+      delete checkpoint.inspector_id;
+      return res.json({ ...worker, checkpoint });
     }
 
     res.json(worker);

@@ -2,8 +2,9 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '.env'), 
 const { Client } = require('pg');
 const { createHash } = require('crypto');
 const { TABLES: DATABASE_TABLES, connectDatabase, closeDatabase, ensureIndexes } = require('../database');
-// Audit entries begin after the MongoDB migration; they have no PostgreSQL source table.
-const TABLES = DATABASE_TABLES.filter(table => table !== 'audit_logs');
+// Audit entries and compliance profiles begin in MongoDB; they have no
+// PostgreSQL source tables. Default profiles are seeded after startup.
+const TABLES = DATABASE_TABLES.filter(table => !['audit_logs', 'compliance_profiles'].includes(table));
 
 function canonical(value) {
   if (value instanceof Date) return value.toISOString();

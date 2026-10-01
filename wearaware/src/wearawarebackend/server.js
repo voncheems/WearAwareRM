@@ -6,8 +6,10 @@ const { configureSecurity, assertProductionConfig, safeErrors } = require('./sec
 const { validateRequest } = require('./validation');
 const { installRecovery } = require('./password-recovery');
 const { createAlerts } = require('./alerts');
-const { applyDatabaseSecurity, verifyDatabaseSecurity, cleanLegacyPasswords, ensureAuditLogCollection } = require('./database-security');
+const { applyDatabaseSecurity, verifyDatabaseSecurity, cleanLegacyPasswords, ensureAuditLogCollection, ensureCheckpointData } = require('./database-security');
 const { recordAudit } = require('./audit');
+const { evaluateCompliance, classifyLocalAlert } = require('./ppe-compliance');
+const { ensureDefaultComplianceProfiles } = require('./compliance-profiles');
 const bcrypt   = require('bcrypt');
 const jwt      = require('jsonwebtoken');
 const http = require('node:http');
@@ -47,6 +49,8 @@ let wss;
 app.use('/api/admin',     require('./routes/admin'));
 app.use('/api/workers',   require('./routes/workers'));
 app.use('/api/devices',   require('./routes/devices'));
+app.use('/api/checkpoints', require('./routes/devices'));
+app.use('/api/compliance-profiles', require('./routes/compliance-profiles'));
 app.use('/api/inspector', require('./Inspector'));
 app.use('/api/user', require('./routes/user'));
 
@@ -305,35 +309,47 @@ app.patch('/api/inspector/profile', requireAuth, requireRole('inspector'), valid
 // ══════════════════════════════════════════════════════════════
 app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest, async (req, res) => {
   const {
-    result,
-    missing_ppe     = [],
     detected_ppe    = [],
     confidence_score,
     worker_id,
+    checkpoint_id,
     photo_url       = null,
   } = req.body;
-
-  if (!result) return res.status(400).json({ error: 'result is required.' });
-
-  if (!['compliant', 'violation'].includes(result))
-    return res.status(400).json({ error: 'result must be compliant or violation.' });
 
   try {
     const worker = (await data.find('workers', { id: worker_id, status: 'active' }, 'id device_id')).rows[0];
     if (!worker?.device_id) return res.status(403).json({ error: 'Worker is not assigned to an active checkpoint.' });
-    const station = (await data.find('devices', { id: worker.device_id, is_active: true }, 'id inspector_id')).rows[0];
+    if (checkpoint_id && Number(checkpoint_id) !== Number(worker.device_id)) return res.status(409).json({ error: 'The worker is assigned to a different checkpoint. Scan the worker again.' });
+    const station = (await data.find('devices', { id: worker.device_id, is_active: true }, 'id code label location checkpoint_type profile_id required_ppe inspector_id')).rows[0];
     if (!station?.inspector_id) return res.status(403).json({ error: 'This worker has no inspector assigned to their active station.' });
+    const profile = station.profile_id && (await data.find('compliance_profiles', { id: station.profile_id }, 'id name')).rows[0];
 
-    // The registered worker/station relationship determines the station, never a browser UUID.
+    // The database checkpoint configuration is authoritative. Client-supplied
+    // result and missing-PPE fields are ignored for backward compatibility.
     const deviceDbId = station.id;
-    // A worker check is always owned by the inspector assigned to its station.
     const assignedInspectorId = station.inspector_id;
+    const compliance = classifyLocalAlert(evaluateCompliance(station.required_ppe || [], detected_ppe), confidence_score);
 
-    const det = await data.insert('detections', { device_id: deviceDbId, inspector_id: assignedInspectorId, result: result, missing_ppe: missing_ppe, detected_ppe: detected_ppe, confidence_score: confidence_score || null, worker_id: worker_id || null, photo_url: photo_url || null }, "id");
+    const det = await data.insert('detections', {
+      device_id: deviceDbId,
+      checkpoint_name: station.label,
+      checkpoint_code: station.code,
+      profile_id: profile?.id || null,
+      profile_name: profile?.name || null,
+      inspector_id: assignedInspectorId,
+      result: compliance.result,
+      alert_type: compliance.alert_type,
+      required_ppe: compliance.required_ppe,
+      missing_ppe: compliance.missing_ppe,
+      detected_ppe: compliance.detected_ppe,
+      confidence_score: confidence_score ?? null,
+      worker_id,
+      photo_url: photo_url || null,
+    }, 'id');
     const detectionId = det.rows[0].id;
-    await recordAudit({ category: 'action', action: 'Recorded PPE check', actor: req.user, target: String(worker_id), details: result });
+    await recordAudit({ category: 'action', action: 'Recorded PPE check', actor: req.user, target: String(worker_id), details: `${station.label}: ${compliance.alert_type}` });
 
-    if (result === 'violation') {
+    if (compliance.result === 'violation') {
       await data.insert('notifications', { detection_id: detectionId, inspector_id: assignedInspectorId }, "*");
 
       // ── Look up worker name and employee ID ──
@@ -347,15 +363,14 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
         }
       }
 
-      // ── Look up station label and location ──
-      const deviceRow = await data.find('devices', { id: deviceDbId }, "label location", {});
-      const stationLabel    = deviceRow.rows[0]?.label    || 'Site Entrance';
-      const stationLocation = deviceRow.rows[0]?.location || null;
+      const stationLabel = station.label;
+      const stationLocation = station.location || null;
 
       const alertPayload = {
-        title:              'PPE VIOLATION DETECTED',
-        message:            `Missing: ${missing_ppe.join(', ') || 'PPE'} at ${stationLabel}`,
-        missing_ppe,
+        title:              compliance.alert_type === 'manual_review' ? 'MANUAL PPE INSPECTION REQUIRED' : 'PPE VIOLATION DETECTED',
+        message:            compliance.alert_type === 'manual_review' ? `Review the scan at ${stationLabel}` : `Missing: ${compliance.missing_ppe.join(', ') || 'PPE'} at ${stationLabel}`,
+        alert_type:         compliance.alert_type,
+        missing_ppe:        compliance.missing_ppe,
         worker_name:        workerName,
         worker_employee_id: workerEmployeeId,
         station:            stationLabel,
@@ -366,7 +381,12 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
       if (wss) await wss.broadcastToInspector(assignedInspectorId, alertPayload);
     }
 
-    res.status(201).json({ success: true, detection_id: detectionId });
+    res.status(201).json({
+      success: true,
+      detection_id: detectionId,
+      checkpoint: { id: station.id, name: station.label, code: station.code, profile_id: profile?.id || null, profile_name: profile?.name || null },
+      ...compliance,
+    });
   } catch (err) {
     if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
     console.error('Request handler failed.');
@@ -454,6 +474,8 @@ async function start() {
   const migration = await db.collection('_migration').findOne({ _id: 'postgres-v1' });
   if (migration?.status !== 'complete') throw new Error('Database initialization is incomplete. Run the verified migration first.');
   await ensureAuditLogCollection(db);
+  await ensureDefaultComplianceProfiles(db);
+  await ensureCheckpointData(db);
   await ensureIndexes(db);
   await ensureUserRole(db);
   await ensureScannerRole(db);

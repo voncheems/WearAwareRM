@@ -1,6 +1,6 @@
 const { MongoClient } = require('mongodb');
 
-const TABLES = ['roles', 'users', 'devices', 'workers', 'detections', 'notifications', 'password_reset_requests', 'audit_logs'];
+const TABLES = ['roles', 'users', 'compliance_profiles', 'devices', 'workers', 'detections', 'notifications', 'password_reset_requests', 'audit_logs'];
 let client;
 let database;
 
@@ -27,11 +27,13 @@ async function ensureIndexes(db) {
   for (const [table, field] of [['roles', 'name'], ['users', 'email'], ['devices', 'device_id'], ['workers', 'employee_id']]) {
     await db.collection(table).createIndex({ [field]: 1 }, { unique: true });
   }
+  await db.collection('devices').createIndex({ code: 1 }, { unique: true, partialFilterExpression: { code: { $type: 'string' } } });
+  await db.collection('compliance_profiles').createIndex({ name_key: 1 }, { unique: true });
   await db.collection('users').createIndex({ worker_id: 1 }, { unique: true, partialFilterExpression: { worker_id: { $type: 'number' } } });
   for (const [table, keys] of [
-    ['users', { role_id: 1 }], ['workers', { device_id: 1 }],
+    ['users', { role_id: 1 }], ['workers', { device_id: 1 }], ['devices', { profile_id: 1 }],
     ['devices', { inspector_id: 1 }], ['detections', { inspector_id: 1, detected_at: -1 }],
-    ['detections', { device_id: 1 }], ['detections', { worker_id: 1 }],
+    ['detections', { device_id: 1 }], ['detections', { worker_id: 1 }], ['detections', { profile_id: 1 }],
     ['detections', { detected_at: -1 }], ['notifications', { inspector_id: 1, is_read: 1 }],
     ['notifications', { detection_id: 1 }], ['password_reset_requests', { email: 1, status: 1 }],
     ['audit_logs', { occurred_at: -1 }], ['audit_logs', { category: 1, occurred_at: -1 }],

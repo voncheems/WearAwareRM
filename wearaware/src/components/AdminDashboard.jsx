@@ -12,6 +12,23 @@ import WearAwareLogo from './Wearawarelogo';
 
 import { API } from '../config/api';
 
+const PPE_OPTIONS = [
+  ['helmet', 'Helmet'],
+  ['vest', 'Safety Vest'],
+  ['gloves', 'Gloves'],
+  ['goggles', 'Goggles'],
+  ['boots', 'Safety Shoes'],
+  ['mask', 'Face Mask'],
+  ['lab-coat', 'Lab Coat'],
+];
+const EMPTY_CHECKPOINT = { label: '', code: '', description: '', location: '', checkpoint_type: 'entrance', profile_id: '', required_ppe: ['helmet', 'vest'], inspector_id: '', is_active: true };
+const EMPTY_PROFILE = { name: '', description: '', required_ppe: ['helmet', 'vest'], is_active: true };
+
+function ppeLabel(value) {
+  return PPE_OPTIONS.find(([key]) => key === value)?.[1]
+    || String(value).replace(/-/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
+}
+
 function getAuthHeaders() {
   const token = localStorage.getItem('token');
   return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
@@ -359,6 +376,7 @@ export default function AdminDashboard({ setCurrentPage }) {
   const [editUserSubmitting, setEditUserSubmitting] = useState(false);
   const [filterStation,   setFilterStation]   = useState('All Stations');
   const [filterInspector, setFilterInspector] = useState('All Inspectors');
+  const [filterProfile,   setFilterProfile]   = useState('All Profiles');
   const [filterDate,      setFilterDate]      = useState('');
   const [filterViolation, setFilterViolation] = useState('All Types');
 
@@ -385,7 +403,17 @@ export default function AdminDashboard({ setCurrentPage }) {
   const [stationErrors,     setStationErrors]     = useState({});
   const [stationSubmitting, setStationSubmitting] = useState(false);
   const [editingStation,    setEditingStation]    = useState(null);
-  const [newStation,        setNewStation]        = useState({ label: '', location: '', required_ppe: 'helmet,vest', inspector_id: '', is_active: true });
+  const [newStation,        setNewStation]        = useState({ ...EMPTY_CHECKPOINT });
+
+  /* ── Compliance profile state ── */
+  const [profiles,          setProfiles]          = useState([]);
+  const [profilesLoading,   setProfilesLoading]   = useState(false);
+  const [showProfileModal,  setShowProfileModal]  = useState(false);
+  const [editingProfile,    setEditingProfile]    = useState(null);
+  const [profileForm,       setProfileForm]       = useState({ ...EMPTY_PROFILE });
+  const [profileErrors,     setProfileErrors]     = useState({});
+  const [profileFormMsg,    setProfileFormMsg]    = useState({ type: '', text: '' });
+  const [profileSubmitting, setProfileSubmitting] = useState(false);
 
   const user = JSON.parse(localStorage.getItem('user') || '{}');
 
@@ -394,7 +422,7 @@ export default function AdminDashboard({ setCurrentPage }) {
   const [pwLoading,      setPwLoading]      = useState(false);
   const [resetLink, setResetLink] = useState('');
 
-  useEffect(() => { fetchUsers(); fetchDetections(); fetchAuditLogs(); fetchWorkers(); fetchDevices(); fetchPwRequests(); }, []);
+  useEffect(() => { fetchUsers(); fetchDetections(); fetchAuditLogs(); fetchWorkers(); fetchDevices(); fetchProfiles(); fetchPwRequests(); }, []);
   useEffect(() => {
     // Keep navigation available even if an older responsive stylesheet is cached.
     sidebarRef.current?.style.setProperty('display', 'flex', 'important');
@@ -460,11 +488,24 @@ export default function AdminDashboard({ setCurrentPage }) {
   const fetchDevices = async () => {
     setLoadErrors(prev => ({ ...prev, 'Stations': '' }));
     try {
-      const res = await adminFetch(`${API}/devices`, { headers: getAuthHeaders() });
+      const res = await adminFetch(`${API}/checkpoints`, { headers: getAuthHeaders() });
       const data = await res.json();
       if (!Array.isArray(data)) throw new Error('The server returned an invalid station list.');
       setDevices(data);
     } catch (err) { setLoadErrors(prev => ({ ...prev, 'Stations': err.message })); }
+  };
+
+  const fetchProfiles = async () => {
+    setProfilesLoading(true);
+    setLoadErrors(prev => ({ ...prev, 'Compliance profiles': '' }));
+    try {
+      const res = await adminFetch(`${API}/compliance-profiles`, { headers: getAuthHeaders() });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not load compliance profiles.');
+      if (!Array.isArray(data)) throw new Error('The server returned an invalid compliance profile list.');
+      setProfiles(data);
+    } catch (err) { setLoadErrors(prev => ({ ...prev, 'Compliance profiles': err.message })); }
+    finally { setProfilesLoading(false); }
   };
 
   const fetchPwRequests = async () => {
@@ -600,14 +641,18 @@ export default function AdminDashboard({ setCurrentPage }) {
       setEditingStation(station);
       setNewStation({
         label: station.label,
+        code: station.code || '',
+        description: station.description || '',
         location: station.location || '',
-        required_ppe: (station.required_ppe || []).join(','),
+        checkpoint_type: station.checkpoint_type || 'internal',
+        profile_id: station.profile_id || '',
+        required_ppe: Array.isArray(station.required_ppe) ? station.required_ppe : [],
         inspector_id: station.inspector_id || '',
         is_active: station.is_active ?? true,
       });
     } else {
       setEditingStation(null);
-      setNewStation({ label: '', location: '', required_ppe: 'helmet,vest', inspector_id: '', is_active: true });
+      setNewStation({ ...EMPTY_CHECKPOINT });
     }
     setStationFormMsg({ type: '', text: '' });
     setStationErrors({});
@@ -619,11 +664,12 @@ export default function AdminDashboard({ setCurrentPage }) {
     if (!newStation.label.trim())                    errs.label = 'Station name is required.';
     else if (newStation.label.trim().length < 2)     errs.label = 'Station name must be at least 2 characters.';
     else if (newStation.label.trim().length > 80)    errs.label = 'Station name is too long (max 80 characters).';
+    if (!newStation.code.trim()) errs.code = 'Checkpoint code is required.';
+    else if (!/^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(newStation.code.trim())) errs.code = 'Use letters, numbers, and single hyphens only.';
+    if (newStation.description && newStation.description.trim().length > 500) errs.description = 'Description is too long (max 500 characters).';
     if (newStation.location && newStation.location.trim().length > 120)
       errs.location = 'Location is too long (max 120 characters).';
-    const ppeItems = newStation.required_ppe.split(',').map(p => p.trim()).filter(Boolean);
-    if (ppeItems.length === 0) errs.required_ppe = 'At least one PPE item is required.';
-    else if (ppeItems.some(p => p.length > 40)) errs.required_ppe = 'Each PPE item must be under 40 characters.';
+    if (!Array.isArray(newStation.required_ppe)) errs.required_ppe = 'Select valid PPE requirements.';
     return errs;
   };
 
@@ -635,19 +681,19 @@ export default function AdminDashboard({ setCurrentPage }) {
     if (Object.keys(errs).length > 0) return;
     setStationSubmitting(true);
     try {
-      const ppeArray = newStation.required_ppe.split(',').map(p => p.trim()).filter(Boolean);
       const payload  = {
-        label: newStation.label, location: newStation.location,
-        required_ppe: ppeArray, inspector_id: newStation.inspector_id || null,
+        label: newStation.label, code: newStation.code, description: newStation.description,
+        location: newStation.location, checkpoint_type: newStation.checkpoint_type,
+        profile_id: newStation.profile_id || null, required_ppe: newStation.required_ppe, inspector_id: newStation.inspector_id || null,
         is_active: newStation.is_active,
       };
-      const url    = editingStation ? `${API}/devices/${editingStation.id}` : `${API}/devices`;
+      const url    = editingStation ? `${API}/checkpoints/${editingStation.id}` : `${API}/checkpoints`;
       const method = editingStation ? 'PUT' : 'POST';
       const res    = await adminFetch(url, { method, headers: getAuthHeaders(), body: JSON.stringify(payload) });
       const data   = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setStationFormMsg({ type: 'success', text: editingStation ? 'Station updated!' : `Station "${newStation.label}" created!` });
-      if (!editingStation) setNewStation({ label: '', location: '', required_ppe: 'helmet,vest', inspector_id: '', is_active: true });
+      setStationFormMsg({ type: 'success', text: editingStation ? 'Checkpoint updated!' : `Checkpoint "${newStation.label}" created!` });
+      if (!editingStation) setNewStation({ ...EMPTY_CHECKPOINT });
       setEditingStation(null);
       setStationErrors({});
       fetchDevices();
@@ -656,13 +702,80 @@ export default function AdminDashboard({ setCurrentPage }) {
   };
 
   const handleDeleteStation = async (id, name) => {
-    if (!window.confirm(`Delete station "${name}"? If it has detection records, it will be blocked — deactivate it instead.`)) return;
+    if (!window.confirm(`Delete checkpoint "${name}"? If it has detection records, it will be blocked — deactivate it instead.`)) return;
     try {
-      const res  = await adminFetch(`${API}/devices/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+      const res  = await adminFetch(`${API}/checkpoints/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       fetchDevices();
     } catch (err) { alert(err.message); }
+  };
+
+  const handleCheckpointStatus = async (checkpoint) => {
+    try {
+      await adminFetch(`${API}/checkpoints/${checkpoint.id}/status`, {
+        method: 'PATCH', headers: getAuthHeaders(),
+        body: JSON.stringify({ is_active: !checkpoint.is_active }),
+      });
+      fetchDevices();
+    } catch (err) { alert(err.message); }
+  };
+
+  const openProfileModal = (profile = null) => {
+    setEditingProfile(profile);
+    setProfileForm(profile ? {
+      name: profile.name,
+      description: profile.description || '',
+      required_ppe: Array.isArray(profile.required_ppe) ? profile.required_ppe : [],
+      is_active: profile.is_active ?? true,
+    } : { ...EMPTY_PROFILE });
+    setProfileErrors({});
+    setProfileFormMsg({ type: '', text: '' });
+    setShowProfileModal(true);
+  };
+
+  const handleSaveProfile = async (event) => {
+    event.preventDefault();
+    const errors = {};
+    if (!profileForm.name.trim()) errors.name = 'Profile name is required.';
+    else if (profileForm.name.trim().length < 2) errors.name = 'Profile name must be at least 2 characters.';
+    if (!Array.isArray(profileForm.required_ppe) || profileForm.required_ppe.length === 0) errors.required_ppe = 'Select at least one PPE item.';
+    if (profileForm.description.length > 500) errors.description = 'Description is too long.';
+    setProfileErrors(errors);
+    if (Object.keys(errors).length) return;
+    setProfileSubmitting(true);
+    setProfileFormMsg({ type: '', text: '' });
+    try {
+      const response = await adminFetch(editingProfile ? `${API}/compliance-profiles/${editingProfile.id}` : `${API}/compliance-profiles`, {
+        method: editingProfile ? 'PUT' : 'POST', headers: getAuthHeaders(), body: JSON.stringify(profileForm),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Could not save compliance profile.');
+      setProfileFormMsg({ type: 'success', text: editingProfile ? 'Profile updated. Existing checkpoints keep their current rules until you reapply this profile.' : 'Compliance profile created.' });
+      setEditingProfile(null);
+      setProfileForm({ ...EMPTY_PROFILE });
+      await fetchProfiles();
+    } catch (error) { setProfileFormMsg({ type: 'error', text: error.message }); }
+    finally { setProfileSubmitting(false); }
+  };
+
+  const handleProfileStatus = async (profile) => {
+    try {
+      const response = await adminFetch(`${API}/compliance-profiles/${profile.id}/status`, { method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify({ is_active: !profile.is_active }) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Could not update profile status.');
+      fetchProfiles();
+    } catch (error) { alert(error.message); }
+  };
+
+  const handleDeleteProfile = async (profile) => {
+    if (!window.confirm(`Delete compliance profile "${profile.name}"? Profiles used by checkpoints or scan history cannot be deleted.`)) return;
+    try {
+      const response = await adminFetch(`${API}/compliance-profiles/${profile.id}`, { method: 'DELETE', headers: getAuthHeaders() });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Could not delete compliance profile.');
+      fetchProfiles();
+    } catch (error) { alert(error.message); }
   };
 
   const validateUser = () => {
@@ -883,7 +996,7 @@ export default function AdminDashboard({ setCurrentPage }) {
     printDocument(html);
   };
 
-  const resetFilters = () => { setFilterStation('All Stations'); setFilterInspector('All Inspectors'); setFilterDate(''); setFilterViolation('All Types'); };
+  const resetFilters = () => { setFilterStation('All Stations'); setFilterInspector('All Inspectors'); setFilterProfile('All Profiles'); setFilterDate(''); setFilterViolation('All Types'); };
 
   // Every API result is checked before this point. Keep these fallbacks too so a
   // malformed response can show an error instead of taking down the whole dashboard.
@@ -893,13 +1006,17 @@ export default function AdminDashboard({ setCurrentPage }) {
   const filteredAuditLogs = auditCategory === 'all' ? auditRecords : auditRecords.filter(record => record.category === auditCategory);
   const stationOptions   = ['All Stations',   ...new Set(detectionRecords.map(d => d.station).filter(Boolean))];
   const inspectorOptions = ['All Inspectors', ...new Set(detectionRecords.map(d => d.inspector).filter(Boolean))];
+  const profileOptions = ['All Profiles', 'Custom requirements', ...new Set(detectionRecords.map(d => d.profile_name).filter(Boolean))];
 
   const filteredDetections = detectionRecords.filter(d => {
     if (filterStation   !== 'All Stations'   && d.station   !== filterStation)   return false;
     if (filterInspector !== 'All Inspectors' && d.inspector !== filterInspector) return false;
+    if (filterProfile !== 'All Profiles' && (d.profile_name || 'Custom requirements') !== filterProfile) return false;
     if (filterDate && d.date !== filterDate)                                      return false;
-    if (filterViolation === 'Violation' && d.result !== 'violation')             return false;
-    if (filterViolation === 'Compliant' && d.result !== 'compliant')             return false;
+    const alertType = d.alert_type || (d.result === 'compliant' ? 'compliant' : 'non_compliant');
+    if (filterViolation === 'Violation' && alertType !== 'non_compliant') return false;
+    if (filterViolation === 'Manual Review' && alertType !== 'manual_review') return false;
+    if (filterViolation === 'Compliant' && alertType !== 'compliant') return false;
     return true;
   });
 
@@ -909,7 +1026,8 @@ export default function AdminDashboard({ setCurrentPage }) {
     { id: 'overview',   icon: <LayoutDashboard size={18} />, label: 'Overview'          },
     { id: 'users',      icon: <Users size={18} />,           label: 'User Management'    },
     { id: 'workers',    icon: <HardHat size={18} />,         label: 'Worker Registry'    },
-    { id: 'stations',   icon: <MapPin size={18} />,          label: 'Stations'           },
+    { id: 'stations',   icon: <MapPin size={18} />,          label: 'Checkpoints'        },
+    { id: 'profiles',   icon: <ShieldCheck size={18} />,     label: 'Compliance Profiles' },
     { id: 'detections', icon: <ScanLine size={18} />,        label: 'Detection Log'      },
     { id: 'audit',      icon: <ClipboardList size={18} />,   label: 'Audit Logs'         },
     { id: 'pwrequests', icon: <KeyRound size={18} />,        label: `Password Requests${passwordRequests.filter(r=>r.status==='pending').length > 0 ? ` (${passwordRequests.filter(r=>r.status==='pending').length})` : ''}` },
@@ -969,7 +1087,8 @@ export default function AdminDashboard({ setCurrentPage }) {
               {activeTab === 'overview'   && 'Dashboard Overview'}
               {activeTab === 'users'      && 'User Management'}
               {activeTab === 'workers'    && 'Worker Registry'}
-              {activeTab === 'stations'   && 'Station Management'}
+              {activeTab === 'stations'   && 'Checkpoint Management'}
+              {activeTab === 'profiles'   && 'Compliance Profiles'}
               {activeTab === 'detections' && 'Detection Log'}
               {activeTab === 'audit'      && 'Audit Logs'}
               {activeTab === 'pwrequests' && 'Password Reset Requests'}
@@ -999,7 +1118,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                   <p>Your people, stations, and compliance records. All in one place.</p>
                   <div className="ad-welcome-actions">
                     <button className="ad-btn ad-welcome-primary" onClick={() => setActiveTab('detections')}>Review detections <ArrowUpRight size={17} /></button>
-                    <button className="ad-btn ad-welcome-secondary" onClick={() => setActiveTab('stations')}>Manage stations</button>
+                    <button className="ad-btn ad-welcome-secondary" onClick={() => setActiveTab('stations')}>Manage checkpoints</button>
                   </div>
                 </div>
                 <div className="ad-welcome-mark" aria-hidden="true"><ShieldCheck size={64} strokeWidth={1} /><span>AWARENESS IN ACTION</span></div>
@@ -1201,27 +1320,29 @@ export default function AdminDashboard({ setCurrentPage }) {
               <div className="admin-surface">
                 <div className="ad-panel-header">
                   <div>
-                    <div className="ad-panel-title">Station Management</div>
-                    <div className="ad-panel-sub">{devices.length} registered stations — assign inspectors and manage PPE requirements</div>
+                    <div className="ad-panel-title">Checkpoint Management</div>
+                    <div className="ad-panel-sub">{devices.length} checkpoints — each one has its own PPE requirements and inspector</div>
                   </div>
                   <div className="ad-panel-actions">
                     <button className="ad-refresh-btn" onClick={fetchDevices}>↻ Refresh</button>
-                    <button className="ad-btn ad-btn-primary" onClick={() => openStationModal()}>+ Add Station</button>
+                    <button className="ad-btn ad-btn-primary" onClick={() => openStationModal()}>+ Add Checkpoint</button>
                   </div>
                 </div>
                 {devices.length === 0 ? (
-                  <div className="ad-empty">No stations yet — click "+ Add Station" to create one.</div>
+                  <div className="ad-empty">No checkpoints yet — click "+ Add Checkpoint" to create one.</div>
                 ) : (
                   <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Scrollable admin records"><table className="ad-table">
-                    <thead><tr><th>Station</th><th>Location</th><th>Status</th><th>Workers</th><th>Required PPE</th><th>Assigned Inspector</th><th>Actions</th></tr></thead>
+                    <thead><tr><th>Checkpoint</th><th>Code / Type</th><th>Profile</th><th>Location</th><th>Status</th><th>Workers</th><th>Required PPE</th><th>Assigned Inspector</th><th>Actions</th></tr></thead>
                     <tbody>
                       {devices.map(d => (
                         <tr key={d.id}>
-                          <td style={{ fontWeight: 600 }}>{d.label}</td>
+                          <td><div style={{ fontWeight: 600 }}>{d.label}</div>{d.description && <div style={{ color: '#899483', fontSize: '0.75rem', marginTop: 2 }}>{d.description}</div>}</td>
+                          <td><div style={{ fontFamily: 'monospace', fontWeight: 700 }}>{d.code || '—'}</div><div style={{ color: '#899483', fontSize: '0.75rem', textTransform: 'capitalize' }}>{d.checkpoint_type || 'internal'}</div></td>
+                          <td>{d.profile_name ? <><div style={{ fontWeight: 600 }}>{d.profile_name}</div><div style={{ color: '#899483', fontSize: '0.72rem' }}>Final PPE saved on checkpoint</div></> : <span style={{ color: '#aaa' }}>Custom</span>}</td>
                           <td style={{ color: '#555' }}>{d.location || '—'}</td>
                           <td><span className={`ad-status ${d.is_active ? 'active' : 'inactive'}`}><span className="ad-status-dot" />{d.is_active ? 'Active' : 'Offline'}</span></td>
                           <td><span style={{ fontWeight: 600 }}>{parseInt(d.active_workers || 0)}</span><span style={{ color: '#aaa', fontSize: '0.8rem' }}> / {parseInt(d.total_workers || 0)}</span></td>
-                          <td>{(d.required_ppe || []).length > 0 ? d.required_ppe.map(p => <span key={p} className="ad-ppe-tag">{p}</span>) : <span style={{ color: '#ccc', fontSize: '0.8rem' }}>—</span>}</td>
+                          <td>{(d.required_ppe || []).length > 0 ? d.required_ppe.map(p => <span key={p} className="ad-ppe-tag">{ppeLabel(p)}</span>) : <span style={{ color: '#aaa', fontSize: '0.8rem' }}>No PPE required</span>}</td>
                           <td>
                             <select className="ad-filter-select" style={{ minWidth: '180px', fontSize: '0.83rem' }}
                               value={d.inspector_id || ''} onChange={e => handleAssignInspector(d.id, e.target.value)}>
@@ -1232,6 +1353,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                           <td>
                             <div className="ad-action-btns">
                               <button className="ad-btn-reactivate" onClick={() => openStationModal(d)}>Edit</button>
+                              <button className={d.is_active ? 'ad-btn-deactivate' : 'ad-btn-reactivate'} onClick={() => handleCheckpointStatus(d)}>{d.is_active ? 'Deactivate' : 'Activate'}</button>
                               <button className="ad-btn-delete" onClick={() => handleDeleteStation(d.id, d.label)}>Delete</button>
                             </div>
                           </td>
@@ -1240,6 +1362,32 @@ export default function AdminDashboard({ setCurrentPage }) {
                     </tbody>
                   </table></div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* ── COMPLIANCE PROFILES ── */}
+          {activeTab === 'profiles' && (
+            <div className="ad-grid-full">
+              <div className="admin-surface">
+                <div className="ad-panel-header">
+                  <div><div className="ad-panel-title">Compliance Profiles</div><div className="ad-panel-sub">Reusable PPE templates. Profile edits are applied to checkpoints only when explicitly selected again.</div></div>
+                  <div className="ad-panel-actions"><button className="ad-refresh-btn" onClick={fetchProfiles}>↻ Refresh</button><button className="ad-btn ad-btn-primary" onClick={() => openProfileModal()}>+ Add Profile</button></div>
+                </div>
+                {loadErrors['Compliance profiles'] && <div className="ad-error-msg">{loadErrors['Compliance profiles']}</div>}
+                {profilesLoading ? <div className="ad-empty">Loading compliance profiles…</div>
+                : profiles.length === 0 ? <div className="ad-empty">No compliance profiles yet.</div>
+                : <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Compliance profiles"><table className="ad-table">
+                    <thead><tr><th>Profile</th><th>Description</th><th>Required PPE</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead>
+                    <tbody>{profiles.map(profile => <tr key={profile.id}>
+                      <td style={{ fontWeight: 700 }}>{profile.name}</td>
+                      <td style={{ color: '#66705f', maxWidth: 300 }}>{profile.description || '—'}</td>
+                      <td>{profile.required_ppe.map(item => <span key={item} className="ad-ppe-tag">{ppeLabel(item)}</span>)}</td>
+                      <td><span className={`ad-status ${profile.is_active ? 'active' : 'inactive'}`}><span className="ad-status-dot" />{profile.is_active ? 'Active' : 'Inactive'}</span></td>
+                      <td>{dateLabel(profile.updated_at)}</td>
+                      <td><div className="ad-action-btns"><button className="ad-btn-reactivate" onClick={() => openProfileModal(profile)}>Edit</button><button className={profile.is_active ? 'ad-btn-deactivate' : 'ad-btn-reactivate'} onClick={() => handleProfileStatus(profile)}>{profile.is_active ? 'Deactivate' : 'Activate'}</button><button className="ad-btn-delete" onClick={() => handleDeleteProfile(profile)}>Delete</button></div></td>
+                    </tr>)}</tbody>
+                  </table></div>}
               </div>
             </div>
           )}
@@ -1268,17 +1416,19 @@ export default function AdminDashboard({ setCurrentPage }) {
                     <select className="ad-filter-select" value={filterStation} onChange={e => setFilterStation(e.target.value)}>{stationOptions.map(s => <option key={s}>{s}</option>)}</select></div>
                   <div className="ad-filter-group"><div className="ad-filter-label">Inspector</div>
                     <select className="ad-filter-select" value={filterInspector} onChange={e => setFilterInspector(e.target.value)}>{inspectorOptions.map(i => <option key={i}>{i}</option>)}</select></div>
+                  <div className="ad-filter-group"><div className="ad-filter-label">Profile</div>
+                    <select className="ad-filter-select" value={filterProfile} onChange={e => setFilterProfile(e.target.value)}>{profileOptions.map(profile => <option key={profile}>{profile}</option>)}</select></div>
                   <div className="ad-filter-group"><div className="ad-filter-label">Date</div>
                     <input className="ad-filter-input" type="date" value={filterDate} onChange={e => setFilterDate(e.target.value)} /></div>
                   <div className="ad-filter-group"><div className="ad-filter-label">Status</div>
-                    <select className="ad-filter-select" value={filterViolation} onChange={e => setFilterViolation(e.target.value)}><option>All Types</option><option>Violation</option><option>Compliant</option></select></div>
+                    <select className="ad-filter-select" value={filterViolation} onChange={e => setFilterViolation(e.target.value)}><option>All Types</option><option>Violation</option><option>Manual Review</option><option>Compliant</option></select></div>
                   <button className="ad-filter-reset" onClick={resetFilters}>Reset Filters</button>
                 </div>
                 <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Scrollable admin records"><table className="ad-table">
-                  <thead><tr><th>Photo</th><th>#</th><th>Worker</th><th>Station</th><th>Inspector</th><th>Date & Time</th><th>Status</th><th>Missing PPE</th><th>Present PPE</th></tr></thead>
+                  <thead><tr><th>Photo</th><th>#</th><th>Worker</th><th>Checkpoint</th><th>Profile</th><th>Inspector</th><th>Date & Time</th><th>Status</th><th>Required PPE</th><th>Missing PPE</th><th>Detected PPE</th></tr></thead>
                   <tbody>
-                    {detLoading ? <tr><td colSpan={9} className="ad-empty">Loading detections…</td></tr>
-                    : filteredDetections.length === 0 ? <tr><td colSpan={9} className="ad-empty">No detections match your filters</td></tr>
+                    {detLoading ? <tr><td colSpan={11} className="ad-empty">Loading detections…</td></tr>
+                    : filteredDetections.length === 0 ? <tr><td colSpan={11} className="ad-empty">No detections match your filters</td></tr>
                     : filteredDetections.map(d => (
                       <tr key={d.id}>
                         <td>
@@ -1296,12 +1446,14 @@ export default function AdminDashboard({ setCurrentPage }) {
                                 <div style={{ color: '#aaa', fontSize: '0.75rem', fontFamily: 'monospace' }}>{d.worker_employee_id}</div></>
                             : <span style={{ color: '#ccc', fontSize: '0.78rem' }}>—</span>}
                         </td>
-                        <td style={{ fontWeight: 600 }}>{d.station || '—'}</td>
+                        <td><div style={{ fontWeight: 600 }}>{d.station || '—'}</div>{d.checkpoint?.code && <div style={{ color: '#aaa', fontSize: '0.72rem', fontFamily: 'monospace' }}>{d.checkpoint.code}</div>}</td>
+                        <td>{d.profile_name || <span style={{ color: '#aaa' }}>Custom</span>}</td>
                         <td style={{ color: '#555' }}>{d.inspector || '—'}</td>
                         <td style={{ fontSize: '0.85rem' }}><div style={{ color: '#444' }}>{d.date}</div><div style={{ color: '#bbb' }}>{d.time}</div></td>
-                        <td><span className={`ad-violation-badge ${d.result === 'violation' ? 'ad-violation-yes' : 'ad-violation-no'}`}>{d.result === 'violation' ? '⚠ Violation' : '✓ Compliant'}</span></td>
-                        <td>{(d.missing_ppe || []).length > 0 ? d.missing_ppe.map(p => <span key={p} className="ad-ppe-tag missing">{p}</span>) : <span style={{ color: '#ccc', fontSize: '0.8rem' }}>—</span>}</td>
-                        <td>{(d.detected_ppe || []).length > 0 ? d.detected_ppe.map(p => <span key={p} className="ad-ppe-tag">{p}</span>) : <span style={{ color: '#ccc', fontSize: '0.8rem' }}>—</span>}</td>
+                        <td><span className={`ad-violation-badge ${d.result === 'violation' ? 'ad-violation-yes' : 'ad-violation-no'}`} style={d.alert_type === 'manual_review' ? { background: '#fff7ed', color: '#b45309' } : undefined}>{d.alert_type === 'manual_review' ? '⚠ Manual Review' : d.result === 'violation' ? '⚠ Violation' : '✓ Compliant'}</span></td>
+                        <td>{(d.required_ppe || []).length > 0 ? d.required_ppe.map(p => <span key={p} className="ad-ppe-tag">{ppeLabel(p)}</span>) : <span style={{ color: '#ccc', fontSize: '0.8rem' }}>None</span>}</td>
+                        <td>{(d.missing_ppe || []).length > 0 ? d.missing_ppe.map(p => <span key={p} className="ad-ppe-tag missing">{ppeLabel(p)}</span>) : <span style={{ color: '#ccc', fontSize: '0.8rem' }}>—</span>}</td>
+                        <td>{(d.detected_ppe || []).length > 0 ? d.detected_ppe.map(p => <span key={p} className="ad-ppe-tag">{ppeLabel(p)}</span>) : <span style={{ color: '#ccc', fontSize: '0.8rem' }}>—</span>}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1606,15 +1758,27 @@ export default function AdminDashboard({ setCurrentPage }) {
       {showStationModal && (
         <div className="ad-modal-overlay" onClick={(e) => e.target === e.currentTarget && setShowStationModal(false)}>
           <div className="ad-modal">
-            <div className="ad-modal-title">{editingStation ? 'Edit Station' : 'Add New Station'}</div>
-            <div className="ad-modal-sub">{editingStation ? 'Update station details' : 'Register a new checkpoint station'}</div>
+            <div className="ad-modal-title">{editingStation ? 'Edit Checkpoint' : 'Add New Checkpoint'}</div>
+            <div className="ad-modal-sub">Choose the PPE that must be detected before a worker can pass this checkpoint.</div>
             <form className="ad-modal-form" onSubmit={handleSaveStation}>
               {stationFormMsg.text && <div className={stationFormMsg.type === 'success' ? 'ad-success-msg' : 'ad-error-msg'}>{stationFormMsg.text}</div>}
               <div className="ad-modal-field">
-                <label className="ad-modal-label">Station Name</label>
-                <input className={`ad-modal-input${stationErrors.label ? ' error' : ''}`} placeholder="e.g. Checkpoint Scanner A" value={newStation.label}
+                <label className="ad-modal-label">Checkpoint Name</label>
+                <input className={`ad-modal-input${stationErrors.label ? ' error' : ''}`} placeholder="e.g. Main Entrance" value={newStation.label}
                   onChange={e => { setNewStation({ ...newStation, label: e.target.value }); setStationErrors(p => ({ ...p, label: '' })); }} />
                 {stationErrors.label && <span className="ad-field-error">⚠ {stationErrors.label}</span>}
+              </div>
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Checkpoint Code</label>
+                <input className={`ad-modal-input${stationErrors.code ? ' error' : ''}`} placeholder="e.g. WH-GATE-01" value={newStation.code}
+                  onChange={e => { setNewStation({ ...newStation, code: e.target.value.toUpperCase().replace(/\s+/g, '-') }); setStationErrors(p => ({ ...p, code: '' })); }} />
+                {stationErrors.code && <span className="ad-field-error">⚠ {stationErrors.code}</span>}
+              </div>
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Checkpoint Type</label>
+                <select className="ad-modal-select" value={newStation.checkpoint_type} onChange={e => setNewStation({ ...newStation, checkpoint_type: e.target.value })}>
+                  <option value="entrance">Entrance</option><option value="exit">Exit</option><option value="internal">Internal</option>
+                </select>
               </div>
               <div className="ad-modal-field">
                 <label className="ad-modal-label">Location</label>
@@ -1623,10 +1787,46 @@ export default function AdminDashboard({ setCurrentPage }) {
                 {stationErrors.location && <span className="ad-field-error">⚠ {stationErrors.location}</span>}
               </div>
               <div className="ad-modal-field">
+                <label className="ad-modal-label">Description</label>
+                <textarea className={`ad-modal-input${stationErrors.description ? ' error' : ''}`} rows={3} placeholder="Describe where this checkpoint is used" value={newStation.description}
+                  onChange={e => { setNewStation({ ...newStation, description: e.target.value }); setStationErrors(p => ({ ...p, description: '' })); }} />
+                {stationErrors.description && <span className="ad-field-error">⚠ {stationErrors.description}</span>}
+              </div>
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Compliance Profile</label>
+                <select className="ad-modal-select" value={newStation.profile_id} onChange={event => {
+                  const profileId = event.target.value;
+                  const selectedProfile = profiles.find(profile => String(profile.id) === String(profileId));
+                  setNewStation(current => ({ ...current, profile_id: profileId, required_ppe: selectedProfile ? [...selectedProfile.required_ppe] : current.required_ppe }));
+                }}>
+                  <option value="">Custom requirements</option>
+                  {profiles.map(profile => <option key={profile.id} value={profile.id} disabled={!profile.is_active && Number(profile.id) !== Number(newStation.profile_id)}>{profile.name}{profile.is_active ? '' : ' (Inactive)'}</option>)}
+                </select>
+                <span style={{ fontSize: '0.75rem', color: '#789' }}>Selecting a profile copies its PPE defaults. Changes below affect only this checkpoint.</span>
+              </div>
+              <div className="ad-modal-field">
                 <label className="ad-modal-label">Required PPE</label>
-                <input className={`ad-modal-input${stationErrors.required_ppe ? ' error' : ''}`} placeholder="e.g. helmet,vest" value={newStation.required_ppe}
-                  onChange={e => { setNewStation({ ...newStation, required_ppe: e.target.value }); setStationErrors(p => ({ ...p, required_ppe: '' })); }} />
-                <span style={{ fontSize: '0.75rem', color: '#aaa' }}>Comma-separated list</span>
+                <div className="ad-ppe-options" role="group" aria-label="Required PPE items">
+                  {PPE_OPTIONS.map(([key, label]) => {
+                    const checked = newStation.required_ppe.includes(key);
+                    return <label className={`ad-ppe-option${checked ? ' selected' : ''}`} key={key}>
+                      <input type="checkbox" checked={checked} onChange={() => {
+                        setNewStation(current => ({ ...current, required_ppe: checked
+                          ? current.required_ppe.filter(item => item !== key)
+                          : [...current.required_ppe, key] }));
+                        setStationErrors(current => ({ ...current, required_ppe: '' }));
+                      }} />
+                      <span>{label}</span><small>{checked ? 'Required' : 'Optional'}</small>
+                    </label>;
+                  })}
+                </div>
+                <span style={{ fontSize: '0.75rem', color: '#789' }}>Unchecked items are optional. You may save a checkpoint with no required PPE.</span>
+                {newStation.profile_id && (() => {
+                  const selectedProfile = profiles.find(profile => Number(profile.id) === Number(newStation.profile_id));
+                  const defaults = [...(selectedProfile?.required_ppe || [])].sort().join('|');
+                  const configured = [...newStation.required_ppe].sort().join('|');
+                  return defaults !== configured ? <span className="ad-profile-override">Checkpoint override enabled — the original profile is unchanged.</span> : null;
+                })()}
                 {stationErrors.required_ppe && <span className="ad-field-error">⚠ {stationErrors.required_ppe}</span>}
               </div>
               <div className="ad-modal-field">
@@ -1645,9 +1845,37 @@ export default function AdminDashboard({ setCurrentPage }) {
                 </div>
               )}
               <div className="ad-modal-footer">
-                <button type="button" className="ad-btn ad-btn-ghost" onClick={() => { setShowStationModal(false); setEditingStation(null); setNewStation({ label: '', location: '', required_ppe: 'helmet,vest', inspector_id: '', is_active: true }); setStationErrors({}); setStationFormMsg({ type: '', text: '' }); }}>Cancel</button>
-                <button type="submit" className="ad-btn ad-btn-primary" disabled={stationSubmitting}>{stationSubmitting ? 'Saving…' : editingStation ? 'Update Station' : 'Create Station'}</button>
+                <button type="button" className="ad-btn ad-btn-ghost" onClick={() => { setShowStationModal(false); setEditingStation(null); setNewStation({ ...EMPTY_CHECKPOINT }); setStationErrors({}); setStationFormMsg({ type: '', text: '' }); }}>Cancel</button>
+                <button type="submit" className="ad-btn ad-btn-primary" disabled={stationSubmitting}>{stationSubmitting ? 'Saving…' : editingStation ? 'Update Checkpoint' : 'Create Checkpoint'}</button>
               </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add/Edit Compliance Profile Modal */}
+      {showProfileModal && (
+        <div className="ad-modal-overlay" onClick={event => event.target === event.currentTarget && setShowProfileModal(false)}>
+          <div className="ad-modal">
+            <div className="ad-modal-title">{editingProfile ? 'Edit Compliance Profile' : 'Add Compliance Profile'}</div>
+            <div className="ad-modal-sub">Create a reusable PPE template for checkpoints.</div>
+            <form className="ad-modal-form" onSubmit={handleSaveProfile}>
+              {profileFormMsg.text && <div className={profileFormMsg.type === 'success' ? 'ad-success-msg' : 'ad-error-msg'}>{profileFormMsg.text}</div>}
+              <div className="ad-modal-field"><label className="ad-modal-label">Profile Name</label><input className={`ad-modal-input${profileErrors.name ? ' error' : ''}`} value={profileForm.name} placeholder="e.g. Construction" onChange={event => { setProfileForm(current => ({ ...current, name: event.target.value })); setProfileErrors(current => ({ ...current, name: '' })); }} />{profileErrors.name && <span className="ad-field-error">⚠ {profileErrors.name}</span>}</div>
+              <div className="ad-modal-field"><label className="ad-modal-label">Description</label><textarea className={`ad-modal-input${profileErrors.description ? ' error' : ''}`} rows={3} value={profileForm.description} placeholder="Describe where this profile should be used" onChange={event => { setProfileForm(current => ({ ...current, description: event.target.value })); setProfileErrors(current => ({ ...current, description: '' })); }} />{profileErrors.description && <span className="ad-field-error">⚠ {profileErrors.description}</span>}</div>
+              <div className="ad-modal-field">
+                <label className="ad-modal-label">Required PPE</label>
+                <div className="ad-ppe-options" role="group" aria-label="Profile PPE items">{PPE_OPTIONS.map(([key, label]) => {
+                  const checked = profileForm.required_ppe.includes(key);
+                  return <label className={`ad-ppe-option${checked ? ' selected' : ''}`} key={key}><input type="checkbox" checked={checked} onChange={() => {
+                    setProfileForm(current => ({ ...current, required_ppe: checked ? current.required_ppe.filter(item => item !== key) : [...current.required_ppe, key] }));
+                    setProfileErrors(current => ({ ...current, required_ppe: '' }));
+                  }} /><span>{label}</span><small>{checked ? 'Required' : 'Optional'}</small></label>;
+                })}</div>
+                {profileErrors.required_ppe && <span className="ad-field-error">⚠ {profileErrors.required_ppe}</span>}
+              </div>
+              {editingProfile && <div className="ad-modal-field"><label className="ad-modal-label">Status</label><select className="ad-modal-select" value={profileForm.is_active} onChange={event => setProfileForm(current => ({ ...current, is_active: event.target.value === 'true' }))}><option value="true">Active</option><option value="false">Inactive</option></select></div>}
+              <div className="ad-modal-footer"><button type="button" className="ad-btn ad-btn-ghost" onClick={() => { setShowProfileModal(false); setEditingProfile(null); setProfileForm({ ...EMPTY_PROFILE }); }}>Cancel</button><button type="submit" className="ad-btn ad-btn-primary" disabled={profileSubmitting}>{profileSubmitting ? 'Saving…' : editingProfile ? 'Update Profile' : 'Create Profile'}</button></div>
             </form>
           </div>
         </div>

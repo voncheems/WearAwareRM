@@ -26,8 +26,16 @@ test('imported IDs coexist with new records and user projections hide passwords'
   await assert.rejects(data.insert('users', { role_id: 2, email: 'new@example.test', full_name: 'Duplicate', password_hash: 'hash' }), { code: 11000 });
   await assert.rejects(data.insert('users', { role_id: 999, email: 'bad@example.test', full_name: 'Bad', password_hash: 'hash' }), /Unknown role_id/);
 });
+test('default compliance profiles seed once without duplicates', async () => {
+  const { ensureDefaultComplianceProfiles } = require('../compliance-profiles');
+  await ensureDefaultComplianceProfiles(db); await ensureDefaultComplianceProfiles(db);
+  const profiles = await db.collection('compliance_profiles').find({}).toArray();
+  assert.equal(profiles.length, 4);
+  assert.deepEqual(profiles.map(profile => profile.name).sort(), ['Construction', 'Laboratory', 'Manufacturing', 'Warehouse']);
+  assert.ok(profiles.find(profile => profile.name === 'Laboratory').required_ppe.includes('lab-coat'));
+});
 test('station, worker, detection and notification joins preserve inspector scope', async () => {
-  const station = (await data.insert('devices', { device_id: 'uuid', label: 'Gate', inspector_id: 20 })).rows[0];
+  const station = (await data.insert('devices', { device_id: 'uuid', code: 'GATE-01', label: 'Gate', checkpoint_type: 'entrance', inspector_id: 20 })).rows[0];
   const worker = (await data.insert('workers', { employee_id: 'WA-0001', full_name: 'Worker', device_id: String(station.id) })).rows[0];
   const detection = (await data.insert('detections', { device_id: station.id, worker_id: worker.id, inspector_id: 20, result: 'violation' })).rows[0];
   await data.insert('notifications', { detection_id: detection.id, inspector_id: 20 });
@@ -40,6 +48,8 @@ test('station, worker, detection and notification joins preserve inspector scope
   assert.equal((await data.detections({ inspector_id: 10 }, 'inspector')).rows.length, 0);
   const history = (await data.detections({}, 'admin', 500)).rows[0];
   assert.equal(history.worker_name, 'Worker'); assert.equal(history.inspector, 'Inspector');
+  assert.equal(history.station, 'Gate'); assert.deepEqual(history.required_ppe, ['helmet', 'vest']);
+  assert.equal(history.checkpoint.code, 'GATE-01');
   assert.match(history.time, /\d{2}:\d{2} (AM|PM)/);
   assert.equal((await data.notifications(20)).rows[0].station, 'Gate');
   assert.equal((await data.notifications(10)).rows.length, 0);

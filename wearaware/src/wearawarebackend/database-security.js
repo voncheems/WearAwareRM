@@ -5,15 +5,60 @@ const fields = {
   roles: { name: { bsonType: 'string', enum: ['admin', 'inspector', 'user', 'scanner'] } },
   users: { role_id: number, worker_id: reference, full_name: str, email: str, password_hash: { bsonType: 'string', pattern: '^\\$2[aby]\\$[0-9]{2}\\$[./A-Za-z0-9]{53}$' }, is_active: { bsonType: 'bool' } },
   workers: { employee_id: str, full_name: str, device_id: reference, status: { enum: ['active', 'on_leave', 'terminated'] } },
-  devices: { device_id: str, label: str, inspector_id: reference, is_active: { bsonType: 'bool' }, required_ppe: { bsonType: 'array', maxItems: 8, items: { bsonType: 'string' } } },
-  detections: { worker_id: reference, device_id: number, inspector_id: reference, result: { enum: ['compliant', 'violation'] }, detected_ppe: { bsonType: 'array', maxItems: 8, items: { bsonType: 'string' } }, missing_ppe: { bsonType: 'array', maxItems: 8, items: { bsonType: 'string' } } },
+  compliance_profiles: { name: str, name_key: { bsonType: 'string', maxLength: 120 }, description: { bsonType: ['string', 'null'], maxLength: 500 }, required_ppe: { bsonType: 'array', minItems: 1, maxItems: 32, uniqueItems: true, items: { bsonType: 'string', maxLength: 40, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$' } }, is_active: { bsonType: 'bool' }, created_at: { bsonType: 'date' }, updated_at: { bsonType: 'date' } },
+  devices: { device_id: str, code: { bsonType: 'string', minLength: 2, maxLength: 40, pattern: '^[A-Z0-9]+(?:-[A-Z0-9]+)*$' }, label: str, description: { bsonType: ['string', 'null'], maxLength: 500 }, location: { bsonType: ['string', 'null'], maxLength: 200 }, checkpoint_type: { enum: ['entrance', 'exit', 'internal'] }, profile_id: reference, inspector_id: reference, is_active: { bsonType: 'bool' }, required_ppe: { bsonType: 'array', maxItems: 32, uniqueItems: true, items: { bsonType: 'string', maxLength: 40, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$' } }, created_at: { bsonType: 'date' }, updated_at: { bsonType: 'date' } },
+  detections: { worker_id: reference, device_id: number, profile_id: reference, profile_name: { bsonType: ['string', 'null'], maxLength: 5000 }, inspector_id: reference, checkpoint_name: str, checkpoint_code: str, alert_type: { enum: ['compliant', 'non_compliant', 'manual_review'] }, result: { enum: ['compliant', 'violation'] }, required_ppe: { bsonType: 'array', maxItems: 32, uniqueItems: true, items: { bsonType: 'string' } }, detected_ppe: { bsonType: 'array', maxItems: 32, uniqueItems: true, items: { bsonType: 'string' } }, missing_ppe: { bsonType: 'array', maxItems: 32, uniqueItems: true, items: { bsonType: 'string' } } },
   notifications: { detection_id: number, inspector_id: number, is_read: { bsonType: 'bool' } },
   password_reset_requests: { email: str, status: { enum: ['pending', 'issued', 'resolved'] }, temp_password: { bsonType: 'null' }, token_hash: { bsonType: 'string', pattern: '^[a-f0-9]{64}$' }, expires_at: { bsonType: 'date' } },
   audit_logs: { category: str, action: str, actor_id: reference, actor_name: str, actor_role: str, actor_email: str, target: str, details: str, occurred_at: { bsonType: 'date' } },
 };
 function validatorFor(name, properties) {
-  const required = { roles: ['name'], users: ['email', 'role_id', 'password_hash'], workers: ['employee_id', 'full_name'], devices: ['device_id', 'label'], detections: ['device_id', 'result'], notifications: ['detection_id', 'inspector_id'], password_reset_requests: ['email', 'status'], audit_logs: ['category', 'action', 'occurred_at'] }[name];
+  const required = { roles: ['name'], users: ['email', 'role_id', 'password_hash'], workers: ['employee_id', 'full_name'], compliance_profiles: ['name', 'name_key', 'required_ppe', 'is_active', 'created_at', 'updated_at'], devices: ['device_id', 'code', 'label', 'checkpoint_type', 'required_ppe', 'is_active', 'created_at', 'updated_at'], detections: ['device_id', 'checkpoint_name', 'checkpoint_code', 'alert_type', 'result', 'required_ppe', 'detected_ppe', 'missing_ppe'], notifications: ['detection_id', 'inspector_id'], password_reset_requests: ['email', 'status'], audit_logs: ['category', 'action', 'occurred_at'] }[name];
   return { $jsonSchema: { bsonType: 'object', required: ['id', ...required], properties: { id: number, ...properties } } };
+}
+
+async function ensureCheckpointData(db) {
+  await db.collection('devices').updateMany({}, [{ $set: {
+    required_ppe: { $ifNull: ['$required_ppe', ['helmet', 'vest']] },
+    profile_id: { $ifNull: ['$profile_id', null] },
+    description: { $ifNull: ['$description', null] },
+    checkpoint_type: { $ifNull: ['$checkpoint_type', 'internal'] },
+    is_active: { $ifNull: ['$is_active', true] },
+    created_at: { $ifNull: ['$created_at', { $ifNull: ['$registered_at', { $ifNull: ['$updated_at', '$$NOW'] }] }] },
+    updated_at: { $ifNull: ['$updated_at', { $ifNull: ['$registered_at', { $ifNull: ['$created_at', '$$NOW'] }] }] },
+  } }]);
+
+  const checkpoints = await db.collection('devices').find({}, { projection: { id: 1, code: 1, label: 1, required_ppe: 1 } }).sort({ id: 1 }).toArray();
+  const usedCodes = new Set();
+  for (const checkpoint of checkpoints) {
+    const current = typeof checkpoint.code === 'string' ? checkpoint.code.trim().toUpperCase() : '';
+    let code = /^[A-Z0-9]+(?:-[A-Z0-9]+)*$/.test(current) && !usedCodes.has(current) ? current : '';
+    if (!code) {
+      const suffix = String(checkpoint.id);
+      const base = String(checkpoint.label || 'CHECKPOINT').toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, Math.max(2, 39 - suffix.length)) || 'CHECKPOINT';
+      code = `${base}-${checkpoint.id}`;
+      while (usedCodes.has(code)) code = `${base}-${checkpoint.id}-${usedCodes.size + 1}`;
+      await db.collection('devices').updateOne({ id: checkpoint.id }, { $set: { code } });
+    }
+    checkpoint.code = code;
+    usedCodes.add(code);
+  }
+  for (const checkpoint of checkpoints) {
+    await db.collection('detections').updateMany({ device_id: checkpoint.id }, [{ $set: {
+      checkpoint_name: { $ifNull: ['$checkpoint_name', checkpoint.label] },
+      checkpoint_code: { $ifNull: ['$checkpoint_code', checkpoint.code] },
+      profile_id: { $ifNull: ['$profile_id', null] },
+      profile_name: { $ifNull: ['$profile_name', null] },
+      required_ppe: { $ifNull: ['$required_ppe', checkpoint.required_ppe || ['helmet', 'vest']] },
+      detected_ppe: { $ifNull: ['$detected_ppe', []] },
+      missing_ppe: { $ifNull: ['$missing_ppe', []] },
+      alert_type: { $ifNull: ['$alert_type', { $cond: [{ $eq: ['$result', 'compliant'] }, 'compliant', 'non_compliant'] }] },
+    } }]);
+  }
+  await db.collection('detections').updateMany({ checkpoint_name: { $exists: false } }, { $set: { checkpoint_name: 'Unknown checkpoint', required_ppe: [], detected_ppe: [], missing_ppe: [] } });
+  await db.collection('detections').updateMany({ checkpoint_code: { $exists: false } }, { $set: { checkpoint_code: 'UNKNOWN' } });
+  await db.collection('detections').updateMany({ profile_id: { $exists: false } }, { $set: { profile_id: null, profile_name: null } });
+  await db.collection('detections').updateMany({ alert_type: { $exists: false } }, [{ $set: { alert_type: { $cond: [{ $eq: ['$result', 'compliant'] }, 'compliant', 'non_compliant'] } } }]);
 }
 async function applyDatabaseSecurity(db) {
   for (const [name, properties] of Object.entries(fields)) {
@@ -50,4 +95,4 @@ async function cleanLegacyPasswords(db) {
     });
   } finally { await session.endSession(); }
 }
-module.exports = { applyDatabaseSecurity, verifyDatabaseSecurity, cleanLegacyPasswords, ensureAuditLogCollection };
+module.exports = { applyDatabaseSecurity, verifyDatabaseSecurity, cleanLegacyPasswords, ensureAuditLogCollection, ensureCheckpointData };

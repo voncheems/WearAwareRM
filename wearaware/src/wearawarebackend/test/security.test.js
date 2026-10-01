@@ -7,6 +7,7 @@ const bcrypt = require('bcrypt');
 const WebSocket = require('ws');
 const httpModule = require('node:http');
 let mongo, db, server, alerts, base;
+let reusableProfileId;
 const secret = 'isolated-security-suite-secret-not-production';
 const token = (id, role = 'inspector', extra = {}) => jwt.sign({ id, role, ...extra }, secret, { expiresIn: '1h' });
 const call = (path, auth, method = 'GET', body, headers = {}) => fetch(base + path, { method, headers: { ...(auth ? { Authorization: `Bearer ${auth}` } : {}), ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...headers }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
@@ -24,8 +25,11 @@ before(async () => {
     { id: 5, full_name: 'Legacy Recovery', email: 'legacy@example.test', role_id: 3, is_active: true, password_hash },
     { id: 6, full_name: 'Checkpoint Scanner', email: 'scanner@example.test', role_id: 4, is_active: true, password_hash },
   ]);
-  await db.collection('_counters').insertOne({ _id: 'users', value: 5 });
-  await db.collection('devices').insertMany([{ id: 1, device_id: 'first', label: 'First', inspector_id: 2, is_active: true }, { id: 2, device_id: 'other', label: 'Other', inspector_id: 3, is_active: true }]);
+  await db.collection('_counters').insertMany([{ _id: 'users', value: 5 }, { _id: 'devices', value: 2 }]);
+  await db.collection('devices').insertMany([
+    { id: 1, device_id: 'first', code: 'FIRST-01', label: 'First', checkpoint_type: 'entrance', inspector_id: 2, is_active: true, required_ppe: ['helmet', 'vest'] },
+    { id: 2, device_id: 'other', code: 'OTHER-01', label: 'Other', checkpoint_type: 'internal', inspector_id: 3, is_active: true, required_ppe: ['gloves', 'goggles'] },
+  ]);
   await db.collection('workers').insertMany([{ id: 11, employee_id: 'W11', full_name: 'First', device_id: 1, status: 'active' }, { id: 12, employee_id: 'W12', full_name: 'Other', device_id: 2, status: 'active' }]);
   const { app } = require('../server'); server = httpModule.createServer(app);
   alerts = require('../alerts').createAlerts(server, app);
@@ -49,6 +53,39 @@ test('admin worker status actions preserve worker identity and station assignmen
   for (const field of ['employee_id', 'full_name', 'device_id', 'position', 'contact_number']) assert.deepEqual(after[field], before[field]);
   assert.equal((await call(path, token(1), 'PATCH', { status: 'active' })).status, 200);
   assert.equal((await call('/api/workers/999/status', token(1), 'PATCH', { status: 'active' })).status, 404);
+});
+
+test('administrators manage reusable compliance profiles with duplicate and inactive assignment protection', async () => {
+  const auth = token(1, 'admin');
+  const createdResponse = await call('/api/compliance-profiles', auth, 'POST', { name: 'Test Warehouse', description: 'Reusable warehouse rules', required_ppe: ['helmet', 'vest'], is_active: true });
+  assert.equal(createdResponse.status, 201);
+  const created = (await createdResponse.json()).profile; reusableProfileId = created.id;
+  assert.deepEqual(created.required_ppe, ['helmet', 'vest']);
+  assert.equal((await call('/api/compliance-profiles', auth, 'POST', { name: 'test warehouse', description: '', required_ppe: ['vest'], is_active: true })).status, 409);
+  assert.equal((await call(`/api/compliance-profiles/${created.id}/status`, auth, 'PATCH', { is_active: false })).status, 200);
+  const inactiveAssignment = await call('/api/checkpoints', auth, 'POST', { label: 'Blocked Profile Gate', code: 'BLOCKED-01', description: '', location: '', checkpoint_type: 'entrance', profile_id: created.id, required_ppe: ['helmet'], inspector_id: 2, is_active: true });
+  assert.equal(inactiveAssignment.status, 400);
+  assert.equal((await call(`/api/compliance-profiles/${created.id}/status`, auth, 'PATCH', { is_active: true })).status, 200);
+});
+
+test('administrators manage checkpoint requirements and activation through checkpoint APIs', async () => {
+  const auth = token(1, 'admin');
+  const createdResponse = await call('/api/checkpoints', auth, 'POST', { label: 'Laboratory Entrance', code: 'LAB-01', description: 'Research wing checkpoint', location: 'Lab Wing', checkpoint_type: 'entrance', profile_id: reusableProfileId, required_ppe: ['gloves', 'goggles', 'mask'], inspector_id: 2, is_active: true });
+  assert.equal(createdResponse.status, 201);
+  const created = (await createdResponse.json()).device;
+  assert.deepEqual(created.required_ppe, ['gloves', 'goggles', 'mask']);
+  assert.equal(created.code, 'LAB-01'); assert.equal(created.checkpoint_type, 'entrance');
+  assert.ok(created.created_at); assert.ok(created.updated_at);
+  assert.equal((await call('/api/checkpoints', auth, 'POST', { label: 'Duplicate Code', code: 'LAB-01', description: '', location: '', checkpoint_type: 'exit', required_ppe: [], inspector_id: null, is_active: true })).status, 409);
+  assert.equal((await call(`/api/checkpoints/${created.id}`, token(6, 'scanner'))).status, 200);
+
+  const updatedResponse = await call(`/api/checkpoints/${created.id}`, auth, 'PUT', { label: 'Research Laboratory Entrance', code: 'LAB-01', description: 'Research wing checkpoint', location: 'Lab Wing', checkpoint_type: 'internal', profile_id: reusableProfileId, required_ppe: ['gloves', 'goggles'], inspector_id: 2, is_active: true });
+  assert.equal(updatedResponse.status, 200);
+  assert.equal((await updatedResponse.json()).device.label, 'Research Laboratory Entrance');
+  assert.equal((await call(`/api/checkpoints/${created.id}/status`, auth, 'PATCH', { is_active: false })).status, 200);
+  const inactive = await call(`/api/checkpoints/${created.id}`, token(6, 'scanner'));
+  assert.equal(inactive.status, 200); assert.equal((await inactive.json()).is_active, false);
+  assert.equal((await call(`/api/checkpoints/${created.id}`, auth, 'DELETE')).status, 200);
 });
 
 test('safe errors, headers, CORS and malformed/oversized request protection', async () => {
@@ -79,6 +116,7 @@ test('invalid login stays generic and role/algorithm/session checks cannot be by
   assert.equal((await call('/api/users/1/deactivate', token(1), 'PATCH', {})).status, 403);
 });
 test('inspectors read only their stations while the dedicated scanner routes writes by station', async () => {
+  await db.collection('devices').updateOne({ id: 1 }, { $set: { profile_id: reusableProfileId } });
   const auth = token(2);
   assert.deepEqual((await (await call('/api/workers', auth)).json()).map(x => x.id), [11]);
   assert.deepEqual((await (await call('/api/devices', auth)).json()).map(x => x.id), [1]);
@@ -89,15 +127,29 @@ test('inspectors read only their stations while the dedicated scanner routes wri
   // The dedicated scanner account cannot choose an inspector. The worker's
   // station assignment routes each check to the right inspector dashboard.
   const scannerAuth = token(6, 'scanner');
-  assert.equal((await call('/api/workers/by-employee-id/W11', scannerAuth)).status, 200);
-  const firstScannerCheck = await call('/api/detections', scannerAuth, 'POST', { worker_id: 11, result: 'compliant' });
+  const lookup = await call('/api/workers/by-employee-id/W11', scannerAuth);
+  assert.equal(lookup.status, 200);
+  assert.deepEqual((await lookup.json()).checkpoint.required_ppe, ['helmet', 'vest']);
+  const firstScannerCheck = await call('/api/detections', scannerAuth, 'POST', { worker_id: 11, checkpoint_id: 1, result: 'violation', missing_ppe: ['gloves'], detected_ppe: ['helmet', 'vest'], confidence_score: 0.9 });
   assert.equal(firstScannerCheck.status, 201);
   const firstRecord = await db.collection('detections').findOne({ id: (await firstScannerCheck.json()).detection_id });
   assert.equal(firstRecord.inspector_id, 2); assert.equal(firstRecord.device_id, 1); assert.equal(firstRecord.worker_id, 11);
-  const scannerCheck = await call('/api/detections', scannerAuth, 'POST', { worker_id: 12, result: 'compliant' });
+  assert.equal(firstRecord.result, 'compliant'); assert.equal(firstRecord.checkpoint_name, 'First');
+  assert.equal(firstRecord.checkpoint_code, 'FIRST-01');
+  assert.equal(firstRecord.profile_id, reusableProfileId); assert.equal(firstRecord.profile_name, 'Test Warehouse');
+  assert.equal(firstRecord.alert_type, 'compliant');
+  assert.deepEqual(firstRecord.required_ppe, ['helmet', 'vest']); assert.deepEqual(firstRecord.missing_ppe, []);
+  assert.equal((await call('/api/detections', scannerAuth, 'POST', { worker_id: 11, checkpoint_id: 2, detected_ppe: ['helmet', 'vest'] })).status, 409);
+  const scannerCheck = await call('/api/detections', scannerAuth, 'POST', { worker_id: 12, checkpoint_id: 2, detected_ppe: ['gloves', 'goggles'], confidence_score: 0.91 });
   assert.equal(scannerCheck.status, 201);
   const scannerRecord = await db.collection('detections').findOne({ id: (await scannerCheck.json()).detection_id });
   assert.equal(scannerRecord.inspector_id, 3); assert.equal(scannerRecord.device_id, 2); assert.equal(scannerRecord.worker_id, 12);
+  const manualReview = await call('/api/detections', scannerAuth, 'POST', { worker_id: 12, checkpoint_id: 2, detected_ppe: ['gloves', 'goggles'], confidence_score: 0.31 });
+  assert.equal(manualReview.status, 201); assert.equal((await manualReview.json()).alert_type, 'manual_review');
+  assert.equal((await call('/api/checkpoints/2/status', token(1, 'admin'), 'PATCH', { is_active: false })).status, 200);
+  assert.equal((await call('/api/detections', scannerAuth, 'POST', { worker_id: 12, checkpoint_id: 2, detected_ppe: ['gloves', 'goggles'] })).status, 403);
+  assert.equal((await call('/api/checkpoints/2/status', token(1, 'admin'), 'PATCH', { is_active: true })).status, 200);
+  assert.equal((await call(`/api/compliance-profiles/${reusableProfileId}`, token(1, 'admin'), 'DELETE')).status, 409);
 });
 test('recovery is generic, stores only hashes, enforces expiry and consumes a link once', async () => {
   const request = await call('/api/auth/forgot-password', null, 'POST', { email: 'worker@example.test' });
@@ -164,17 +216,21 @@ test('AI uploads require an authorized scanning account and forward confidence a
     const send = async (auth, size = 16) => { const form = new FormData(); form.append('conf', '0.35'); form.append('file', new Blob([new Uint8Array(size)], { type: 'image/jpeg' }), 'frame.jpg'); return fetch(base + '/api/ppe/detect', { method: 'POST', headers: auth ? { Authorization: `Bearer ${auth}` } : {}, body: form }); };
     assert.equal((await send(null)).status, 401); assert.equal((await send(token(1))).status, 403); assert.equal(received, null);
     assert.equal((await send(token(3))).status, 403); assert.equal(received, null);
-    assert.equal((await send(token(6, 'scanner'))).status, 200); assert.equal(received.url, '/detect?conf=0.35&return_image=false'); assert.equal(received.key, process.env.AI_API_KEY);
+    const allowed = await send(token(6, 'scanner'));
+    assert.equal(allowed.status, 200); assert.equal(received.url, '/detect?conf=0.35&return_image=false'); assert.equal(received.key, process.env.AI_API_KEY);
+    const observations = await allowed.json(); assert.deepEqual(observations.detected_ppe, []); assert.equal('is_compliant' in observations, false);
     assert.equal((await send(token(6, 'scanner'), 2 * 1024 * 1024 + 1)).status, 413);
   } finally { await new Promise(r => mock.close(r)); }
 });
 test('legacy plaintext cleanup revokes access and strict database validation rejects unsafe records', async () => {
   await db.collection('password_reset_requests').insertOne({ id: 99, email: 'legacy@example.test', status: 'resolved', temp_password: 'exposed-value' });
-  const { cleanLegacyPasswords, applyDatabaseSecurity } = require('../database-security');
+  const { cleanLegacyPasswords, applyDatabaseSecurity, ensureCheckpointData } = require('../database-security');
   await cleanLegacyPasswords(db); await cleanLegacyPasswords(db);
   assert.equal((await db.collection('users').findOne({ id: 5 })).session_version, 1);
   assert.equal((await call('/api/auth/me', token(5))).status, 401);
   assert.equal(await db.collection('password_reset_requests').countDocuments({ temp_password: { $exists: true } }), 0);
+  await ensureCheckpointData(db);
+  assert.ok((await db.collection('devices').findOne({ id: 1 })).created_at instanceof Date);
   await applyDatabaseSecurity(db);
   await assert.rejects(db.collection('users').insertOne({ id: 10, role_id: 3, email: 'bad@example.test', password_hash: 'plaintext' }), { code: 121 });
   await assert.rejects(db.collection('password_reset_requests').insertOne({ id: 100, email: 'bad@example.test', status: 'pending', temp_password: 'plaintext' }), { code: 121 });

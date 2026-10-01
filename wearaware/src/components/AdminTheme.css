@@ -116,6 +116,13 @@
 .ad-page .ad-modal-sub { font-size: 12px; line-height: 1.7; color: #74816a; }
 .ad-page .ad-modal-label { font-size: 12px; font-weight: 550; color: #526249; }
 .ad-page .ad-modal-field { min-width: 0; }
+.ad-page .ad-ppe-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.ad-page .ad-ppe-option { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 2px 9px; padding: 11px 12px; border: 1px solid #dde5d5; border-radius: 12px; background: #f8faf5; color: #526249; cursor: pointer; transition: border-color .2s, background .2s; }
+.ad-page .ad-ppe-option.selected { border-color: #8ca57b; background: #edf3e7; color: #304527; }
+.ad-page .ad-ppe-option input { grid-row: 1 / 3; accent-color: #526f43; }
+.ad-page .ad-ppe-option span { font-size: 12px; font-weight: 600; }
+.ad-page .ad-ppe-option small { color: #87927e; font-size: 10px; }
+.ad-page .ad-profile-override { display: block; margin-top: 7px; padding: 8px 10px; border: 1px solid #e4cf9d; border-radius: 8px; background: #fff9e9; color: #806322; font-size: 11px; font-weight: 650; }
 .ad-page .ad-modal-footer { flex-wrap: wrap; gap: 10px; }
 @keyframes adminReveal { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes adminFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
@@ -143,6 +150,7 @@
   .ad-page .ad-stat-card { padding: 18px; }
   .ad-page .ad-filter-group { width: 100%; min-width: 0; }
   .ad-page .ad-modal { padding: 24px; }
+  .ad-page .ad-ppe-options { grid-template-columns: 1fr; }
   .ad-page :is(.ad-filter-input, .ad-filter-select, .ad-modal-input, .ad-modal-select) { font-size: 16px; }
 }
 @media (max-width: 420px) {

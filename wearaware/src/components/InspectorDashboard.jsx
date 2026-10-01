@@ -19,6 +19,7 @@ function getAuthHeaders() {
 export default function InspectorDashboard({ setCurrentPage }) {
   const [activeTab, setActiveTab] = useState('violations');
   const [filterStation,   setFilterStation]   = useState('All Stations');
+  const [filterProfile,   setFilterProfile]   = useState('All Profiles');
   const [filterDate,      setFilterDate]      = useState('');
   const [filterViolation, setFilterViolation] = useState('All Types');
   const [detections,      setDetections]      = useState([]);
@@ -449,15 +450,19 @@ export default function InspectorDashboard({ setCurrentPage }) {
 
     printDocument(html);
   };
-  const resetFilters = () => { setFilterStation('All Stations'); setFilterDate(''); setFilterViolation('All Types'); };
+  const resetFilters = () => { setFilterStation('All Stations'); setFilterProfile('All Profiles'); setFilterDate(''); setFilterViolation('All Types'); };
 
   const stationOptions = ['All Stations', ...new Set(detections.map(d => d.station).filter(Boolean))];
+  const profileOptions = ['All Profiles', 'Custom requirements', ...new Set(detections.map(d => d.profile_name).filter(Boolean))];
 
   const filteredViolations = detections.filter(d => {
     if (filterStation   !== 'All Stations' && d.station !== filterStation) return false;
+    if (filterProfile   !== 'All Profiles' && (d.profile_name || 'Custom requirements') !== filterProfile) return false;
     if (filterDate      && d.date          !== filterDate)                  return false;
-    if (filterViolation === 'Violation'    && d.result  !== 'violation')    return false;
-    if (filterViolation === 'Compliant'    && d.result  !== 'compliant')    return false;
+    const alertType = d.alert_type || (d.result === 'compliant' ? 'compliant' : 'non_compliant');
+    if (filterViolation === 'Violation'    && alertType !== 'non_compliant') return false;
+    if (filterViolation === 'Manual Review' && alertType !== 'manual_review') return false;
+    if (filterViolation === 'Compliant'    && alertType !== 'compliant') return false;
     return true;
   });
 
@@ -519,15 +524,18 @@ export default function InspectorDashboard({ setCurrentPage }) {
     const byStation = {};
     detections.forEach(d => {
       const key = d.station || 'Unknown';
-      if (!byStation[key]) byStation[key] = { total: 0, compliant: 0 };
+      if (!byStation[key]) byStation[key] = { total: 0, compliant: 0, missing: {} };
       byStation[key].total++;
       if (d.result === 'compliant') byStation[key].compliant++;
+      (d.missing_ppe || []).forEach(item => { byStation[key].missing[item] = (byStation[key].missing[item] || 0) + 1; });
     });
     return Object.entries(byStation)
       .map(([station, counts]) => ({
         station,
         rate: counts.total > 0 ? Math.round((counts.compliant / counts.total) * 100) : 0,
         total: counts.total, compliant: counts.compliant,
+        violations: counts.total - counts.compliant,
+        topViolation: Object.entries(counts.missing).sort((a, b) => b[1] - a[1])[0]?.[0] || null,
       }))
       .sort((a, b) => b.total - a.total);
   })();
@@ -631,7 +639,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
                 </div>
                 <div className="ins-filters">
                   <div className="ins-filter-group">
-                    <div className="ins-filter-label">Station</div>
+                    <div className="ins-filter-label">Checkpoint</div>
                     <select className="ins-filter-select" value={filterStation} onChange={e => setFilterStation(e.target.value)}>
                       {stationOptions.map(s => <option key={s}>{s}</option>)}
                     </select>
@@ -641,9 +649,13 @@ export default function InspectorDashboard({ setCurrentPage }) {
                     <input className="ins-filter-input" type="date" value={filterDate} onChange={e => setFilterDate(e.target.value)} />
                   </div>
                   <div className="ins-filter-group">
+                    <div className="ins-filter-label">Profile</div>
+                    <select className="ins-filter-select" value={filterProfile} onChange={e => setFilterProfile(e.target.value)}>{profileOptions.map(profile => <option key={profile}>{profile}</option>)}</select>
+                  </div>
+                  <div className="ins-filter-group">
                     <div className="ins-filter-label">Status</div>
                     <select className="ins-filter-select" value={filterViolation} onChange={e => setFilterViolation(e.target.value)}>
-                      <option>All Types</option><option>Violation</option><option>Compliant</option>
+                      <option>All Types</option><option>Violation</option><option>Manual Review</option><option>Compliant</option>
                     </select>
                   </div>
                   <button className="ins-filter-reset" onClick={resetFilters}>Reset</button>
@@ -655,7 +667,8 @@ export default function InspectorDashboard({ setCurrentPage }) {
                     <tr>
                       <th>Photo</th>
                       <th>Worker</th>
-                      <th>Station</th>
+                      <th>Checkpoint</th>
+                      <th>Profile</th>
                       <th>Date & Time</th>
                       <th>Status</th>
                       <th>Missing PPE</th>
@@ -664,9 +677,9 @@ export default function InspectorDashboard({ setCurrentPage }) {
                   </thead>
                   <tbody>
                     {detLoading ? (
-                      <tr><td colSpan={7} className="ins-empty">Loading detections…</td></tr>
+                      <tr><td colSpan={8} className="ins-empty">Loading detections…</td></tr>
                     ) : filteredViolations.length === 0 ? (
-                      <tr><td colSpan={7} className="ins-empty">No records match your filters</td></tr>
+                      <tr><td colSpan={8} className="ins-empty">No records match your filters</td></tr>
                     ) : filteredViolations.map((d, i) => {
                       const prevDate = i > 0 ? filteredViolations[i - 1].date : null;
                       const showDateHeader = d.date !== prevDate;
@@ -678,7 +691,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
                         <React.Fragment key={d.id}>
                           {showDateHeader && (
                             <tr>
-                              <td colSpan={7} style={{ padding: '0.65rem 1rem', background: 'linear-gradient(90deg, #f0f0ff 0%, #f9fafb 100%)', borderTop: i > 0 ? '2px solid #e2e4f0' : 'none', borderBottom: '1px solid #eee', fontWeight: 700, fontSize: '0.82rem', color: '#4a5073', letterSpacing: '0.02em' }}>
+                              <td colSpan={8} style={{ padding: '0.65rem 1rem', background: 'linear-gradient(90deg, #f0f0ff 0%, #f9fafb 100%)', borderTop: i > 0 ? '2px solid #e2e4f0' : 'none', borderBottom: '1px solid #eee', fontWeight: 700, fontSize: '0.82rem', color: '#4a5073', letterSpacing: '0.02em' }}>
                                 <Calendar size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: '0.35rem' }} />{dateLabel}
                               </td>
                             </tr>
@@ -705,15 +718,16 @@ export default function InspectorDashboard({ setCurrentPage }) {
                                 : <span style={{ color: '#ccc', fontSize: '0.78rem' }}>—</span>}
                             </td>
 
-                            <td style={{ fontWeight: 600 }}>{d.station || '—'}</td>
+                            <td><div style={{ fontWeight: 600 }}>{d.station || '—'}</div>{d.checkpoint?.code && <div style={{ color: '#aaa', fontSize: '0.72rem', fontFamily: 'monospace' }}>{d.checkpoint.code}</div>}</td>
+                            <td>{d.profile_name || <span style={{ color: '#aaa' }}>Custom</span>}</td>
                             <td style={{ fontSize: '0.83rem' }}>
                               <div style={{ color: '#444' }}>{d.date}</div>
                               <div style={{ color: '#bbb' }}>{d.time}</div>
                             </td>
                             <td>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', alignItems: 'flex-start' }}>
-                                <span className={`ins-vbadge ${d.result === 'violation' ? 'yes' : 'no'}`}>
-                                  {d.result === 'violation' ? '⚠ Violation' : '✓ Compliant'}
+                                <span className={`ins-vbadge ${d.result === 'violation' ? 'yes' : 'no'}`} style={d.alert_type === 'manual_review' ? { background: '#fff7ed', color: '#b45309' } : undefined}>
+                                  {d.alert_type === 'manual_review' ? '⚠ Manual Review' : d.result === 'violation' ? '⚠ Violation' : '✓ Compliant'}
                                 </span>
                                 {d.result === 'violation' && (
                                   <button
@@ -977,13 +991,13 @@ export default function InspectorDashboard({ setCurrentPage }) {
                   </div>
                 </div>
                 <div className="ins-panel" style={{ marginTop: '1.5rem' }}>
-                  <div className="ins-panel-header"><div><div className="ins-panel-title">Station Compliance</div><div className="ins-panel-sub">Compliance rate per station — based on your scan data</div></div></div>
+                  <div className="ins-panel-header"><div><div className="ins-panel-title">Checkpoint Compliance</div><div className="ins-panel-sub">Compliance and traffic per checkpoint — busiest: {stationCompliance[0]?.station || 'No data'}</div></div></div>
                   <div className="ins-chart-bar-wrap">
                     {detLoading ? <div style={{ color: '#aaa', fontSize: '0.83rem', padding: '1rem 0' }}>Loading…</div>
                     : stationCompliance.length === 0 ? <div style={{ color: '#aaa', fontSize: '0.83rem', padding: '1rem 0' }}>No station data yet</div>
                     : stationCompliance.map(s => (
                       <div className="ins-bar-row" key={s.station}>
-                        <div className="ins-bar-label-row"><span className="ins-bar-label">{s.station}</span><span className="ins-bar-pct">{s.rate}% <span style={{ color: '#bbb', fontWeight: 400 }}>({s.compliant}/{s.total})</span></span></div>
+                        <div className="ins-bar-label-row"><span className="ins-bar-label">{s.station}{s.topViolation ? <small style={{ display: 'block', color: '#999', fontWeight: 400 }}>Most common missing: {s.topViolation}</small> : null}</span><span className="ins-bar-pct">{s.rate}% <span style={{ color: '#bbb', fontWeight: 400 }}>({s.compliant} compliant · {s.violations} violations · {s.total} total)</span></span></div>
                         <div className="ins-bar-track"><div className={`ins-bar-fill ${s.rate<80?'low':s.rate<90?'mid':''}`} style={{width:`${s.rate}%`}} /></div>
                       </div>
                     ))}

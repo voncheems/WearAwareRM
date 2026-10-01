@@ -1,6 +1,7 @@
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const { MongoClient } = require('mongodb');
-const { applyDatabaseSecurity, cleanLegacyPasswords } = require('../database-security');
+const { applyDatabaseSecurity, cleanLegacyPasswords, ensureCheckpointData } = require('../database-security');
+const { ensureDefaultComplianceProfiles } = require('../compliance-profiles');
 (async () => {
   // This provisioning credential must not be installed on the runtime application host.
   const uri = process.env.MONGODB_ADMIN_URI;
@@ -10,6 +11,8 @@ const { applyDatabaseSecurity, cleanLegacyPasswords } = require('../database-sec
     await client.connect();
     const db = client.db(process.env.MONGODB_DB || 'wearaware');
     await cleanLegacyPasswords(db);
+    await ensureDefaultComplianceProfiles(db);
+    await ensureCheckpointData(db);
     await applyDatabaseSecurity(db);
     console.log('Database validation and legacy password cleanup completed.');
   } finally { await client.close(); }

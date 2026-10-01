@@ -9,9 +9,63 @@
 .ppe-page-kicker { display: inline-flex; align-items: center; gap: .4rem; color: #617957; letter-spacing: .12em; font-size: .72rem; font-weight: 800; }
 .ppe-page-intro h1 { margin: .7rem 0 .5rem; font-size: clamp(2.2rem, 5vw, 4.2rem); letter-spacing: -.065em; line-height: .98; }
 .ppe-page-intro p { max-width: 590px; color: #61705a; font-size: 1rem; line-height: 1.65; }
+.ppe-page-selector { display: grid; grid-template-columns: auto auto minmax(220px, 1fr) auto; align-items: center; gap: 10px; margin: -1rem 0 1.5rem; padding: 13px 16px; border: 1px solid #dbe4d4; border-radius: 14px; background: #fff; color: #526847; }
+.ppe-page-selector label { font-size: .8rem; font-weight: 750; }
+.ppe-page-selector select { width: 100%; padding: 9px 12px; border: 1px solid #cfd9c6; border-radius: 9px; background: #f8faf5; color: #304527; font: inherit; font-size: .85rem; }
+.ppe-page-selector span { color: #74816a; font-size: .75rem; white-space: nowrap; }
 .ppe-page-assignment { display: inline-flex; align-items: center; gap: .55rem; margin-top: 1.1rem; padding: .7rem .9rem; border-radius: 12px; background: #e7f2e4; color: #385238; font-size: .86rem; }
 .ppe-page-assignment svg:last-child { color: #4f7d4e; }
 .ppe-page-status { padding: 2rem; border: 1px solid #dbe4d4; border-radius: 16px; background: #fff; color: #53624d; text-align: center; }
 .ppe-page-status.error { color: #a12c2c; border-color: #f1c7c7; }
 .ppe-page-status button { display: block; margin: 1rem auto 0; border: 0; background: #789167; color: #fff; border-radius: 8px; padding: .6rem .9rem; font: inherit; cursor: pointer; }
-@media (max-width: 640px) { .ppe-page-header { padding: 0 1rem; } .ppe-page-back { font-size: 0; padding: .6rem; } .ppe-page-back svg { margin: 0; } .ppe-page-content { width: min(92vw, 1180px); padding-top: 2.25rem; } }
+.ppe-setup-card { max-width: 720px; display: grid; grid-template-columns: auto 1fr; gap: 1.25rem; padding: 2rem; border: 1px solid #d8e2d1; border-radius: 22px; background: rgba(255,255,255,.92); box-shadow: 0 18px 50px rgba(54,75,45,.1); }
+.ppe-setup-icon { width: 54px; height: 54px; display: grid; place-items: center; border-radius: 16px; background: #e7f0df; color: #4e6944; }
+.ppe-setup-card h2 { margin: .2rem 0 .35rem; font-size: 1.35rem; }
+.ppe-setup-card p { margin: 0; color: #687561; line-height: 1.5; }
+.ppe-setup-card label, .ppe-setup-card select, .ppe-setup-actions { grid-column: 2; }
+.ppe-setup-card label { margin: .5rem 0 -.75rem; color: #52604c; font-size: .76rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.ppe-setup-card select { width: 100%; padding: .85rem 1rem; border: 1px solid #cbd8c3; border-radius: 11px; background: #f8faf5; color: #2e4327; font: inherit; }
+.ppe-setup-actions { display: flex; justify-content: flex-end; gap: .7rem; }
+.ppe-setup-actions button, .ppe-disabled-card button, .ppe-assigned-checkpoint button { display: inline-flex; align-items: center; justify-content: center; gap: .45rem; border: 0; border-radius: 10px; padding: .7rem 1rem; background: #526f45; color: #fff; font: inherit; font-size: .82rem; font-weight: 750; cursor: pointer; }
+.ppe-setup-actions button.secondary { border: 1px solid #cbd8c3; background: #fff; color: #52604c; }
+.ppe-assigned-checkpoint { display: grid; grid-template-columns: auto minmax(0,1fr) auto auto; align-items: center; gap: 1rem; margin: -1rem 0 1.5rem; padding: 1rem 1.15rem; border: 1px solid #d4e0cc; border-radius: 16px; background: #fff; box-shadow: 0 10px 30px rgba(54,75,45,.06); }
+.ppe-assigned-mark { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 13px; background: #e6efdf; color: #4d6a40; }
+.ppe-assigned-checkpoint > div:nth-child(2) { display: flex; flex-direction: column; min-width: 0; }
+.ppe-assigned-checkpoint span { color: #84907d; font-size: .64rem; font-weight: 850; letter-spacing: .11em; text-transform: uppercase; }
+.ppe-assigned-checkpoint strong { margin: 2px 0; font-size: 1rem; }
+.ppe-assigned-checkpoint small { overflow: hidden; color: #708068; text-overflow: ellipsis; text-transform: capitalize; white-space: nowrap; }
+.ppe-assigned-status { display: flex; align-items: center; gap: .45rem; color: #397045; font-size: .75rem; font-weight: 800; text-transform: uppercase; }
+.ppe-assigned-status i { width: 8px; height: 8px; border-radius: 50%; background: #22a447; box-shadow: 0 0 0 5px #dcf4e2; }
+.ppe-assigned-checkpoint button { border: 1px solid #d3ddcd; background: #f8faf5; color: #52604c; }
+.ppe-local-controls { display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
+.ppe-local-controls label { display: inline-flex; align-items: center; gap: 5px; color: #6c7866; font-size: .72rem; font-weight: 700; }
+.ppe-local-controls select { padding: 6px 5px; border: 1px solid #d3ddcd; border-radius: 8px; background: #f8faf5; color: #46533f; font: inherit; }
+.ppe-disabled-card { max-width: 680px; padding: 3rem 2rem; border: 1px solid #f0c7bd; border-radius: 22px; background: #fff8f5; color: #973e2d; text-align: center; }
+.ppe-disabled-card h2 { margin: 1rem 0 .4rem; font-size: 1.8rem; text-transform: uppercase; }
+.ppe-disabled-card strong { color: #61372f; }
+.ppe-disabled-card p { color: #8c665e; }
+.ppe-disabled-card button { margin: .7rem auto 0; background: #9b4b3b; }
+.ppe-disabled-card button.ppe-disabled-secondary { margin-top: .55rem; border: 1px solid #d8b8b0; background: #fff; color: #8b4b3e; }
+.ppe-manual-reset { width: 100%; margin-top: 1rem; padding: .72rem 1rem; border: 1px solid #cfd9c8; border-radius: 10px; background: #fff; color: #4f6048; font: inherit; font-size: .82rem; font-weight: 800; cursor: pointer; }
+.ppe-manual-reset:hover { border-color: #809575; background: #f5f8f2; }
+.ppe-checkpoint-card { display: grid; grid-template-columns: minmax(140px, .8fr) minmax(0, 1.2fr); gap: 14px; margin-bottom: 1.25rem; padding: 14px 16px; border: 1px solid #cfdcc6; border-radius: 12px; background: #f3f7ee; }
+.ppe-checkpoint-card > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ppe-checkpoint-card span { color: #74816a; font-size: .66rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.ppe-checkpoint-card strong { color: #304527; font-size: .95rem; }
+.ppe-checkpoint-card small { color: #74816a; }
+.ppe-checkpoint-items { display: flex; flex-wrap: wrap; gap: 5px; }
+.ppe-checkpoint-items b { padding: 4px 7px; border-radius: 999px; background: #dfead5; color: #405a34; font-size: .7rem; }
+.ppe-video-stage { position: relative; width: 100%; overflow: hidden; border-radius: 11px; line-height: 0; }
+.ppe-video-stage video { display: block; width: 100%; height: auto; border-radius: 11px; }
+.ppe-box-overlay { position: absolute; inset: 0; overflow: hidden; border-radius: 11px; pointer-events: none; }
+.ppe-detection-box { position: absolute; border: 3px solid; border-radius: 7px; box-shadow: 0 0 0 1px #0003, 0 0 16px #0003; }
+.ppe-detection-box.present { border-color: #4ade80; }
+.ppe-detection-box.violation { border-color: #fb7185; }
+.ppe-detection-box.inferred { border-style: dashed; }
+.ppe-detection-box > span { position: absolute; left: -3px; bottom: 100%; max-width: 210px; padding: 4px 7px; border-radius: 6px 6px 6px 0; background: #15803d; color: #fff; font-size: clamp(9px, 1.4vw, 12px); font-weight: 800; line-height: 1.2; white-space: nowrap; text-shadow: 0 1px 1px #0004; }
+.ppe-detection-box.violation > span { background: #be123c; }
+.ppe-detection-box.near-top > span { top: 0; bottom: auto; }
+@media (max-width: 640px) { .ppe-page-header { padding: 0 1rem; } .ppe-page-back { font-size: 0; padding: .6rem; } .ppe-page-back svg { margin: 0; } .ppe-page-content { width: min(92vw, 1180px); padding-top: 2.25rem; } .ppe-page-selector { grid-template-columns: auto 1fr; } .ppe-page-selector select, .ppe-page-selector span { grid-column: 1 / -1; } }
+@media (max-width: 640px) { .ppe-checkpoint-card { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .ppe-assigned-checkpoint { grid-template-columns: auto 1fr; } .ppe-assigned-status, .ppe-local-controls { grid-column: 1 / -1; } .ppe-local-controls { justify-content: stretch; flex-wrap: wrap; } .ppe-local-controls button { flex: 1; } }
+@media (max-width: 720px) { .ppe-setup-card { grid-template-columns: 1fr; } .ppe-setup-card > * { grid-column: 1; } }
