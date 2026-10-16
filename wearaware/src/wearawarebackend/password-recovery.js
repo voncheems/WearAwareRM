@@ -37,6 +37,9 @@ function installRecovery(app, transporter) {
       if (!request) return res.status(404).json({ error: 'Active recovery request not found.' });
       const user = (await data.find('users', { email: request.email, is_active: true }, 'id email gmail')).rows[0];
       if (!user) return res.status(409).json({ error: 'This account is unavailable for recovery.' });
+      if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+        return res.status(503).json({ error: 'Password reset email is not configured on the backend.' });
+      }
       const token = crypto.randomBytes(32).toString('hex');
       const token_hash = digest(token);
       const expires_at = new Date(Date.now() + 30 * 60 * 1000);
@@ -44,19 +47,15 @@ function installRecovery(app, transporter) {
       if (!updated.matchedCount) return res.status(409).json({ error: 'Recovery request has changed. Refresh and try again.' });
       const url = new URL(process.env.FRONTEND_URL || 'http://localhost:5173');
       url.hash = `reset=${token}`;
-      // An administrator may deliver this one-time link through a verified channel.
-      // It is returned only once; neither the link nor token is persisted or logged.
-      let emailed = false;
-      if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-        // Always send to the account login email; CC the gmail recovery address if one is set.
-        const recipients = [user.email, ...(user.gmail && user.gmail !== user.email ? [user.gmail] : [])].join(', ');
-        try {
-          await transporter.sendMail({ from: process.env.EMAIL_USER, to: recipients, subject: 'WearAware — Reset your password',
-            text: `Your administrator approved a password reset. Choose a new password using this single-use link within 30 minutes:\n\n${url.href}\n\nIf you did not request this, contact your administrator.` });
-          emailed = true;
-        } catch { /* Admin gets the link for verified manual delivery if mail fails. */ }
+      // Always send to the account login email; CC the Gmail recovery address if one is set.
+      const recipients = [user.email, ...(user.gmail && user.gmail !== user.email ? [user.gmail] : [])].join(', ');
+      try {
+        await transporter.sendMail({ from: process.env.EMAIL_USER, to: recipients, subject: 'WearAware — Reset your password',
+          text: `Your administrator approved a password reset. Choose a new password using this single-use link within 30 minutes:\n\n${url.href}\n\nIf you did not request this, contact your administrator.` });
+      } catch {
+        return res.status(503).json({ error: 'Password reset email could not be sent. Check the backend email configuration.' });
       }
-      res.json({ success: true, emailed, expires_at, ...(emailed ? {} : { reset_url: url.href }) });
+      res.json({ success: true, emailed: true, expires_at });
     } catch (err) { next(err); }
   });
   app.post('/api/auth/reset-password', validateRequest, async (req, res, next) => {

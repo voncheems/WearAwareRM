@@ -630,8 +630,8 @@ export default function AdminDashboard({ setCurrentPage }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
-      if (data.emailed) alert('A single-use reset link was emailed to the account recovery address.');
-      else setResetLink(data.reset_url);
+      if (!data.emailed) throw new Error('The reset link was not emailed. Check the backend email configuration.');
+      alert('A single-use reset link was emailed to the account recovery address.');
       fetchPwRequests();
     } catch (err) { alert(err.message); }
   };

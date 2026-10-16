@@ -222,7 +222,7 @@ export default function LoginPage({ setCurrentPage }) {
             <div className="login-card-icon" aria-hidden="true"><KeyRound size={24} strokeWidth={1.5} /></div>
             <h2 className="fp-title" id="reset-title">Let’s get you back in.</h2>
             <div className="fp-sub" id="reset-description">
-              Submit a reset request. Your admin will set a temporary password and notify you.
+              Submit a reset request. Your administrator will approve it, then a single-use reset link will be sent to your email.
             </div>
             <form onSubmit={handleForgotSubmit}>
               {fpMsg.text && (
