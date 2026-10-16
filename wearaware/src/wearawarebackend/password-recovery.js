@@ -17,10 +17,17 @@ function installRecovery(app, transporter) {
       // Same response for missing accounts, duplicates, and new requests.
       await new Promise(resolve => setTimeout(resolve, Math.max(0, 250 - (Date.now() - started))));
       res.json({ success: true, message: 'If the account is eligible, your administrator can assist with recovery.' });
-    } catch (err) { next(err); }
+    } catch (err) { console.error('forgot-password handler error:', err.message); next(err); }
   });
   app.get('/api/admin/password-requests', requireAuth, requireRole('admin'), validateRequest, async (req, res, next) => {
-    try { res.json((await data.find('password_reset_requests', {}, 'id email reason status created_at expires_at', { sort: { created_at: -1 } })).rows); }
+    try {
+      const db = getDatabase();
+      const rows = await db.collection('password_reset_requests')
+        .find({}, { projection: { _id: 0, id: 1, email: 1, reason: 1, status: 1, created_at: 1, expires_at: 1 } })
+        .sort({ created_at: -1 })
+        .toArray();
+      res.json(rows);
+    }
     catch (err) { next(err); }
   });
   app.patch('/api/admin/password-requests/:id/reset', requireAuth, requireRole('admin'), validateRequest, async (req, res, next) => {
@@ -28,7 +35,7 @@ function installRecovery(app, transporter) {
       const db = getDatabase();
       const request = await db.collection('password_reset_requests').findOne({ id: Number(req.params.id), status: { $in: ['pending', 'issued'] } });
       if (!request) return res.status(404).json({ error: 'Active recovery request not found.' });
-      const user = (await data.find('users', { email: request.email, is_active: true }, 'id gmail')).rows[0];
+      const user = (await data.find('users', { email: request.email, is_active: true }, 'id email gmail')).rows[0];
       if (!user) return res.status(409).json({ error: 'This account is unavailable for recovery.' });
       const token = crypto.randomBytes(32).toString('hex');
       const token_hash = digest(token);
@@ -40,9 +47,11 @@ function installRecovery(app, transporter) {
       // An administrator may deliver this one-time link through a verified channel.
       // It is returned only once; neither the link nor token is persisted or logged.
       let emailed = false;
-      if (user.gmail && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+      if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+        // Always send to the account login email; CC the gmail recovery address if one is set.
+        const recipients = [user.email, ...(user.gmail && user.gmail !== user.email ? [user.gmail] : [])].join(', ');
         try {
-          await transporter.sendMail({ from: process.env.EMAIL_USER, to: user.gmail, subject: 'WearAware — Reset your password',
+          await transporter.sendMail({ from: process.env.EMAIL_USER, to: recipients, subject: 'WearAware — Reset your password',
             text: `Your administrator approved a password reset. Choose a new password using this single-use link within 30 minutes:\n\n${url.href}\n\nIf you did not request this, contact your administrator.` });
           emailed = true;
         } catch { /* Admin gets the link for verified manual delivery if mail fails. */ }

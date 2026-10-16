@@ -1,6 +1,22 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { classifyLocalAlert, detectedPpeFromAi, evaluateCompliance, filterAiDetections, filterPersonDetections, normalizePpeList } = require('../ppe-compliance');
+const { classifyLocalAlert, detectedPpeFromAi, evaluateCompliance, evaluateSessionEvidence, filterAiDetections, filterAiObservations, filterPersonDetections, normalizePpeList } = require('../ppe-compliance');
+const { authorizationFromCompliance, authorizationFromInspectorDecision, authorizationRecord } = require('../entry-authorization');
+
+test('entry authorization is centralized and fails closed for manual inspection', () => {
+  assert.deepEqual(authorizationFromCompliance('compliant'), { status: 'authorized', event: 'ACCESS_AUTHORIZED' });
+  assert.deepEqual(authorizationFromCompliance('violation'), { status: 'denied', event: 'ACCESS_DENIED' });
+  assert.deepEqual(authorizationFromCompliance('manual_review'), { status: 'pending_inspection', event: 'ACCESS_PENDING' });
+  assert.deepEqual(authorizationFromInspectorDecision('compliant'), { status: 'authorized', event: 'ACCESS_AUTHORIZED' });
+  assert.deepEqual(authorizationFromInspectorDecision('false_detection'), { status: 'authorized', event: 'ACCESS_AUTHORIZED' });
+  assert.deepEqual(authorizationFromInspectorDecision('non_compliant'), { status: 'denied', event: 'ACCESS_DENIED' });
+  assert.deepEqual(authorizationFromInspectorDecision('unable_to_verify'), { status: 'denied', event: 'ACCESS_DENIED' });
+  const record = authorizationRecord('manual_review', new Date('2026-10-15T00:00:00.000Z'));
+  assert.equal(record.original_authorization, 'pending_inspection');
+  assert.equal(record.authorization_status, 'pending_inspection');
+  assert.equal(record.authorization_override_by, null);
+  assert.throws(() => authorizationFromCompliance('incomplete'));
+});
 
 test('AI observations are normalized without deciding checkpoint compliance', () => {
   const detected = detectedPpeFromAi([
@@ -18,6 +34,7 @@ test('low-confidence forehead helmet matches and their inferred violations are r
     { class_name: 'no-vest', confidence: 0, inferred: true },
   ]);
   assert.deepEqual(filtered, []);
+  assert.equal(filterAiObservations([{ class_name: 'helmet', confidence: 0.42, inferred: false }]).length, 1);
 
   const actualHelmet = filterAiDetections([
     { class_name: 'helmet', confidence: 0.82, inferred: false },
@@ -57,6 +74,32 @@ test('local alerts fail closed when scan confidence requires manual review', () 
   assert.equal(classifyLocalAlert(evaluateCompliance(['helmet', 'vest'], ['helmet']), 0.88).alert_type, 'non_compliant');
   const uncertain = classifyLocalAlert(compliant, 0.42);
   assert.equal(uncertain.alert_type, 'manual_review');
-  assert.equal(uncertain.result, 'violation');
+  assert.equal(uncertain.result, 'manual_review');
   assert.equal(classifyLocalAlert(compliant, null).alert_type, 'manual_review');
+});
+
+test('session evidence keeps uncertain PPE separate from confirmed missing PPE', () => {
+  const uncertain = evaluateSessionEvidence({
+    requiredPpe: ['helmet', 'vest'], detectedPpe: ['vest'], frameCount: 5,
+    confidenceScore: 0.75, visibilityScore: 1,
+    confidenceSummary: [
+      { ppe: 'helmet', average_confidence: 0.48, positive_frames: 0, weak_frames: 3, observed_frames: 3 },
+      { ppe: 'vest', average_confidence: 0.87, positive_frames: 4, weak_frames: 0, observed_frames: 4 },
+    ],
+  });
+  assert.equal(uncertain.result, 'manual_review');
+  assert.deepEqual(uncertain.uncertain_ppe, ['helmet']);
+  assert.deepEqual(uncertain.missing_ppe, []);
+
+  const missing = evaluateSessionEvidence({
+    requiredPpe: ['helmet', 'vest'], detectedPpe: ['vest'], frameCount: 5,
+    confidenceScore: 0.9, visibilityScore: 1,
+    confidenceSummary: [
+      { ppe: 'helmet', average_confidence: 0, positive_frames: 0, weak_frames: 0, observed_frames: 0 },
+      { ppe: 'vest', average_confidence: 0.87, positive_frames: 4, weak_frames: 0, observed_frames: 4 },
+    ],
+  });
+  assert.equal(missing.result, 'violation');
+  assert.deepEqual(missing.missing_ppe, ['helmet']);
+  assert.deepEqual(missing.uncertain_ppe, []);
 });

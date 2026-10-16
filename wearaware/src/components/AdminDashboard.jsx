@@ -3,12 +3,15 @@ import React, { useState, useEffect, useRef } from 'react';
 import './AdminDashboard.css';
 import './AdminTheme.css';
 import ComplianceLineGraph from './ComplianceLineGraph';
+import ViolationAnalytics from './ViolationAnalytics';
+import EmployeeComplianceHistory from './EmployeeComplianceHistory';
 import QRCode from 'qrcode';
 import {
   LayoutDashboard, Users, HardHat, MapPin, ScanLine, KeyRound,
-  ClipboardList, AlertTriangle, RefreshCw, QrCode, Download, Printer, ShieldCheck, ArrowUpRight
+  ClipboardList, AlertTriangle, RefreshCw, QrCode, Download, Printer, ShieldCheck, ArrowUpRight, Clock, TrendingUp, UserRoundSearch
 } from 'lucide-react';
 import WearAwareLogo from './Wearawarelogo';
+import MfaSettings from './MfaSettings';
 
 import { API } from '../config/api';
 
@@ -27,6 +30,19 @@ const EMPTY_PROFILE = { name: '', description: '', required_ppe: ['helmet', 'ves
 function ppeLabel(value) {
   return PPE_OPTIONS.find(([key]) => key === value)?.[1]
     || String(value).replace(/-/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
+}
+
+function authorizationLabel(value) {
+  return ({ authorized: 'Authorized', denied: 'Denied', pending_inspection: 'Pending Inspection' })[value] || 'Not Recorded';
+}
+
+function authorizationStyle(value) {
+  if (value === 'authorized') return { background: '#dcfce7', color: '#166534' };
+  if (value === 'denied') return { background: '#fee2e2', color: '#b91c1c' };
+  return { background: '#fff7ed', color: '#9a5706' };
+}
+function resolutionLabel(value) {
+  return ({ PENDING_REVIEW: 'Pending review', CONFIRMED_VIOLATION: 'Confirmed violation', FALSE_DETECTION: 'False detection', RESOLVED_AFTER_CORRECTION: 'Resolved after correction', AUTHORIZED_EXCEPTION: 'Authorized exception' })[value] || '—';
 }
 
 function getAuthHeaders() {
@@ -149,10 +165,28 @@ async function adminFetch(url, options) {
 function QRModal({ worker, onClose }) {
   const canvasRef = useRef(null);
   const [dataUrl, setDataUrl] = useState('');
+  const [qrData, setQrData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    if (!worker || !canvasRef.current) return;
-    QRCode.toCanvas(canvasRef.current, worker.employee_id, {
+    let active = true;
+    (async () => {
+      setLoading(true); setError('');
+      try {
+        const response = await adminFetch(`${API}/workers/${worker.id}/qr`, { headers: getAuthHeaders() });
+        const body = await response.json();
+        if (active) setQrData(body);
+      } catch (requestError) { if (active) setError(requestError.message); }
+      finally { if (active) setLoading(false); }
+    })();
+    return () => { active = false; };
+  }, [worker.id]);
+
+  useEffect(() => {
+    if (!qrData?.qr_token || !canvasRef.current) { setDataUrl(''); return; }
+    QRCode.toCanvas(canvasRef.current, qrData.qr_token, {
       width        : 240,
       margin       : 2,
       color        : { dark: '#1a1a2e', light: '#ffffff' },
@@ -161,7 +195,29 @@ function QRModal({ worker, onClose }) {
       if (err) { console.error(err); return; }
       setDataUrl(canvasRef.current.toDataURL('image/png'));
     });
-  }, [worker]);
+  }, [qrData?.qr_token]);
+
+  const regenerate = async () => {
+    if (qrData?.qr_token && !window.confirm('Regenerate this QR code? The previous printed QR will stop working immediately.')) return;
+    setWorking(true); setError('');
+    try {
+      const response = await adminFetch(`${API}/workers/${worker.id}/qr/regenerate`, { method: 'POST', headers: getAuthHeaders(), body: '{}' });
+      const body = await response.json();
+      setQrData(body.worker);
+    } catch (requestError) { setError(requestError.message); }
+    finally { setWorking(false); }
+  };
+
+  const revoke = async () => {
+    if (!window.confirm('Revoke this QR code? It will no longer identify the employee at a checkpoint.')) return;
+    setWorking(true); setError('');
+    try {
+      const response = await adminFetch(`${API}/workers/${worker.id}/qr`, { method: 'DELETE', headers: getAuthHeaders() });
+      const body = await response.json();
+      setQrData(body.worker); setDataUrl('');
+    } catch (requestError) { setError(requestError.message); }
+    finally { setWorking(false); }
+  };
 
   const handleDownload = () => {
     if (!dataUrl) return;
@@ -224,7 +280,9 @@ function QRModal({ worker, onClose }) {
             <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{worker.position || 'No position'}</div>
           </div>
         </div>
-        <div style={{
+        {loading && <div className="ad-empty">Loading secure QR…</div>}
+        {error && <div className="ad-form-msg error" role="alert">{error}</div>}
+        {!loading && qrData?.qr_token && <><div style={{
           display: 'inline-flex', padding: '1rem',
           background: '#fff', borderRadius: 12,
           border: '2px solid #e2e8f0',
@@ -234,10 +292,12 @@ function QRModal({ worker, onClose }) {
           <canvas ref={canvasRef} />
         </div>
         <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: '1.25rem' }}>
-          QR encodes: <code style={{ background: '#f1f5f9', padding: '2px 6px', borderRadius: 4, fontWeight: 700, color: '#334155' }}>{worker.employee_id}</code>
-        </div>
+          Secure token active · ending in <code style={{ background: '#f1f5f9', padding: '2px 6px', borderRadius: 4, fontWeight: 700, color: '#334155' }}>{qrData.qr_token.slice(-6)}</code>
+        </div></>}
+        {!loading && !qrData?.qr_token && <div className="ad-empty" style={{ minHeight: 120 }}>This employee’s QR code is revoked. Generate a new code to restore checkpoint identification.</div>}
         <div style={{ display: 'flex', gap: '0.65rem', justifyContent: 'center', flexWrap: 'wrap' }}>
           <button className="ad-btn ad-btn-ghost" onClick={onClose}>Close</button>
+          <button className="ad-btn ad-btn-primary" onClick={regenerate} disabled={working}>{working ? 'Working…' : qrData?.qr_token ? 'Regenerate QR' : 'Generate QR'}</button>
           <button className="ad-btn ad-btn-primary"
             style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
             onClick={handleDownload} disabled={!dataUrl}>
@@ -248,6 +308,7 @@ function QRModal({ worker, onClose }) {
             onClick={handlePrint} disabled={!dataUrl}>
             🖨️ Print
           </button>
+          {qrData?.qr_token && <button className="ad-btn ad-btn-ghost" style={{ color: '#a13b32', borderColor: '#e8b8b2' }} onClick={revoke} disabled={working}>Revoke</button>}
         </div>
       </div>
     </div>
@@ -262,16 +323,22 @@ function BulkQRModal({ workers, onClose }) {
 
   const handlePrintAll = async () => {
     setGenerating(true);
-    const cards = await Promise.all(workers.map(async (w) => {
-      const url = await QRCode.toDataURL(w.employee_id, {
-        width: 180, margin: 1,
-        color: { dark: '#1a1a2e', light: '#ffffff' },
-        errorCorrectionLevel: 'H',
-      });
-      return { worker: w, url };
-    }));
+    try {
+      const response = await adminFetch(`${API}/workers/qr-codes`, { headers: getAuthHeaders() });
+      const qrWorkers = await response.json();
+      const selected = new Set(workers.map(worker => worker.id));
+      const printable = qrWorkers.filter(worker => selected.has(worker.id) && worker.qr_token);
+      if (!printable.length) throw new Error('No active employee QR codes are available in this selection.');
+      const cards = await Promise.all(printable.map(async (w) => {
+        const url = await QRCode.toDataURL(w.qr_token, {
+          width: 180, margin: 1,
+          color: { dark: '#1a1a2e', light: '#ffffff' },
+          errorCorrectionLevel: 'H',
+        });
+        return { worker: w, url };
+      }));
 
-    printDocument(`
+      printDocument(`
       <html>
         <head>
           <title>Worker QR Codes — WearAware</title>
@@ -301,8 +368,10 @@ function BulkQRModal({ workers, onClose }) {
           </div>
         </body>
       </html>
-    `, true);
-    setGenerating(false);
+      `, true);
+      if (printable.length !== workers.length) alert(`${workers.length - printable.length} revoked QR code(s) were skipped.`);
+    } catch (error) { alert(error.message); }
+    finally { setGenerating(false); }
   };
 
   return (
@@ -358,7 +427,7 @@ export default function AdminDashboard({ setCurrentPage }) {
   const [users,         setUsers]         = useState([]);
   const [loadingUsers,  setLoadingUsers]  = useState(false);
   const [detections,    setDetections]    = useState([]);
-  const [detStats,      setDetStats]      = useState({ total: 0, violations: 0, compliant: 0, compliance_rate: 100 });
+  const [detStats,      setDetStats]      = useState({ total: 0, violations: 0, compliant: 0, manual_reviews: 0, pending_manual_reviews: 0, authorized: 0, denied: 0, pending_authorization: 0, authorization_rate: 100, compliance_rate: 100 });
   const [detLoading,    setDetLoading]    = useState(true);
   const [auditLogs,     setAuditLogs]     = useState([]);
   const [auditLoading,  setAuditLoading]  = useState(false);
@@ -379,6 +448,9 @@ export default function AdminDashboard({ setCurrentPage }) {
   const [filterProfile,   setFilterProfile]   = useState('All Profiles');
   const [filterDate,      setFilterDate]      = useState('');
   const [filterViolation, setFilterViolation] = useState('All Types');
+  const [filterAuthorization, setFilterAuthorization] = useState('All Access');
+  const [filterResolution, setFilterResolution] = useState('All resolutions');
+  const [filterEmployee,  setFilterEmployee]  = useState('');
 
   /* ── Worker state ── */
   const [workers,         setWorkers]         = useState([]);
@@ -392,6 +464,7 @@ export default function AdminDashboard({ setCurrentPage }) {
   const [newWorker,       setNewWorker]       = useState({ full_name: '', position: '', device_id: '', contact_number: '', status: 'active' });
   const [workerFilterStation, setWorkerFilterStation] = useState('All Stations');
   const [workerFilterStatus,  setWorkerFilterStatus]  = useState('All Statuses');
+  const [complianceWorkerId, setComplianceWorkerId] = useState('');
 
   /* ── QR state ── */
   const [qrWorker,   setQrWorker]   = useState(null);
@@ -423,6 +496,12 @@ export default function AdminDashboard({ setCurrentPage }) {
   const [resetLink, setResetLink] = useState('');
 
   useEffect(() => { fetchUsers(); fetchDetections(); fetchAuditLogs(); fetchWorkers(); fetchDevices(); fetchProfiles(); fetchPwRequests(); }, []);
+  useEffect(() => {
+    if (activeTab !== 'pwrequests') return undefined;
+    fetchPwRequests();
+    const timer = window.setInterval(fetchPwRequests, 10000);
+    return () => window.clearInterval(timer);
+  }, [activeTab]);
   useEffect(() => {
     // Keep navigation available even if an older responsive stylesheet is cached.
     sidebarRef.current?.style.setProperty('display', 'flex', 'important');
@@ -456,9 +535,30 @@ export default function AdminDashboard({ setCurrentPage }) {
       setDetections(detectionData);
       setDetStats(statsData && typeof statsData === 'object' && !Array.isArray(statsData)
         ? statsData
-        : { total: 0, violations: 0, compliant: 0, compliance_rate: 100 });
+        : { total: 0, violations: 0, compliant: 0, manual_reviews: 0, pending_manual_reviews: 0, authorized: 0, denied: 0, pending_authorization: 0, authorization_rate: 100, compliance_rate: 100 });
     } catch (err) { setLoadErrors(prev => ({ ...prev, 'Detections': err.message })); }
     finally { setDetLoading(false); }
+  };
+
+  const handleManualReview = async (detectionId, decision) => {
+    if (!decision) return;
+    const notes = window.prompt('Optional authorization reason or inspection note:', '');
+    if (notes === null) return;
+    try {
+      const res = await adminFetch(`${API}/admin/detections/${detectionId}/review`, { method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify({ decision, notes: notes.trim() || null }) });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Could not save the review decision.');
+      await fetchDetections();
+    } catch (err) { alert(err.message); }
+  };
+
+  const handleResolution = async (detectionId, status) => {
+    const reason = window.prompt(status === 'FALSE_DETECTION' || status === 'AUTHORIZED_EXCEPTION' ? 'Reason (required):' : 'Inspection notes (optional):', '');
+    if (reason === null || ((status === 'FALSE_DETECTION' || status === 'AUTHORIZED_EXCEPTION') && !reason.trim())) return;
+    try {
+      const res = await adminFetch(`${API}/violations/${detectionId}/resolve`, { method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify({ status, reason: reason.trim() || null }) });
+      const body = await res.json(); if (!res.ok) throw new Error(body.error || 'Could not resolve incident.'); await fetchDetections();
+    } catch (err) { alert(err.message); }
   };
 
   const fetchAuditLogs = async () => {
@@ -916,7 +1016,9 @@ export default function AdminDashboard({ setCurrentPage }) {
     const fTotal      = filtered.length;
     const fViolations = filtered.filter(d => d.result === 'violation').length;
     const fCompliant  = filtered.filter(d => d.result === 'compliant').length;
-    const fRate       = fTotal === 0 ? 100 : Math.round(((fTotal - fViolations) / fTotal) * 100);
+    const fManual     = filtered.filter(d => d.result === 'manual_review').length;
+    const fDecided    = fCompliant + fViolations;
+    const fRate       = fDecided === 0 ? 100 : Math.round((fCompliant / fDecided) * 100);
     const periodLabels = { all: 'All time', today: 'Today', yesterday: 'Yesterday', week: 'This week', month: 'This month', custom: `${reportFrom || 'start'} to ${reportTo || 'today'}` };
     const periodLabel  = periodLabels[reportPeriod] || 'All time';
     const now          = new Date();
@@ -924,12 +1026,12 @@ export default function AdminDashboard({ setCurrentPage }) {
     const reportTime   = now.toLocaleTimeString('en-PH');
 
     const byInspector = Object.create(null);
-    filtered.forEach(d => {
+    filtered.filter(d => d.result !== 'manual_review').forEach(d => {
       const key = d.inspector || 'Unknown';
       if (!byInspector[key]) byInspector[key] = { total: 0, violations: 0, compliant: 0 };
       byInspector[key].total++;
       if (d.result === 'violation') byInspector[key].violations++;
-      else byInspector[key].compliant++;
+      else if (d.result === 'compliant') byInspector[key].compliant++;
     });
     const inspectorRows = Object.entries(byInspector).map(([name, c]) => `
       <tr>
@@ -945,8 +1047,9 @@ export default function AdminDashboard({ setCurrentPage }) {
         <td style="font-family:monospace;font-size:11px">${escapeHtml(d.worker_employee_id || '—')}</td>
         <td>${escapeHtml(d.station || '—')}</td><td>${escapeHtml(d.inspector || '—')}</td>
         <td>${escapeHtml(d.date)} ${escapeHtml(d.time)}</td>
-        <td style="color:${d.result==='violation'?'#dc2626':'#16a34a'};font-weight:700">${d.result==='violation'?'⚠ Violation':'✓ Compliant'}</td>
-        <td>${escapeHtml((d.missing_ppe||[]).join(', ')||'—')}</td>
+        <td style="color:${d.result==='manual_review'?'#b45309':d.result==='violation'?'#dc2626':'#16a34a'};font-weight:700">${d.result==='manual_review'?'⚠ Manual Review':d.result==='violation'?'⚠ Violation':'✓ Compliant'}</td>
+        <td style="font-weight:700">${escapeHtml(authorizationLabel(d.authorization_status))}</td>
+        <td>${escapeHtml([...(d.missing_ppe||[]), ...(d.uncertain_ppe||[]).map(item => `? ${item}`)].join(', ')||'—')}</td>
       </tr>`).join('');
 
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
@@ -958,7 +1061,7 @@ export default function AdminDashboard({ setCurrentPage }) {
   h2{font-size:15px;font-weight:700;color:#0f766e;margin:24px 0 10px;border-bottom:2px solid #e2e8f0;padding-bottom:6px}
   .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px}
   .header-meta{font-size:11px;color:#64748b;text-align:right;line-height:1.8}
-  .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:8px}
+  .stats-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:8px}
   .stat-box{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px;text-align:center}
   .stat-val{font-size:26px;font-weight:800;color:#0f766e}
   .stat-label{font-size:11px;color:#94a3b8;margin-top:2px;text-transform:uppercase;letter-spacing:.05em}
@@ -980,14 +1083,15 @@ export default function AdminDashboard({ setCurrentPage }) {
     <div class="stat-box"><div class="stat-val">${fTotal}</div><div class="stat-label">Total Scans</div></div>
     <div class="stat-box"><div class="stat-val" style="color:#dc2626">${fViolations}</div><div class="stat-label">Violations</div></div>
     <div class="stat-box"><div class="stat-val" style="color:#16a34a">${fCompliant}</div><div class="stat-label">Compliant</div></div>
+    <div class="stat-box"><div class="stat-val" style="color:#b45309">${fManual}</div><div class="stat-label">Manual Review</div></div>
     <div class="stat-box"><div class="stat-val" style="color:${fRate>=80?'#16a34a':'#dc2626'}">${fRate}%</div><div class="stat-label">Compliance Rate</div></div>
   </div>
   <h2>By Inspector</h2>
   <table><thead><tr><th>Inspector</th><th>Total</th><th>Violations</th><th>Compliant</th><th>Rate</th></tr></thead>
   <tbody>${inspectorRows || '<tr><td colspan="5" style="color:#aaa;text-align:center">No data</td></tr>'}</tbody></table>
   <h2>Detection Log</h2>
-  <table><thead><tr><th>Worker</th><th>ID</th><th>Station</th><th>Inspector</th><th>Date & Time</th><th>Status</th><th>Missing PPE</th></tr></thead>
-  <tbody>${logRows || '<tr><td colspan="7" style="color:#aaa;text-align:center">No data</td></tr>'}</tbody></table>
+  <table><thead><tr><th>Worker</th><th>ID</th><th>Station</th><th>Inspector</th><th>Date & Time</th><th>PPE Result</th><th>Entry Access</th><th>Missing / Uncertain PPE</th></tr></thead>
+  <tbody>${logRows || '<tr><td colspan="8" style="color:#aaa;text-align:center">No data</td></tr>'}</tbody></table>
   <div style="margin-top:32px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:10px;color:#94a3b8;text-align:center">
     WearAware PPE Compliance Monitoring System &mdash; Admin Report &mdash; ${reportDate}
   </div>
@@ -996,7 +1100,7 @@ export default function AdminDashboard({ setCurrentPage }) {
     printDocument(html);
   };
 
-  const resetFilters = () => { setFilterStation('All Stations'); setFilterInspector('All Inspectors'); setFilterProfile('All Profiles'); setFilterDate(''); setFilterViolation('All Types'); };
+  const resetFilters = () => { setFilterStation('All Stations'); setFilterInspector('All Inspectors'); setFilterProfile('All Profiles'); setFilterDate(''); setFilterViolation('All Types'); setFilterAuthorization('All Access'); setFilterResolution('All resolutions'); setFilterEmployee(''); };
 
   // Every API result is checked before this point. Keep these fallbacks too so a
   // malformed response can show an error instead of taking down the whole dashboard.
@@ -1009,6 +1113,8 @@ export default function AdminDashboard({ setCurrentPage }) {
   const profileOptions = ['All Profiles', 'Custom requirements', ...new Set(detectionRecords.map(d => d.profile_name).filter(Boolean))];
 
   const filteredDetections = detectionRecords.filter(d => {
+    const employeeQuery = filterEmployee.trim().toLowerCase();
+    if (employeeQuery && !`${d.worker_name || ''} ${d.worker_employee_id || ''}`.toLowerCase().includes(employeeQuery)) return false;
     if (filterStation   !== 'All Stations'   && d.station   !== filterStation)   return false;
     if (filterInspector !== 'All Inspectors' && d.inspector !== filterInspector) return false;
     if (filterProfile !== 'All Profiles' && (d.profile_name || 'Custom requirements') !== filterProfile) return false;
@@ -1017,6 +1123,10 @@ export default function AdminDashboard({ setCurrentPage }) {
     if (filterViolation === 'Violation' && alertType !== 'non_compliant') return false;
     if (filterViolation === 'Manual Review' && alertType !== 'manual_review') return false;
     if (filterViolation === 'Compliant' && alertType !== 'compliant') return false;
+    if (filterAuthorization === 'Authorized' && d.authorization_status !== 'authorized') return false;
+    if (filterAuthorization === 'Denied' && d.authorization_status !== 'denied') return false;
+    if (filterAuthorization === 'Pending Inspection' && d.authorization_status !== 'pending_inspection') return false;
+    if (filterResolution !== 'All resolutions' && (d.resolution_status || 'PENDING_REVIEW') !== filterResolution) return false;
     return true;
   });
 
@@ -1024,8 +1134,10 @@ export default function AdminDashboard({ setCurrentPage }) {
 
   const navItems = [
     { id: 'overview',   icon: <LayoutDashboard size={18} />, label: 'Overview'          },
+    { id: 'analytics',  icon: <TrendingUp size={18} />,      label: 'Violation Analytics' },
     { id: 'users',      icon: <Users size={18} />,           label: 'User Management'    },
     { id: 'workers',    icon: <HardHat size={18} />,         label: 'Worker Registry'    },
+    { id: 'employee-compliance', icon: <UserRoundSearch size={18} />, label: 'Employee Compliance' },
     { id: 'stations',   icon: <MapPin size={18} />,          label: 'Checkpoints'        },
     { id: 'profiles',   icon: <ShieldCheck size={18} />,     label: 'Compliance Profiles' },
     { id: 'detections', icon: <ScanLine size={18} />,        label: 'Detection Log'      },
@@ -1085,8 +1197,10 @@ export default function AdminDashboard({ setCurrentPage }) {
           <div>
             <div className="ad-topbar-title">
               {activeTab === 'overview'   && 'Dashboard Overview'}
+              {activeTab === 'analytics'  && 'Violation Analytics'}
               {activeTab === 'users'      && 'User Management'}
               {activeTab === 'workers'    && 'Worker Registry'}
+              {activeTab === 'employee-compliance' && 'Employee Compliance History'}
               {activeTab === 'stations'   && 'Checkpoint Management'}
               {activeTab === 'profiles'   && 'Compliance Profiles'}
               {activeTab === 'detections' && 'Detection Log'}
@@ -1123,12 +1237,19 @@ export default function AdminDashboard({ setCurrentPage }) {
                 </div>
                 <div className="ad-welcome-mark" aria-hidden="true"><ShieldCheck size={64} strokeWidth={1} /><span>AWARENESS IN ACTION</span></div>
               </section>
+              <MfaSettings />
               <div className="ad-stats">
                 <div className="ad-stat-card">
                   <div className="ad-stat-icon"><Users size={22} /></div>
                   <div className="ad-stat-number">{accountUsers.length}</div>
                   <div className="ad-stat-label">Total Users</div>
                   <div className="ad-stat-change up">↑ Registered accounts</div>
+                </div>
+                <div className="ad-stat-card">
+                  <div className="ad-stat-icon"><Clock size={22} /></div>
+                  <div className="ad-stat-number">{detLoading ? '…' : detStats.pending_manual_reviews || 0}</div>
+                  <div className="ad-stat-label">Manual Review</div>
+                  <div className="ad-stat-change" style={{ color: '#b45309' }}>Pending decisions</div>
                 </div>
                 <div className="ad-stat-card">
                   <div className="ad-stat-icon"><ClipboardList size={22} /></div>
@@ -1200,11 +1321,11 @@ export default function AdminDashboard({ setCurrentPage }) {
                       {detections.slice(0, 5).map(d => (
                         <div className="ad-activity-item" key={d.id}>
                           <div className="ad-activity-dot-wrap">
-                            <div className="ad-activity-dot" style={{ background: d.result === 'violation' ? '#e53e3e' : '#38a169' }} />
+                            <div className="ad-activity-dot" style={{ background: d.result === 'manual_review' ? '#d69e2e' : d.result === 'violation' ? '#e53e3e' : '#38a169' }} />
                           </div>
                           <div>
                             <div className="ad-activity-text">
-                              <strong>{d.station || 'Unknown Station'}</strong> — {d.result === 'violation' ? `Violation: ${(d.missing_ppe || []).join(', ') || 'missing PPE'}` : 'Compliant scan'}
+                              <strong>{d.station || 'Unknown Station'}</strong> — {d.result === 'manual_review' ? `Manual review: ${d.manual_review_message || 'inspector decision required'}` : d.result === 'violation' ? `Violation: ${(d.missing_ppe || []).join(', ') || 'missing PPE'}` : 'Compliant scan'}
                             </div>
                             <div className="ad-activity-time">{d.inspector || 'Unknown'} · {d.time} {d.date}</div>
                           </div>
@@ -1216,6 +1337,23 @@ export default function AdminDashboard({ setCurrentPage }) {
                 </div>
               </div>
             </>
+          )}
+
+          {/* ── VIOLATION ANALYTICS ── */}
+          {activeTab === 'analytics' && (
+            <AdminPanelBoundary><ViolationAnalytics checkpoints={stationDevices} profiles={profiles} /></AdminPanelBoundary>
+          )}
+
+          {/* ── EMPLOYEE COMPLIANCE ── */}
+          {activeTab === 'employee-compliance' && (
+            <AdminPanelBoundary>
+              <EmployeeComplianceHistory
+                workers={accountWorkers}
+                checkpoints={stationDevices}
+                initialWorkerId={complianceWorkerId}
+                onWorkerSelected={setComplianceWorkerId}
+              />
+            </AdminPanelBoundary>
           )}
 
           {/* ── USERS ── */}
@@ -1299,6 +1437,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                               >
                                 <QrCode size={13} /> QR
                               </button>
+                              <button className="ad-btn-reactivate" onClick={() => { setComplianceWorkerId(w.id); setActiveTab('employee-compliance'); }}>History</button>
                               <button className="ad-btn-reactivate" onClick={() => openWorkerModal(w)}>Edit</button>
                               {w.status === 'terminated'
                                 ? <button className="ad-btn-reactivate" onClick={() => handleReactivateWorker(w.id, w.full_name)}>Reactivate</button>
@@ -1412,6 +1551,8 @@ export default function AdminDashboard({ setCurrentPage }) {
                   </div>
                 </div>
                 <div className="ad-filters">
+                  <div className="ad-filter-group"><div className="ad-filter-label">Employee</div>
+                    <input className="ad-filter-input" value={filterEmployee} onChange={e => setFilterEmployee(e.target.value)} placeholder="Name or employee ID" /></div>
                   <div className="ad-filter-group"><div className="ad-filter-label">Station</div>
                     <select className="ad-filter-select" value={filterStation} onChange={e => setFilterStation(e.target.value)}>{stationOptions.map(s => <option key={s}>{s}</option>)}</select></div>
                   <div className="ad-filter-group"><div className="ad-filter-label">Inspector</div>
@@ -1422,13 +1563,16 @@ export default function AdminDashboard({ setCurrentPage }) {
                     <input className="ad-filter-input" type="date" value={filterDate} onChange={e => setFilterDate(e.target.value)} /></div>
                   <div className="ad-filter-group"><div className="ad-filter-label">Status</div>
                     <select className="ad-filter-select" value={filterViolation} onChange={e => setFilterViolation(e.target.value)}><option>All Types</option><option>Violation</option><option>Manual Review</option><option>Compliant</option></select></div>
+                  <div className="ad-filter-group"><div className="ad-filter-label">Entry Access</div>
+                    <select className="ad-filter-select" value={filterAuthorization} onChange={e => setFilterAuthorization(e.target.value)}><option>All Access</option><option>Authorized</option><option>Denied</option><option>Pending Inspection</option></select></div>
+                  <div className="ad-filter-group"><div className="ad-filter-label">Resolution</div><select className="ad-filter-select" value={filterResolution} onChange={e => setFilterResolution(e.target.value)}><option>All resolutions</option><option value="PENDING_REVIEW">Pending review</option><option value="CONFIRMED_VIOLATION">Confirmed violation</option><option value="FALSE_DETECTION">False detection</option><option value="RESOLVED_AFTER_CORRECTION">Resolved after correction</option><option value="AUTHORIZED_EXCEPTION">Authorized exception</option></select></div>
                   <button className="ad-filter-reset" onClick={resetFilters}>Reset Filters</button>
                 </div>
                 <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Scrollable admin records"><table className="ad-table">
-                  <thead><tr><th>Photo</th><th>#</th><th>Worker</th><th>Checkpoint</th><th>Profile</th><th>Inspector</th><th>Date & Time</th><th>Status</th><th>Required PPE</th><th>Missing PPE</th><th>Detected PPE</th></tr></thead>
+                  <thead><tr><th>Photo</th><th>#</th><th>Worker</th><th>Checkpoint</th><th>Profile</th><th>Inspector</th><th>Date & Time</th><th>PPE Result</th><th>Entry Access</th><th>Resolution</th><th>Required PPE</th><th>Missing PPE</th><th>Detected PPE</th></tr></thead>
                   <tbody>
-                    {detLoading ? <tr><td colSpan={11} className="ad-empty">Loading detections…</td></tr>
-                    : filteredDetections.length === 0 ? <tr><td colSpan={11} className="ad-empty">No detections match your filters</td></tr>
+                    {detLoading ? <tr><td colSpan={13} className="ad-empty">Loading detections…</td></tr>
+                    : filteredDetections.length === 0 ? <tr><td colSpan={13} className="ad-empty">No detections match your filters</td></tr>
                     : filteredDetections.map(d => (
                       <tr key={d.id}>
                         <td>
@@ -1436,7 +1580,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                             ? <button type="button" onClick={() => openAdminPhoto(d.id)} aria-label="Open proof photo"
                                 style={{ width: 44, height: 44, borderRadius: 6, cursor: 'pointer', border: '2px solid #fca5a5', background: '#fff1f2', fontSize: '1.1rem' }}>📷</button>
                             : <div style={{ width: 44, height: 44, borderRadius: 6, background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                <span style={{ fontSize: '1.1rem' }}>{d.result === 'violation' ? '⚠️' : '✓'}</span>
+                                <span style={{ fontSize: '1.1rem' }}>{d.result === 'manual_review' ? '⚠️' : d.result === 'violation' ? '🚨' : '✓'}</span>
                               </div>}
                         </td>
                         <td style={{ color: '#ccc', fontSize: '0.8rem' }}>{d.id}</td>
@@ -1450,9 +1594,11 @@ export default function AdminDashboard({ setCurrentPage }) {
                         <td>{d.profile_name || <span style={{ color: '#aaa' }}>Custom</span>}</td>
                         <td style={{ color: '#555' }}>{d.inspector || '—'}</td>
                         <td style={{ fontSize: '0.85rem' }}><div style={{ color: '#444' }}>{d.date}</div><div style={{ color: '#bbb' }}>{d.time}</div></td>
-                        <td><span className={`ad-violation-badge ${d.result === 'violation' ? 'ad-violation-yes' : 'ad-violation-no'}`} style={d.alert_type === 'manual_review' ? { background: '#fff7ed', color: '#b45309' } : undefined}>{d.alert_type === 'manual_review' ? '⚠ Manual Review' : d.result === 'violation' ? '⚠ Violation' : '✓ Compliant'}</span></td>
+                        <td><span className={`ad-violation-badge ${d.result === 'violation' ? 'ad-violation-yes' : 'ad-violation-no'}`} style={d.alert_type === 'manual_review' ? { background: '#fff7ed', color: '#b45309' } : undefined}>{d.alert_type === 'manual_review' ? '⚠ Manual Review' : d.result === 'violation' ? '⚠ Violation' : '✓ Compliant'}</span>{d.result === 'manual_review' && d.review_status === 'pending' && <select aria-label={`Resolve manual review ${d.id}`} defaultValue="" onChange={event => handleManualReview(d.id, event.target.value)} style={{ display: 'block', marginTop: 6, maxWidth: 190, fontSize: '0.7rem', padding: 3, border: '1px solid #d6a646', borderRadius: 5, color: '#8a5107' }}><option value="" disabled>Resolve entry…</option><option value="compliant">Allow Entry — PPE Confirmed</option><option value="non_compliant">Deny Entry — PPE Missing</option><option value="false_detection">Allow Entry — False Detection</option><option value="unable_to_verify">Deny Entry — Unable to Verify</option></select>}{d.result === 'manual_review' && d.review_status === 'reviewed' && <small style={{ display: 'block', marginTop: 5, color: '#8a5107' }}>{String(d.inspector_decision || '').replaceAll('_', ' ')}</small>}</td>
+                        <td><span className="ad-violation-badge" style={authorizationStyle(d.authorization_status)}>{authorizationLabel(d.authorization_status)}</span>{d.authorization_override_at && <small style={{ display: 'block', marginTop: 5, color: '#718096' }}>Inspector override</small>}</td>
+                        <td><span className="ad-violation-badge" style={{ background: d.resolution_status === 'CONFIRMED_VIOLATION' ? '#fee2e2' : d.resolution_status === 'FALSE_DETECTION' ? '#e0f2fe' : d.resolution_status === 'PENDING_REVIEW' ? '#fff7ed' : '#dcfce7', color: d.resolution_status === 'CONFIRMED_VIOLATION' ? '#b91c1c' : d.resolution_status === 'FALSE_DETECTION' ? '#075985' : d.resolution_status === 'PENDING_REVIEW' ? '#9a5706' : '#166534' }}>{resolutionLabel(d.resolution_status)}</span>{(d.resolution_status === 'PENDING_REVIEW' || (!d.resolution_status && d.result === 'violation')) && <div style={{ display: 'flex', gap: 4, marginTop: 5, flexWrap: 'wrap' }}><button type="button" onClick={() => handleResolution(d.id, 'CONFIRMED_VIOLATION')} style={{ fontSize: '.68rem', padding: '3px 6px' }}>Confirm</button><button type="button" onClick={() => handleResolution(d.id, 'FALSE_DETECTION')} style={{ fontSize: '.68rem', padding: '3px 6px' }}>False detection</button></div>}</td>
                         <td>{(d.required_ppe || []).length > 0 ? d.required_ppe.map(p => <span key={p} className="ad-ppe-tag">{ppeLabel(p)}</span>) : <span style={{ color: '#ccc', fontSize: '0.8rem' }}>None</span>}</td>
-                        <td>{(d.missing_ppe || []).length > 0 ? d.missing_ppe.map(p => <span key={p} className="ad-ppe-tag missing">{ppeLabel(p)}</span>) : <span style={{ color: '#ccc', fontSize: '0.8rem' }}>—</span>}</td>
+                        <td>{(d.missing_ppe || []).map(p => <span key={`missing-${p}`} className="ad-ppe-tag missing">{ppeLabel(p)}</span>)}{(d.uncertain_ppe || []).map(p => <span key={`uncertain-${p}`} className="ad-ppe-tag" style={{ background: '#fff2c7', color: '#94600b' }}>? {ppeLabel(p)}</span>)}{!(d.missing_ppe || []).length && !(d.uncertain_ppe || []).length && <span style={{ color: '#ccc', fontSize: '0.8rem' }}>—</span>}{d.manual_review_message && <small style={{ display: 'block', maxWidth: 220, marginTop: 5, color: '#8a5107' }}>{d.manual_review_message}</small>}</td>
                         <td>{(d.detected_ppe || []).length > 0 ? d.detected_ppe.map(p => <span key={p} className="ad-ppe-tag">{ppeLabel(p)}</span>) : <span style={{ color: '#ccc', fontSize: '0.8rem' }}>—</span>}</td>
                       </tr>
                     ))}
@@ -1479,6 +1625,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                   </button>
                 </div>
                 {pwLoading ? <div className="ad-empty">Loading requests…</div>
+                : loadErrors['Password requests'] ? <div className="ad-empty" style={{ color: '#b91c1c' }}>⚠ {loadErrors['Password requests']}</div>
                 : pwRequests.length === 0 ? <div className="ad-empty">No password reset requests yet</div>
                 : (
                   <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Scrollable admin records"><table className="ad-table">

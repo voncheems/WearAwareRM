@@ -4,6 +4,38 @@ const router  = express.Router();
 
 const { data, requireAuth, requireRole } = require('../middleware');
 const { getDatabase } = require('../database');
+const { recordAudit } = require('../audit');
+const { getViolationAnalytics } = require('../analytics');
+const { getRepeatViolationOverview, getWorkerComplianceHistory } = require('../repeat-violations');
+
+router.get('/analytics', requireAuth, requireRole('admin'), validateRequest, async (req, res, next) => {
+  try {
+    res.json(await getViolationAnalytics(req.query));
+  } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
+    next(err);
+  }
+});
+
+router.get('/repeat-violations', requireAuth, requireRole('admin'), validateRequest, async (req, res, next) => {
+  try {
+    res.json(await getRepeatViolationOverview(req.query));
+  } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
+    next(err);
+  }
+});
+
+router.get('/workers/:id/compliance-history', requireAuth, requireRole('admin'), validateRequest, async (req, res, next) => {
+  try {
+    const history = await getWorkerComplianceHistory(req.params.id, req.query);
+    if (!history) return res.status(404).json({ error: 'Worker not found.' });
+    res.json(history);
+  } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
+    next(err);
+  }
+});
 
 router.get('/audit-logs', requireAuth, requireRole('admin'), validateRequest, async (req, res) => {
   try {
@@ -42,6 +74,18 @@ router.get('/detections/:id/photo', requireAuth, requireRole('admin'), validateR
   } catch (err) { next(err); }
 });
 
+router.patch('/detections/:id/review', requireAuth, requireRole('admin'), validateRequest, async (req, res) => {
+  try {
+    const result = await data.reviewDetection(req.params.id, req.user.id, 'admin', req.body.decision, req.body.notes);
+    if (!result.rows[0]) return res.status(404).json({ error: 'Manual-review record not found.' });
+    await recordAudit({ category: 'action', action: 'Resolved manual PPE review and entry authorization', actor: req.user, target: String(req.params.id), details: `${req.body.decision}: ${result.rows[0].authorization_status}` });
+    res.json({ success: true, detection: result.rows[0] });
+  } catch (err) {
+    if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown )/.test(err.message || '')) return res.status(400).json({ error: 'Invalid review decision.' });
+    res.status(500).json({ error: 'Failed to save the manual-review decision.' });
+  }
+});
+
 // ══════════════════════════════════════════════════════════════
 //  GET /api/admin/stats  — fixed compliance rate formula
 // ══════════════════════════════════════════════════════════════
@@ -52,13 +96,12 @@ router.get('/stats', requireAuth, requireRole('admin'), validateRequest, async (
     const total      = parseInt(row.total)      || 0;
     const violations = parseInt(row.violations) || 0;
     const compliant  = parseInt(row.compliant)  || 0;
-
-    // Starts at 100%, drops with each violation
-    const compliance_rate = total === 0
-      ? 100
-      : Math.round(((total - violations) / total) * 100);
-
-    res.json({ total, violations, compliant, compliance_rate });
+    const manual_reviews = parseInt(row.manual_reviews) || 0;
+    const pending_manual_reviews = parseInt(row.pending_manual_reviews) || 0;
+    const authorized = parseInt(row.authorized) || 0;
+    const denied = parseInt(row.denied) || 0;
+    const pending_authorization = parseInt(row.pending_authorization) || 0;
+    res.json({ total, violations, compliant, manual_reviews, pending_manual_reviews, authorized, denied, pending_authorization, authorization_rate: Number(row.authorization_rate ?? 100), compliance_rate: Number(row.compliance_rate ?? 100) });
   } catch (err) {
     if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
     console.error('Request handler failed.');

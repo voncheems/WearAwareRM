@@ -66,6 +66,15 @@ VIOLATION_KEYWORDS = ['no-helmet', 'no-vest']   # no-vest is inferred
 
 NON_PPE = ['human']
 
+PPE_ALIASES = {
+    'hard-hat': 'helmet', 'hardhat': 'helmet', 'safety-helmet': 'helmet',
+    'safety-vest': 'vest', 'high-visibility-vest': 'vest', 'hi-vis-vest': 'vest',
+    'safety-shoes': 'boots', 'safety-boots': 'boots', 'shoes': 'boots', 'face-mask': 'mask',
+}
+def normalize_ppe_name(value):
+    value = str(value or '').strip().lower().replace('_', '-').replace(' ', '-')
+    return PPE_ALIASES.get(value, value) if value and all(char.isalnum() or char == '-' for char in value) else ''
+
 # Per-class minimum confidence — stricter than the global floor
 MIN_CONF_PER_CLASS = {
     'helmet'   : 0.35,
@@ -379,7 +388,8 @@ async def detect(
     file        : UploadFile = File(...),
     conf        : float = 0.15,
     iou         : float = 0.5,
-    return_image: bool = True
+    return_image: bool = True,
+    required_ppe : str = ''
 ):
     """
     Detect PPE in an uploaded image.
@@ -399,6 +409,8 @@ async def detect(
         raise HTTPException(status_code=400, detail="JPEG or PNG required")
     if not 0.1 <= conf <= 1 or not 0 < iou <= 1:
         raise HTTPException(status_code=400, detail="Invalid detection parameters")
+    requested_ppe = [normalize_ppe_name(item) for item in required_ppe.split(',') if item.strip()]
+    requested_ppe = list(dict.fromkeys(item for item in requested_ppe if item))[:32]
     contents = await file.read(MAX_UPLOAD + 1)
     if len(contents) > MAX_UPLOAD:
         raise HTTPException(status_code=413, detail="Image too large")
@@ -433,6 +445,9 @@ async def detect(
         "is_compliant"     : len(violations) == 0,
         "total_detections" : len(detections),
         "inference_time_ms": inference_ms,
+        "requested_ppe": requested_ppe,
+        "supported_ppe": sorted({normalize_ppe_name(name) for name in model.names.values() if normalize_ppe_name(name) not in NON_PPE}),
+        "unsupported_ppe": [item for item in requested_ppe if item not in {normalize_ppe_name(name) for name in model.names.values()}],
     }
 
     if return_image:

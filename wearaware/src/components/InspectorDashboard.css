@@ -65,6 +65,31 @@
         .ins-nav-icon { font-size: 1.1rem; width: 20px; text-align: center; }
 
         .ins-sidebar-footer { border-top: 1px solid rgba(255,255,255,0.15); padding-top: 1rem; flex-shrink: 0; }
+.ins-topbar-actions { position: relative; display: flex; align-items: center; gap: .75rem; }
+.ins-notification-button { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; padding: 0; border: 1px solid #dce4da; border-radius: 50%; color: #48634d; background: #fff; cursor: pointer; line-height: 0; }
+.ins-notification-button svg { display: block; flex: 0 0 auto; transform: translateY(-1px); }
+.ins-notification-count { position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 999px; background: #c83737; color: #fff; font-size: .65rem; font-weight: 800; display: grid; place-items: center; }
+.ins-notification-panel { position: absolute; z-index: 150; top: 48px; right: 0; width: min(390px, calc(100vw - 2rem)); max-height: 460px; overflow: auto; border: 1px solid #dbe4d8; border-radius: 14px; background: #fff; box-shadow: 0 18px 48px rgba(35, 55, 38, .18); }
+.ins-notification-header { display: flex; justify-content: space-between; align-items: center; padding: .9rem 1rem; border-bottom: 1px solid #edf1eb; color: #263629; }
+.ins-notification-header button { border: 0; background: none; color: #56795b; cursor: pointer; font-size: .75rem; font-weight: 700; }
+.ins-notification-list { display: grid; }
+.ins-notification-item { display: grid; grid-template-columns: 10px 1fr; gap: .7rem; width: 100%; padding: .9rem 1rem; text-align: left; border: 0; border-bottom: 1px solid #f0f3ef; background: #fff; cursor: pointer; }
+.ins-notification-item:hover, .ins-notification-item.unread { background: #f5faf3; }
+.ins-notification-item.read { opacity: .72; }
+.ins-notification-dot { width: 8px; height: 8px; margin-top: .35rem; border-radius: 50%; background: #d3ddd0; }
+.ins-notification-item.unread .ins-notification-dot { background: #c83737; box-shadow: 0 0 0 4px #fbe9e9; }
+.ins-notification-item strong, .ins-notification-item small { display: block; }
+.ins-notification-item strong { margin-bottom: .2rem; color: #263629; font-size: .8rem; }
+.ins-notification-item small { color: #738072; font-size: .7rem; line-height: 1.4; }
+.ins-notification-item .ins-notification-link { margin-top: .3rem; color: #4b7651; font-weight: 800; }
+.ins-notification-empty, .ins-notification-error { padding: 1.2rem; color: #738072; font-size: .8rem; }
+.ins-notification-error { color: #a53b35; background: #fff4f3; }
+.ins-resolution-actions { display: flex; gap: 4px; margin-top: 5px; flex-wrap: wrap; }
+.ins-resolution-action { border: 1px solid; border-radius: 6px; padding: 4px 7px; font: inherit; font-size: .68rem; font-weight: 700; line-height: 1.15; cursor: pointer; transition: background .15s ease, color .15s ease, border-color .15s ease; }
+.ins-resolution-action.confirm { border-color: #86c895; background: #f0fbf2; color: #24743a; }
+.ins-resolution-action.confirm:hover { border-color: #4b9b60; background: #dcf5e1; }
+.ins-resolution-action.false-detection { border-color: #83b9d8; background: #f0f9ff; color: #075985; }
+.ins-resolution-action.false-detection:hover { border-color: #3987b7; background: #e0f2fe; }
         .ins-user-info { display: flex; align-items: center; gap: 0.65rem; margin-bottom: 0.75rem; }
         .ins-avatar {
         width: 38px; height: 38px; border-radius: 50%;
@@ -356,7 +381,7 @@
         background: #0f766e; padding: 0.2rem 0.5rem; border-radius: 6px;
         }
 
-        .ppe-stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.75rem; }
+        .ppe-stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 1.75rem; }
         .ppe-mini-stat {
         background: linear-gradient(135deg, #0f766e, #134e4a);
         border-radius: 14px; padding: 1.25rem 1rem; text-align: center;
@@ -374,6 +399,7 @@
         .ppe-mini-stat-label { font-size: 0.68rem; color: rgba(255,255,255,0.55); font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; margin-top: 6px; }
         .ppe-mini-stat-val.green  { color: #86efac; }
         .ppe-mini-stat-val.red    { color: #fca5a5; }
+        .ppe-mini-stat-val.orange { color: #fdba74; }
         .ppe-mini-stat-val.yellow { color: #fde68a; }
 
         .ppe-log-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
@@ -402,4 +428,4 @@
         .ins-sidebar { display: none; }
         .ins-main    { margin-left: 0; }
         .ins-stats   { grid-template-columns: repeat(2, 1fr); }
-        }       
+        }

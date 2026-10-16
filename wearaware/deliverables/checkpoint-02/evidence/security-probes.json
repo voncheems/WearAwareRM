@@ -1,0 +1,211 @@
+{
+  "executedAt": "2026-09-23T03:54:03.501Z",
+  "environment": "isolated MongoMemoryReplSet + Express on 127.0.0.1:5011",
+  "results": [
+    {
+      "name": "Invalid password",
+      "method": "POST",
+      "path": "/api/auth/login",
+      "status": 401,
+      "body": {
+        "error": "Invalid email or password."
+      }
+    },
+    {
+      "name": "No token",
+      "method": "GET",
+      "path": "/api/user/dashboard",
+      "status": 401,
+      "body": {
+        "error": "No token provided."
+      }
+    },
+    {
+      "name": "User denied admin endpoint",
+      "method": "GET",
+      "path": "/api/users",
+      "status": 403,
+      "body": {
+        "error": "Access denied."
+      }
+    },
+    {
+      "name": "Invalid pagination",
+      "method": "GET",
+      "path": "/api/user/dashboard?page=-1",
+      "status": 400,
+      "body": {
+        "error": "Invalid page."
+      }
+    },
+    {
+      "name": "Own dashboard",
+      "method": "GET",
+      "path": "/api/user/dashboard",
+      "status": 200,
+      "body": {
+        "account": {
+          "full_name": "Demo Worker",
+          "email": "worker@example.test"
+        },
+        "worker": {
+          "id": 11,
+          "employee_id": "WA-DEMO-001",
+          "full_name": "Demo Worker",
+          "device_id": 1,
+          "position": "Construction Worker",
+          "status": "active",
+          "created_at": "2026-09-23T03:54:03.122Z",
+          "station_label": "Demo Entrance",
+          "station_location": "Sample Worksite"
+        },
+        "stats": {
+          "total": 6,
+          "violations": 2,
+          "compliant": 4,
+          "compliance_rate": 66.7
+        },
+        "history": [
+          {
+            "id": 1,
+            "result": "compliant",
+            "detected_ppe": [
+              "helmet",
+              "vest"
+            ],
+            "missing_ppe": [],
+            "detected_at": "2026-09-22T01:30:00.000Z",
+            "station": "Demo Entrance"
+          },
+          {
+            "id": 2,
+            "result": "compliant",
+            "detected_ppe": [
+              "helmet",
+              "vest"
+            ],
+            "missing_ppe": [],
+            "detected_at": "2026-09-21T01:30:00.000Z",
+            "station": "Demo Entrance"
+          },
+          {
+            "id": 3,
+            "result": "violation",
+            "detected_ppe": [
+              "helmet"
+            ],
+            "missing_ppe": [
+              "vest"
+            ],
+            "detected_at": "2026-09-20T01:30:00.000Z",
+            "station": "Demo Entrance"
+          },
+          {
+            "id": 4,
+            "result": "compliant",
+            "detected_ppe": [
+              "helmet",
+              "vest"
+            ],
+            "missing_ppe": [],
+            "detected_at": "2026-09-19T01:30:00.000Z",
+            "station": "Demo Entrance"
+          },
+          {
+            "id": 5,
+            "result": "violation",
+            "detected_ppe": [
+              "helmet"
+            ],
+            "missing_ppe": [
+              "vest"
+            ],
+            "detected_at": "2026-09-18T01:30:00.000Z",
+            "station": "Demo Entrance"
+          },
+          {
+            "id": 6,
+            "result": "compliant",
+            "detected_ppe": [
+              "helmet",
+              "vest"
+            ],
+            "missing_ppe": [],
+            "detected_at": "2026-09-17T01:30:00.000Z",
+            "station": "Demo Entrance"
+          }
+        ],
+        "page": 1,
+        "pageSize": 20,
+        "totalPages": 1
+      }
+    },
+    {
+      "name": "Malformed JSON",
+      "status": 400,
+      "contentType": "text/html; charset=utf-8",
+      "containsStack": true,
+      "containsFilesystemPath": true
+    },
+    {
+      "name": "Stored credential",
+      "bcryptMatch": true,
+      "storedEqualsPlaintext": false,
+      "hashAlgorithm": "bcrypt",
+      "workFactor": 10
+    },
+    {
+      "name": "HTTP response headers",
+      "xPoweredBy": "Express",
+      "contentSecurityPolicy": null,
+      "hsts": null,
+      "nosniff": null
+    }
+  ],
+  "database": {
+    "environment": "ISOLATED SYNTHETIC TEST DATA — not the application database",
+    "collections": [
+      "users",
+      "roles",
+      "password_reset_requests",
+      "notifications",
+      "devices",
+      "detections",
+      "workers"
+    ],
+    "worker": {
+      "id": 11,
+      "employee_id": "WA-DEMO-001",
+      "full_name": "Demo Worker",
+      "device_id": 1,
+      "position": "Construction Worker",
+      "status": "active",
+      "created_at": "2026-09-23T03:54:03.122Z"
+    },
+    "detection": {
+      "id": 1,
+      "device_id": 1,
+      "worker_id": 11,
+      "result": "compliant",
+      "detected_ppe": [
+        "helmet",
+        "vest"
+      ],
+      "missing_ppe": [],
+      "detected_at": "2026-09-22T01:30:00.000Z"
+    },
+    "uniqueWorkerLinkIndex": {
+      "v": 2,
+      "key": {
+        "worker_id": 1
+      },
+      "name": "worker_id_1",
+      "unique": true,
+      "partialFilterExpression": {
+        "worker_id": {
+          "$type": "number"
+        }
+      }
+    }
+  }
+}

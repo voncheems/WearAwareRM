@@ -1,0 +1,31 @@
+
+> wearaware-backend@1.0.0 test
+> node --test test/*.test.js
+
+✔ imported IDs coexist with new records and user projections hide passwords (2504.9505ms)
+✔ station, worker, detection and notification joins preserve inspector scope (110.3745ms)
+✔ concurrent ID allocation is unique (21.255375ms)
+✔ deleting workers clears historical references without deleting detections (12.157792ms)
+[dotenv@17.3.1] injecting env (9) from .env -- tip: 🔐 encrypt with Dotenvx: https://dotenvx.com
+✔ HTTP login, authorization and user responses work against MongoDB (130.398375ms)
+✔ local migration verification preserves BSON values and ignores document/key order (2.362625ms)
+Verified roles: 1 records, including all field values
+✔ migration validates IDs, unique keys, and all relationships (0.972666ms)
+✔ verification compares values, including hashes, rather than only counts (3.06925ms)
+✔ integer foreign keys are normalized but scanner UUIDs stay strings (0.93125ms)
+✔ Manila display dates cross the UTC day boundary correctly (14.658542ms)
+[dotenv@17.3.1] injecting env (9) from .env -- tip: 🔐 prevent committing .env to code: https://dotenvx.com/precommit
+✔ role registration is idempotent and User accounts can log in (2673.997917ms)
+✔ worker owns history, profile and full-history compliance even when request IDs are forged (24.618ms)
+✔ no scans are distinct from perfect compliance and missing links fail closed (13.458666ms)
+✔ User role cannot reach admin, inspector or mutation endpoints, including stale role claims (17.5085ms)
+✔ admin must link a real, unique worker when creating or editing a User account (131.304125ms)
+✔ deleting a worker clears the account link and blocks access without exposing unowned scans (16.850666ms)
+ℹ tests 16
+ℹ suites 0
+ℹ pass 16
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3732.591208

@@ -1,3 +1,5 @@
+import confidenceConfig from './confidence.json';
+
 export const SCAN_SESSION_STATE = Object.freeze({
   IDLE: 'idle',
   PERSON_DETECTED: 'person_detected',
@@ -12,15 +14,19 @@ export const SCAN_SESSION_STATE = Object.freeze({
 
 export const SCAN_SESSION_CONFIG = Object.freeze({
   inferenceIntervalMs: 1000,
-  detectionConfidence: 0.35,
-  minimumConfidence: 0.60,
-  manualReviewConfidence: 0.55,
+  detectionConfidence: confidenceConfig.observationConfidence,
+  minimumConfidence: confidenceConfig.minimumDetectionConfidence,
+  manualReviewConfidence: confidenceConfig.manualReviewConfidence,
   personDetectedDelayMs: 300,
   scanDurationMs: 5000,
-  minimumFrames: 3,
-  minimumPositiveFrames: 2,
-  positiveFrameRatio: 0.60,
+  minimumFrames: confidenceConfig.minimumValidFrames,
+  minimumPositiveFrames: confidenceConfig.minimumPositiveFrames,
+  positiveFrameRatio: confidenceConfig.minimumPositiveFrameRatio,
+  minimumVisibleFrameRatio: confidenceConfig.minimumVisibleFrameRatio,
+  frameEdgeMarginPixels: confidenceConfig.frameEdgeMarginPixels,
+  minimumPersonAreaRatio: confidenceConfig.minimumPersonAreaRatio,
   personExitDelayMs: 1500,
+  employeeIdentificationTimeoutMs: 30000,
   cooldownMs: 1000,
   incompleteMessageMs: 2200,
 });
@@ -41,13 +47,35 @@ function rounded(value) {
   return Math.round(value * 1000) / 1000;
 }
 
-function maxConfidenceFor(frame, ppe) {
+function maxConfidenceFor(frame, ppe, minimum = 0) {
   const matches = (frame?.detections || []).filter(detection => {
     const name = normalizePpeName(detection?.class_name);
-    return name === ppe && detection?.inferred !== true && Number(detection?.confidence) >= SCAN_SESSION_CONFIG.minimumConfidence;
+    return name === ppe && detection?.inferred !== true && Number(detection?.confidence) >= minimum;
   });
   return matches.length ? Math.max(...matches.map(detection => Number(detection.confidence))) : null;
 }
+
+function isPersonSufficientlyVisible(frame, required, config) {
+  const person = Array.isArray(frame?.person_detections) ? frame.person_detections[0] : null;
+  const box = person?.bbox;
+  const values = [box?.x1, box?.y1, box?.x2, box?.y2].map(Number);
+  if (!values.every(Number.isFinite)) return false;
+  const [x1, y1, x2, y2] = values;
+  const areaRatio = Math.max(0, x2 - x1) * Math.max(0, y2 - y1) / (640 * 480);
+  const margin = config.frameEdgeMarginPixels;
+  const sideClipped = x1 <= margin || x2 >= 640 - margin;
+  const topClipped = required.includes('helmet') && y1 <= margin;
+  const bottomClipped = required.includes('boots') && y2 >= 480 - margin;
+  return areaRatio >= config.minimumPersonAreaRatio && !sideClipped && !topClipped && !bottomClipped;
+}
+
+const REVIEW_MESSAGES = Object.freeze({
+  INSUFFICIENT_DATA: 'Not enough scan data was collected. Please check manually.',
+  PARTIAL_VISIBILITY: 'The required PPE was not fully visible. Please check manually.',
+  LOW_CONFIDENCE: 'Required PPE could not be detected confidently. Please check manually.',
+  INCONSISTENT_DETECTION: 'PPE detection changed during the scan. Please check manually.',
+  MULTIPLE_PEOPLE: 'More than one person affected the scan. Please check manually.',
+});
 
 export function frameEvidenceScore(frame) {
   const people = Array.isArray(frame?.person_detections) ? frame.person_detections : [];
@@ -60,7 +88,7 @@ export function frameEvidenceScore(frame) {
   return personConfidence * 0.65 + ppeScore * 0.35;
 }
 
-export function aggregateSessionFrames(frames, requiredPpe, config = SCAN_SESSION_CONFIG) {
+export function aggregateSessionFrames(frames, requiredPpe, config = SCAN_SESSION_CONFIG, conditions = {}) {
   const usableFrames = (Array.isArray(frames) ? frames : []).filter(frame => Number(frame?.person_count) === 1);
   const required = [...new Set((Array.isArray(requiredPpe) ? requiredPpe : []).map(normalizePpeName).filter(Boolean))];
   const observed = new Set(required);
@@ -75,35 +103,70 @@ export function aggregateSessionFrames(frames, requiredPpe, config = SCAN_SESSIO
     Math.max(1, usableFrames.length),
     Math.max(config.minimumPositiveFrames, Math.ceil(usableFrames.length * config.positiveFrameRatio)),
   );
+  const visibleFrames = usableFrames.filter(frame => isPersonSufficientlyVisible(frame, required, config)).length;
+  const visibilityScore = usableFrames.length ? rounded(visibleFrames / usableFrames.length) : 0;
   const confidenceSummary = [...observed].map(ppe => {
-    const values = usableFrames.map(frame => maxConfidenceFor(frame, ppe)).filter(Number.isFinite);
-    return { ppe, average_confidence: values.length ? rounded(values.reduce((sum, value) => sum + value, 0) / values.length) : 0, positive_frames: values.length };
+    const observedValues = usableFrames.map(frame => maxConfidenceFor(frame, ppe, config.detectionConfidence)).filter(Number.isFinite);
+    const confirmedValues = observedValues.filter(value => value >= config.minimumConfidence);
+    const weakValues = observedValues.filter(value => value < config.minimumConfidence);
+    let status = 'MISSING';
+    if (confirmedValues.length >= positiveThreshold) status = 'DETECTED';
+    else if (weakValues.length > 0 || confirmedValues.length > 0) status = 'UNCERTAIN';
+    return {
+      ppe,
+      average_confidence: observedValues.length ? rounded(observedValues.reduce((sum, value) => sum + value, 0) / observedValues.length) : 0,
+      positive_frames: confirmedValues.length,
+      weak_frames: weakValues.length,
+      observed_frames: observedValues.length,
+      status,
+    };
   });
-  const detected = confidenceSummary.filter(item => item.positive_frames >= positiveThreshold).map(item => item.ppe);
-  const missing = required.filter(item => !detected.includes(item));
-  const inconsistent = confidenceSummary.filter(item => required.includes(item.ppe) && item.positive_frames > 0 && item.positive_frames < positiveThreshold).map(item => item.ppe);
+  const requiredEvidence = confidenceSummary.filter(item => required.includes(item.ppe));
+  const detected = requiredEvidence.filter(item => item.status === 'DETECTED').map(item => item.ppe);
+  const lowConfidence = requiredEvidence.filter(item => item.weak_frames > 0).map(item => item.ppe);
+  const inconsistent = requiredEvidence.filter(item => item.positive_frames > 0 && item.positive_frames < positiveThreshold).map(item => item.ppe);
+  const visibilityUncertain = visibilityScore < config.minimumVisibleFrameRatio
+    ? requiredEvidence.filter(item => item.status !== 'DETECTED').map(item => item.ppe)
+    : [];
+  const interferenceUncertain = conditions.multiplePeopleDetected
+    ? requiredEvidence.filter(item => item.status !== 'DETECTED').map(item => item.ppe) : [];
+  const uncertain = [...new Set([...lowConfidence, ...inconsistent, ...visibilityUncertain, ...interferenceUncertain])];
+  const missing = required.filter(item => !detected.includes(item) && !uncertain.includes(item));
   const personConfidences = usableFrames.flatMap(frame => (frame.person_detections || []).map(person => Number(person.confidence)).filter(Number.isFinite));
   const evidenceConfidences = [
     ...personConfidences,
     ...confidenceSummary.filter(item => item.positive_frames >= positiveThreshold).map(item => item.average_confidence),
   ];
   const confidenceScore = evidenceConfidences.length ? rounded(evidenceConfidences.reduce((sum, value) => sum + value, 0) / evidenceConfidences.length) : null;
-  const manualReviewRequired = usableFrames.length < config.minimumFrames
-    || inconsistent.length > 0
+  const manualReviewReason = conditions.multiplePeopleDetected ? 'MULTIPLE_PEOPLE'
+    : usableFrames.length < config.minimumFrames ? 'INSUFFICIENT_DATA'
+    : visibilityUncertain.length > 0 ? 'PARTIAL_VISIBILITY'
+      : lowConfidence.length > 0 ? 'LOW_CONFIDENCE'
+        : inconsistent.length > 0 ? 'INCONSISTENT_DETECTION'
+          : (!Number.isFinite(confidenceScore) || confidenceScore < config.manualReviewConfidence) ? 'LOW_CONFIDENCE'
+            : null;
+  const manualReviewRequired = Boolean(manualReviewReason)
     || !Number.isFinite(confidenceScore)
     || confidenceScore < config.manualReviewConfidence;
+  const finalUncertain = manualReviewRequired ? [...new Set([...uncertain, ...missing])] : uncertain;
+  const finalMissing = manualReviewRequired ? [] : missing;
 
   return {
     required_ppe: required,
     detected_ppe: detected,
-    missing_ppe: missing,
+    missing_ppe: finalMissing,
     confidence_score: confidenceScore,
     confidence_summary: confidenceSummary,
+    visibility_score: visibilityScore,
+    multiple_people_detected: Boolean(conditions.multiplePeopleDetected),
     frame_count: usableFrames.length,
     manual_review_required: manualReviewRequired,
     inconsistent_ppe: inconsistent,
-    result: missing.length === 0 && !manualReviewRequired ? 'compliant' : 'violation',
-    alert_type: manualReviewRequired ? 'manual_review' : missing.length === 0 ? 'compliant' : 'non_compliant',
+    uncertain_ppe: finalUncertain,
+    manual_review_reason: manualReviewReason,
+    manual_review_message: manualReviewReason ? REVIEW_MESSAGES[manualReviewReason] : null,
+    result: manualReviewRequired ? 'manual_review' : finalMissing.length === 0 ? 'compliant' : 'violation',
+    alert_type: manualReviewRequired ? 'manual_review' : finalMissing.length === 0 ? 'compliant' : 'non_compliant',
   };
 }
 

@@ -32,7 +32,17 @@ export default function PPEDetectionPage({ setCurrentPage }) {
     try {
       const headers = { Authorization: `Bearer ${localStorage.getItem('token')}` };
       const listRequest = fetch(`${API}/checkpoints`, { headers });
-      const assignedRequest = assignedId ? fetch(`${API}/checkpoints/${assignedId}`, { headers }) : null;
+      // A stale browser assignment can contain an old route value (or the
+      // literal string "undefined"). Do not send that to the API as a record
+      // ID; clear it and let the scanner choose a checkpoint again.
+      const validAssignedId = /^\d+$/.test(String(assignedId)) && Number(assignedId) > 0
+        ? String(assignedId)
+        : '';
+      if (assignedId && !validAssignedId) {
+        localStorage.removeItem(ASSIGNMENT_KEY);
+        setAssignedId('');
+      }
+      const assignedRequest = validAssignedId ? fetch(`${API}/checkpoints/${validAssignedId}`, { headers }) : null;
       const [listResponse, assignedResponse] = await Promise.all([listRequest, assignedRequest]);
       const listBody = await listResponse.json().catch(() => ({}));
       if (!listResponse.ok) throw new Error(listBody.error || 'Could not load checkpoints.');

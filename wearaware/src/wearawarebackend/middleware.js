@@ -4,7 +4,7 @@ const JWT_SECRET = process.env.JWT_SECRET;
 async function authenticateToken(token) {
   const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
   if (!Number.isSafeInteger(decoded.id) || !Number.isFinite(decoded.iat) || !Number.isFinite(decoded.exp)) throw new Error('Invalid claims');
-  const user = (await data.users({ id: decoded.id }, 'updated_at is_active role session_version password_reset_required')).rows[0];
+  const user = (await data.users({ id: decoded.id }, 'updated_at is_active role session_version password_reset_required mfa_enabled')).rows[0];
   if (!user || !user.is_active || user.password_reset_required) throw new Error('Inactive account');
   if ((decoded.session_version || 0) !== (user.session_version || 0)) throw new Error('Revoked session');
   if (Math.floor(new Date(user.updated_at).getTime() / 1000) > decoded.iat) throw new Error('Stale session');

@@ -1,7 +1,8 @@
 const { getDatabase } = require('./database');
+const { authorizationFromCompliance, authorizationFromInspectorDecision } = require('./entry-authorization');
 
 // Keep the public integer IDs used by the web and Android clients.
-const numericFields = new Set(['id', 'role_id', 'profile_id', 'inspector_id', 'worker_id', 'detection_id']);
+const numericFields = new Set(['id', 'role_id', 'profile_id', 'inspector_id', 'worker_id', 'detection_id', 'reviewed_by', 'authorization_override_by', 'resolution_inspector_id', 'resolution_corrected_by_scan_id']);
 function normalize(table, values) {
   return Object.fromEntries(Object.entries(values).map(([key, value]) => {
     const numeric = numericFields.has(key) || (key === 'device_id' && table !== 'devices');
@@ -11,12 +12,15 @@ function normalize(table, values) {
       return [key, n];
     }
     if (Array.isArray(value)) {
-      const validPpeList = ['required_ppe', 'detected_ppe', 'missing_ppe'].includes(key) && value.every(item => typeof item === 'string');
+      const validPpeList = ['required_ppe', 'detected_ppe', 'missing_ppe', 'uncertain_ppe'].includes(key) && value.every(item => typeof item === 'string');
       const validConfidenceSummary = key === 'confidence_summary' && value.every(item => item && typeof item === 'object' && !Array.isArray(item)
-        && Object.keys(item).length === 3
+        && Object.keys(item).every(field => ['ppe', 'average_confidence', 'positive_frames', 'weak_frames', 'observed_frames', 'status'].includes(field))
         && typeof item.ppe === 'string'
         && Number.isFinite(item.average_confidence)
-        && Number.isSafeInteger(item.positive_frames));
+        && Number.isSafeInteger(item.positive_frames)
+        && (item.weak_frames === undefined || Number.isSafeInteger(item.weak_frames))
+        && (item.observed_frames === undefined || Number.isSafeInteger(item.observed_frames))
+        && (item.status === undefined || ['DETECTED', 'MISSING', 'UNCERTAIN'].includes(item.status)));
       if (!validPpeList && !validConfidenceSummary) throw new Error(`Invalid ${key}`);
     }
     if (['is_active', 'is_read'].includes(key) && value !== null && typeof value !== 'boolean') throw new Error(`Invalid ${key}`);
@@ -53,7 +57,7 @@ function createRepository(dbProvider = getDatabase) {
   async function references(table, doc) {
     const refs = {
       users: { role_id: 'roles', worker_id: 'workers' }, devices: { profile_id: 'compliance_profiles', inspector_id: 'users' }, workers: { device_id: 'devices' },
-      detections: { device_id: 'devices', profile_id: 'compliance_profiles', inspector_id: 'users', worker_id: 'workers' },
+      detections: { device_id: 'devices', profile_id: 'compliance_profiles', inspector_id: 'users', worker_id: 'workers', reviewed_by: 'users', resolution_inspector_id: 'users', resolution_corrected_by_scan_id: 'detections' },
       notifications: { detection_id: 'detections', inspector_id: 'users' },
     }[table] || {};
     for (const [field, target] of Object.entries(refs)) {
@@ -65,8 +69,12 @@ function createRepository(dbProvider = getDatabase) {
       if (!role) throw Object.assign(new Error('Select an active inspector.'), { status: 400 });
     }
     if (table === 'workers' && doc.status !== undefined && !['active', 'on_leave', 'terminated'].includes(doc.status)) throw new Error('Invalid worker status');
-    if (table === 'detections' && doc.result !== undefined && !['compliant', 'violation'].includes(doc.result)) throw new Error('Invalid detection result');
+    if (table === 'detections' && doc.result !== undefined && !['compliant', 'violation', 'manual_review'].includes(doc.result)) throw new Error('Invalid detection result');
     if (table === 'detections' && doc.alert_type !== undefined && !['compliant', 'non_compliant', 'manual_review'].includes(doc.alert_type)) throw new Error('Invalid alert type');
+    if (table === 'detections' && doc.review_status !== undefined && !['not_required', 'pending', 'reviewed'].includes(doc.review_status)) throw new Error('Invalid review status');
+    if (table === 'detections' && doc.inspector_decision !== undefined && doc.inspector_decision !== null && !['compliant', 'non_compliant', 'false_detection', 'unable_to_verify'].includes(doc.inspector_decision)) throw new Error('Invalid inspector decision');
+    if (table === 'detections' && doc.resolution_status !== undefined && doc.resolution_status !== null && !['PENDING_REVIEW', 'CONFIRMED_VIOLATION', 'FALSE_DETECTION', 'RESOLVED_AFTER_CORRECTION', 'AUTHORIZED_EXCEPTION'].includes(doc.resolution_status)) throw new Error('Invalid resolution status');
+    if (table === 'detections' && doc.resolution_decision !== undefined && doc.resolution_decision !== null && !['CONFIRM', 'FALSE_DETECTION', 'RESOLVE_AFTER_CORRECTION', 'AUTHORIZE_EXCEPTION'].includes(doc.resolution_decision)) throw new Error('Invalid resolution decision');
   }
   const api = {
     nextId,
@@ -79,16 +87,21 @@ function createRepository(dbProvider = getDatabase) {
     async insert(table, values, fields = '*') {
       const now = new Date();
       const defaults = {
-        users: { is_active: true, fcm_token: null, gmail: null, created_at: now, updated_at: now },
+        users: { is_active: true, fcm_token: null, gmail: null, mfa_enabled: false, mfa_login_otp_hash: null, mfa_login_otp_expires_at: null, mfa_pending_otp_hash: null, mfa_pending_otp_expires_at: null, mfa_recovery_codes: [], created_at: now, updated_at: now },
         compliance_profiles: { description: null, is_active: true, created_at: now, updated_at: now },
         devices: { is_active: true, profile_id: null, inspector_id: null, code: null, description: null, location: null, checkpoint_type: 'internal', required_ppe: ['helmet', 'vest'], created_at: now, registered_at: now, updated_at: now },
-        workers: { device_id: null, position: null, contact_number: null, status: 'active', created_at: now, updated_at: now },
-        detections: { worker_id: null, profile_id: null, profile_name: null, checkpoint_name: null, checkpoint_code: null, alert_type: null, required_ppe: [], missing_ppe: [], detected_ppe: [], photo_url: null, confidence_score: null, detected_at: now },
-        notifications: { is_read: false, created_at: now },
+        workers: { device_id: null, position: null, contact_number: null, status: 'active', qr_token: null, qr_generated_at: null, qr_revoked_at: null, created_at: now, updated_at: now },
+        detections: { worker_id: null, worker_name: null, worker_employee_id: null, profile_id: null, profile_name: null, checkpoint_name: null, checkpoint_code: null, alert_type: null, required_ppe: [], missing_ppe: [], detected_ppe: [], uncertain_ppe: [], photo_url: null, confidence_score: null, visibility_score: null, manual_review_reason: null, manual_review_message: null, ai_result: null, review_status: 'not_required', inspector_decision: null, reviewed_by: null, reviewed_at: null, review_notes: null, resolution_status: null, resolution_decision: null, resolution_inspector_id: null, resolution_resolved_at: null, resolution_notes: null, resolution_corrected_by_scan_id: null, detected_at: now },
+        notifications: { type: 'NON_COMPLIANT_WORKER', title: 'Non-Compliant Worker Detected', message: 'A worker requires inspector review.', is_read: false, read_at: null, created_at: now },
         password_reset_requests: { status: 'pending', reason: null, created_at: now },
       };
       const doc = { ...defaults[table], ...normalize(table, values), id: await nextId(table) };
-      if (table === 'detections' && !doc.alert_type) doc.alert_type = doc.result === 'compliant' ? 'compliant' : 'non_compliant';
+      if (table === 'detections') {
+        if (!doc.alert_type) doc.alert_type = doc.result === 'manual_review' ? 'manual_review' : doc.result === 'compliant' ? 'compliant' : 'non_compliant';
+        if (!doc.ai_result) doc.ai_result = doc.result;
+        if (doc.result === 'manual_review') doc.review_status = 'pending';
+        if (doc.resolution_status == null && ['violation', 'manual_review'].includes(doc.result)) doc.resolution_status = 'PENDING_REVIEW';
+      }
       if (table === 'detections' && doc.device_id != null && (!doc.checkpoint_name || !doc.checkpoint_code || !doc.required_ppe?.length)) {
         const checkpoint = await collection('devices').findOne({ id: doc.device_id }, { projection: { label: 1, code: 1, required_ppe: 1 } });
         if (checkpoint) {
@@ -121,6 +134,12 @@ function createRepository(dbProvider = getDatabase) {
         return await session.withTransaction(async () => {
           const row = await collection(table).findOne(match, { session });
           if (!row) return result([]);
+          if (table === 'workers') {
+            await collection('detections').updateMany({ worker_id: row.id }, [{ $set: {
+              worker_name: { $ifNull: ['$worker_name', row.full_name] },
+              worker_employee_id: { $ifNull: ['$worker_employee_id', row.employee_id] },
+            } }], { session });
+          }
           const restrictions = { users: [['detections', 'inspector_id']], compliance_profiles: [['devices', 'profile_id'], ['detections', 'profile_id']], devices: [['detections', 'device_id']], roles: [['users', 'role_id']] }[table] || [];
           for (const [target, field] of restrictions) {
             if (await collection(target).findOne({ [field]: row.id }, { session })) throw new Error('Record has linked data; deactivate it instead');
@@ -170,12 +189,12 @@ function createRepository(dbProvider = getDatabase) {
       pipeline.push(...join('devices', 'device_id', 'stationDoc'));
       if (view !== 'legacy') pipeline.push(...join('workers', 'worker_id', 'workerDoc'));
       if (view === 'admin') pipeline.push(...join('users', 'inspector_id', 'inspectorDoc'));
-      const fields = 'id device_id profile_id profile_name checkpoint_code alert_type result required_ppe missing_ppe detected_ppe scan_session_id session_status session_started_at session_ended_at frame_count confidence_summary' + (view === 'inspector' ? '' : ' confidence_score detected_at');
+      const fields = 'id device_id worker_name worker_employee_id profile_id profile_name checkpoint_code alert_type result ai_result original_authorization authorization_status authorization_event authorization_decided_at authorization_override_by authorization_override_at authorization_override_reason resolution_status resolution_decision resolution_inspector_id resolution_resolved_at resolution_notes resolution_corrected_by_scan_id required_ppe missing_ppe detected_ppe uncertain_ppe manual_review_reason manual_review_message review_status inspector_decision reviewed_by reviewed_at review_notes scan_session_id session_status session_started_at session_ended_at frame_count confidence_summary visibility_score' + (view === 'inspector' ? '' : ' confidence_score detected_at');
       pipeline.push({ $project: { ...project(fields), _timestamp: '$detected_at', station: { $ifNull: ['$checkpoint_name', { $ifNull: ['$stationDoc.label', null] }] },
         checkpoint: { id: '$device_id', name: { $ifNull: ['$checkpoint_name', { $ifNull: ['$stationDoc.label', null] }] }, code: { $ifNull: ['$checkpoint_code', { $ifNull: ['$stationDoc.code', null] }] } },
         has_photo: { $ne: [{ $ifNull: ['$photo_url', ''] }, ''] },
         ...(view !== 'inspector' ? { location: nullable('stationDoc.location') } : {}),
-        ...(view !== 'legacy' ? { worker_name: nullable('workerDoc.full_name'), worker_employee_id: nullable('workerDoc.employee_id') } : {}),
+        ...(view !== 'legacy' ? { worker_name: { $ifNull: ['$worker_name', { $ifNull: ['$workerDoc.full_name', null] }] }, worker_employee_id: { $ifNull: ['$worker_employee_id', { $ifNull: ['$workerDoc.employee_id', null] }] } } : {}),
         ...(view === 'admin' ? { inspector: nullable('inspectorDoc.full_name') } : {}),
       } });
       const output = await aggregate('detections', pipeline);
@@ -183,12 +202,29 @@ function createRepository(dbProvider = getDatabase) {
       return output;
     },
     async stats(filter) {
-      const output = await aggregate('detections', [{ $match: normalize('detections', filter) }, { $group: { _id: null, total: { $sum: 1 }, violations: { $sum: { $cond: [{ $eq: ['$result', 'violation'] }, 1, 0] } }, compliant: { $sum: { $cond: [{ $eq: ['$result', 'compliant'] }, 1, 0] } } } }, { $project: { _id: 0 } }]);
-      const row = output.rows[0] || { total: 0, violations: 0, compliant: 0 };
-      return result([{ ...row, compliance_rate: row.total ? Math.round(row.compliant / row.total * 1000) / 10 : 100 }]);
+      const authorizationStatus = { $ifNull: ['$authorization_status', { $switch: { branches: [
+        { case: { $and: [{ $eq: ['$review_status', 'reviewed'] }, { $in: ['$inspector_decision', ['compliant', 'false_detection']] }] }, then: 'authorized' },
+        { case: { $eq: ['$review_status', 'reviewed'] }, then: 'denied' },
+        { case: { $eq: ['$result', 'compliant'] }, then: 'authorized' },
+        { case: { $eq: ['$result', 'violation'] }, then: 'denied' },
+      ], default: 'pending_inspection' } }] };
+      const output = await aggregate('detections', [{ $match: normalize('detections', filter) }, { $group: { _id: null, total: { $sum: 1 }, violations: { $sum: { $cond: [{ $eq: ['$result', 'violation'] }, 1, 0] } }, compliant: { $sum: { $cond: [{ $eq: ['$result', 'compliant'] }, 1, 0] } }, manual_reviews: { $sum: { $cond: [{ $eq: ['$result', 'manual_review'] }, 1, 0] } }, pending_manual_reviews: { $sum: { $cond: [{ $and: [{ $eq: ['$result', 'manual_review'] }, { $eq: ['$review_status', 'pending'] }] }, 1, 0] } }, authorized: { $sum: { $cond: [{ $eq: [authorizationStatus, 'authorized'] }, 1, 0] } }, denied: { $sum: { $cond: [{ $eq: [authorizationStatus, 'denied'] }, 1, 0] } }, pending_authorization: { $sum: { $cond: [{ $eq: [authorizationStatus, 'pending_inspection'] }, 1, 0] } } } }, { $project: { _id: 0 } }]);
+      const row = output.rows[0] || { total: 0, violations: 0, compliant: 0, manual_reviews: 0, pending_manual_reviews: 0, authorized: 0, denied: 0, pending_authorization: 0 };
+      const decided = row.compliant + row.violations;
+      const authorizationDecided = row.authorized + row.denied;
+      return result([{ ...row, compliance_rate: decided ? Math.round(row.compliant / decided * 1000) / 10 : 100, authorization_rate: authorizationDecided ? Math.round(row.authorized / authorizationDecided * 1000) / 10 : 100 }]);
     },
     notifications(inspectorId) {
-      return aggregate('notifications', [{ $match: normalize('notifications', { inspector_id: inspectorId }) }, { $sort: { created_at: -1 } }, ...join('detections', 'detection_id', 'detectionDoc', true), ...join('devices', 'detectionDoc.device_id', 'stationDoc', true), ...join('workers', 'detectionDoc.worker_id', 'workerDoc'), { $limit: 50 }, { $project: { ...project('id detection_id is_read created_at'), result: '$detectionDoc.result', alert_type: '$detectionDoc.alert_type', missing_ppe: '$detectionDoc.missing_ppe', photo_url: nullable('detectionDoc.photo_url'), station: { $ifNull: ['$detectionDoc.checkpoint_name', '$stationDoc.label'] }, location: nullable('stationDoc.location'), worker_name: nullable('workerDoc.full_name'), worker_employee_id: nullable('workerDoc.employee_id') } }]);
+      return aggregate('notifications', [{ $match: normalize('notifications', { inspector_id: inspectorId }) }, { $sort: { created_at: -1 } }, ...join('detections', 'detection_id', 'detectionDoc', true), ...join('devices', 'detectionDoc.device_id', 'stationDoc', true), ...join('workers', 'detectionDoc.worker_id', 'workerDoc'), { $limit: 50 }, { $project: { ...project('id detection_id inspector_id type title message is_read read_at created_at'), result: '$detectionDoc.result', alert_type: '$detectionDoc.alert_type', authorization_status: '$detectionDoc.authorization_status', authorization_event: '$detectionDoc.authorization_event', missing_ppe: '$detectionDoc.missing_ppe', uncertain_ppe: '$detectionDoc.uncertain_ppe', manual_review_reason: '$detectionDoc.manual_review_reason', manual_review_message: '$detectionDoc.manual_review_message', review_status: '$detectionDoc.review_status', resolution_status: '$detectionDoc.resolution_status', photo_url: nullable('detectionDoc.photo_url'), station: { $ifNull: ['$detectionDoc.checkpoint_name', '$stationDoc.label'] }, location: nullable('stationDoc.location'), worker_name: { $ifNull: ['$detectionDoc.worker_name', { $ifNull: ['$workerDoc.full_name', null] }] }, worker_employee_id: { $ifNull: ['$detectionDoc.worker_employee_id', { $ifNull: ['$workerDoc.employee_id', null] }] } } }]);
+    },
+    async createNotificationOnce(values) {
+      const normalized = normalize('notifications', values);
+      const existing = await collection('notifications').findOne({ detection_id: normalized.detection_id, inspector_id: normalized.inspector_id });
+      if (existing) return result([pick(existing)]);
+      const doc = { type: 'NON_COMPLIANT_WORKER', title: 'Non-Compliant Worker Detected', message: 'A worker requires inspector review.', is_read: false, read_at: null, created_at: new Date(), ...normalized, id: await nextId('notifications') };
+      await references('notifications', doc);
+      try { await collection('notifications').insertOne(doc); } catch (err) { if (err.code !== 11000) throw err; }
+      return result([pick(await collection('notifications').findOne({ detection_id: doc.detection_id, inspector_id: doc.inspector_id }))]);
     },
     userActivity() {
       return aggregate('users', [{ $sort: { created_at: -1 } }, ...join('roles', 'role_id', 'roleDoc', true), { $limit: 20 }, { $project: { _id: 0, ts: '$created_at', actor: '$full_name', role: '$roleDoc.name', event_type: { $literal: 'user' } } }]);
@@ -201,7 +237,49 @@ function createRepository(dbProvider = getDatabase) {
       const doc = await collection('detections').findOne(filter);
       if (!doc) return result([]);
       const station = await collection('devices').findOne({ id: doc.device_id });
-      return api.update('detections', filter, { result: 'compliant', alert_type: 'compliant', missing_ppe: [], detected_ppe: doc.detected_ppe?.length ? doc.detected_ppe : station?.required_ppe ?? ['helmet', 'vest'] }, 'id result alert_type missing_ppe detected_ppe');
+      const original = authorizationFromCompliance(doc.ai_result || doc.result);
+      const final = authorizationFromInspectorDecision('compliant');
+      const now = new Date();
+      return api.update('detections', filter, { result: 'compliant', alert_type: 'compliant', missing_ppe: [], detected_ppe: doc.detected_ppe?.length ? doc.detected_ppe : station?.required_ppe ?? ['helmet', 'vest'], original_authorization: doc.original_authorization || original.status, authorization_status: final.status, authorization_event: final.event, authorization_decided_at: doc.authorization_decided_at || doc.detected_at || now, authorization_override_by: inspectorId, authorization_override_at: now, authorization_override_reason: 'Inspector overrode the PPE violation after visual confirmation.', resolution_status: 'FALSE_DETECTION', resolution_decision: 'FALSE_DETECTION', resolution_inspector_id: inspectorId, resolution_resolved_at: now, resolution_notes: 'Inspector overrode the PPE violation after visual confirmation.' }, 'id result ai_result alert_type original_authorization authorization_status authorization_event authorization_decided_at authorization_override_by authorization_override_at authorization_override_reason resolution_status resolution_decision resolution_inspector_id resolution_resolved_at resolution_notes missing_ppe detected_ppe');
+    },
+    async reviewDetection(id, reviewerId, role, decision, notes = null) {
+      const filter = normalize('detections', { id, ...(role === 'inspector' ? { inspector_id: reviewerId } : {}) });
+      const doc = await collection('detections').findOne(filter);
+      if (!doc || (doc.ai_result || doc.result) !== 'manual_review') return result([]);
+      const original = authorizationFromCompliance(doc.ai_result || doc.result);
+      const final = authorizationFromInspectorDecision(decision);
+      const now = new Date();
+      return api.update('detections', filter, {
+        review_status: 'reviewed', inspector_decision: decision, reviewed_by: reviewerId,
+        reviewed_at: now, review_notes: notes || null,
+        original_authorization: doc.original_authorization || original.status,
+        authorization_status: final.status, authorization_event: final.event,
+        authorization_decided_at: doc.authorization_decided_at || doc.detected_at || now,
+        authorization_override_by: reviewerId, authorization_override_at: now,
+        authorization_override_reason: notes || (final.status === 'authorized' ? 'Inspector confirmed entry may proceed.' : 'Inspector denied entry after manual inspection.'),
+        resolution_status: decision === 'non_compliant' || decision === 'unable_to_verify' ? 'CONFIRMED_VIOLATION' : decision === 'false_detection' ? 'FALSE_DETECTION' : null,
+        resolution_decision: decision === 'non_compliant' || decision === 'unable_to_verify' ? 'CONFIRM' : decision === 'false_detection' ? 'FALSE_DETECTION' : null,
+        resolution_inspector_id: reviewerId, resolution_resolved_at: now, resolution_notes: notes || null,
+      }, 'id result ai_result review_status inspector_decision reviewed_by reviewed_at review_notes original_authorization authorization_status authorization_event authorization_decided_at authorization_override_by authorization_override_at authorization_override_reason resolution_status resolution_decision resolution_inspector_id resolution_resolved_at resolution_notes');
+    },
+    async resolveDetection(id, reviewerId, role, status, reason, correctedByScanId = null) {
+      const filter = normalize('detections', { id, ...(role === 'inspector' ? { inspector_id: reviewerId } : {}), resolution_status: 'PENDING_REVIEW' });
+      const doc = await collection('detections').findOne(filter);
+      if (!doc) return { rows: [], conflict: true };
+      const allowed = new Set(['CONFIRMED_VIOLATION', 'FALSE_DETECTION', 'RESOLVED_AFTER_CORRECTION', 'AUTHORIZED_EXCEPTION']);
+      if (!allowed.has(status)) throw Object.assign(new Error('Invalid resolution status'), { status: 400 });
+      if ((status === 'FALSE_DETECTION' || status === 'AUTHORIZED_EXCEPTION') && !reason) throw Object.assign(new Error('A reason is required for this resolution.'), { status: 400 });
+      let correction = null;
+      if (status === 'RESOLVED_AFTER_CORRECTION') {
+        if (!correctedByScanId) throw Object.assign(new Error('A compliant correction scan is required.'), { status: 400 });
+        correction = await collection('detections').findOne({ id: correctedByScanId, worker_id: doc.worker_id, result: 'compliant', detected_at: { $gte: doc.detected_at } });
+        if (!correction) throw Object.assign(new Error('The correction scan must be a later compliant scan for the same employee.'), { status: 400 });
+      }
+      const now = new Date();
+      const auth = status === 'FALSE_DETECTION' || status === 'AUTHORIZED_EXCEPTION' || status === 'RESOLVED_AFTER_CORRECTION' ? authorizationFromInspectorDecision('compliant') : authorizationFromInspectorDecision('non_compliant');
+      const update = { resolution_status: status, resolution_decision: { CONFIRMED_VIOLATION: 'CONFIRM', FALSE_DETECTION: 'FALSE_DETECTION', RESOLVED_AFTER_CORRECTION: 'RESOLVE_AFTER_CORRECTION', AUTHORIZED_EXCEPTION: 'AUTHORIZE_EXCEPTION' }[status], resolution_inspector_id: reviewerId, resolution_resolved_at: now, resolution_notes: reason || null, resolution_corrected_by_scan_id: correctedByScanId || null, authorization_status: auth.status, authorization_event: auth.event, authorization_override_by: reviewerId, authorization_override_at: now, authorization_override_reason: reason || `Inspector marked the incident ${status.toLowerCase().replaceAll('_', ' ')}.` };
+      const updated = await collection('detections').findOneAndUpdate(filter, { $set: update }, { returnDocument: 'after', includeResultMetadata: false, projection: project('id worker_id result ai_result resolution_status resolution_decision resolution_inspector_id resolution_resolved_at resolution_notes resolution_corrected_by_scan_id original_authorization authorization_status authorization_event authorization_override_by authorization_override_at authorization_override_reason') });
+      return { rows: updated ? [updated] : [], conflict: !updated };
     },
   };
   return api;

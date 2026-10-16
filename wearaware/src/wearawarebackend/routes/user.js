@@ -2,6 +2,7 @@ const { validateRequest } = require('../validation');
 const router = require('express').Router();
 const { requireAuth, requireRole, data } = require('../middleware');
 const { getDatabase } = require('../database');
+const { ensureWorkerQrToken } = require('../employee-qr');
 
 router.use(requireAuth, requireRole('user'));
 router.get('/dashboard', validateRequest, async (req, res) => {
@@ -13,6 +14,7 @@ router.get('/dashboard', validateRequest, async (req, res) => {
     const worker = Number.isSafeInteger(account?.worker_id)
       ? (await data.workers({ id: account.worker_id })).rows[0] : null;
     if (!worker) return res.status(409).json({ error: 'Your account is not linked to a worker record. Please contact your administrator.' });
+    const qrRecord = await ensureWorkerQrToken(getDatabase(), worker.id);
     const filter = { worker_id: worker.id };
     const pageSize = 20;
     const [statsResult, history] = await Promise.all([
@@ -21,12 +23,12 @@ router.get('/dashboard', validateRequest, async (req, res) => {
         { $match: filter }, { $sort: { detected_at: -1, id: -1 } },
         { $skip: (page - 1) * pageSize }, { $limit: pageSize },
         { $lookup: { from: 'devices', localField: 'device_id', foreignField: 'id', as: 'station' } },
-        { $project: { _id: 0, id: 1, result: 1, alert_type: 1, profile_name: 1, detected_at: 1, detected_ppe: 1, missing_ppe: 1,
+        { $project: { _id: 0, id: 1, result: 1, alert_type: 1, original_authorization: 1, authorization_status: 1, authorization_override_at: 1, profile_name: 1, detected_at: 1, detected_ppe: 1, missing_ppe: 1, uncertain_ppe: 1, manual_review_message: 1, review_status: 1, inspector_decision: 1,
           station: { $ifNull: [{ $arrayElemAt: ['$station.label', 0] }, 'Unassigned station'] } } },
       ]).toArray(),
     ]);
     const stats = statsResult.rows[0];
-    res.json({ account: { full_name: account.full_name, email: account.email }, worker,
+    res.json({ account: { full_name: account.full_name, email: account.email }, worker: { ...worker, ...qrRecord },
       stats: { ...stats, compliance_rate: stats.total ? stats.compliance_rate : null },
       history, page, pageSize, totalPages: Math.max(1, Math.ceil(stats.total / pageSize)) });
   } catch {

@@ -12,6 +12,9 @@ export default function LoginPage({ setCurrentPage }) {
   const [showPass, setShowPass] = useState(false);
   const [loading,  setLoading]  = useState(false);
   const [error,    setError]    = useState('');
+  const [mfaStep,  setMfaStep]  = useState(false);
+  const [mfaToken, setMfaToken] = useState('');
+  const [mfaCode,  setMfaCode]  = useState('');
 
   // Forgot password state
   const [showFP,    setShowFP]    = useState(false);
@@ -57,10 +60,17 @@ export default function LoginPage({ setCurrentPage }) {
       const response = await fetch(`${API}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: normalizedEmail, password }),
+        body: JSON.stringify({ email: normalizedEmail, password, ...(mfaStep ? { mfa_token: mfaToken, mfa_code: mfaCode } : {}) }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Login failed. Please try again.');
+      if (data.mfa_required) {
+        setMfaStep(true);
+        setMfaToken(data.mfa_token);
+        setMfaCode('');
+        setError('');
+        return;
+      }
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       switch (data.user.role) {
@@ -139,6 +149,14 @@ export default function LoginPage({ setCurrentPage }) {
               <form className="login-form" onSubmit={handleSubmit}>
                 {error && <div className="login-error" role="alert">{error}</div>}
 
+                {mfaStep ? <>
+                  <div className="login-mfa-note">Your password was accepted. Enter the six-digit code sent to your email. You can also use one of your recovery codes.</div>
+                  <div className="login-field">
+                    <label className="login-label" htmlFor="login-mfa-code">Verification code</label>
+                    <input id="login-mfa-code" name="mfa_code" className="login-input" inputMode="numeric" autoComplete="one-time-code" maxLength={16} placeholder="123456 or recovery code" value={mfaCode} onChange={e => setMfaCode(e.target.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase())} required autoFocus />
+                  </div>
+                  <button type="button" className="login-forgot" onClick={() => { setMfaStep(false); setMfaToken(''); setMfaCode(''); setError(''); }}>Use a different account</button>
+                </> : <>
                 <div className="login-field">
                   <label className="login-label" htmlFor="login-email">Email address</label>
                   <div className="login-input-wrap">
@@ -168,6 +186,7 @@ export default function LoginPage({ setCurrentPage }) {
                     </button>
                   </div>
                 </div>
+                </>}
 
                 <div className="login-row">
                   <label className="login-remember">
@@ -179,8 +198,8 @@ export default function LoginPage({ setCurrentPage }) {
                   </button>
                 </div>
 
-                <button className="login-btn" type="submit" disabled={loading}>
-                  {loading ? <><span className="login-spinner" /> Signing in...</> : <>Sign in <ArrowUpRight size={18} /></>}
+                <button className="login-btn" type="submit" disabled={loading || (mfaStep && !mfaCode)}>
+                  {loading ? <><span className="login-spinner" /> Verifying...</> : <>{mfaStep ? 'Verify and sign in' : 'Sign in'} <ArrowUpRight size={18} /></>}
                 </button>
 
                 <div className="login-divider" aria-hidden="true" />

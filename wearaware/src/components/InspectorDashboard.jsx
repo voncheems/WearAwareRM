@@ -5,15 +5,29 @@ import './InspectorTheme.css';
 import {
   AlertTriangle, MapPin, TrendingUp, User,
   ClipboardList, CheckCircle, BarChart3, HardHat, Radio, Calendar,
-  Phone, ChevronUp, ChevronDown, X, Mail, Shield, Clock, KeyRound, ArrowUpRight
+  Phone, ChevronUp, ChevronDown, X, Mail, Shield, Clock, KeyRound, ArrowUpRight, Bell
 } from 'lucide-react';
 import WearAwareLogo from './Wearawarelogo';
+import MfaSettings from './MfaSettings';
 
-import { API } from '../config/api';
+import { API, API_ORIGIN } from '../config/api';
 
 function getAuthHeaders() {
   const token = localStorage.getItem('token');
   return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+}
+
+function authorizationLabel(value) {
+  return ({ authorized: 'Authorized', denied: 'Denied', pending_inspection: 'Pending Inspection' })[value] || 'Not Recorded';
+}
+
+function authorizationStyle(value) {
+  if (value === 'authorized') return { background: '#dcfce7', color: '#166534' };
+  if (value === 'denied') return { background: '#fee2e2', color: '#b91c1c' };
+  return { background: '#fff7ed', color: '#9a5706' };
+}
+function resolutionLabel(value) {
+  return ({ PENDING_REVIEW: 'Pending review', CONFIRMED_VIOLATION: 'Confirmed violation', FALSE_DETECTION: 'False detection', RESOLVED_AFTER_CORRECTION: 'Resolved after correction', AUTHORIZED_EXCEPTION: 'Authorized exception' })[value] || '—';
 }
 
 export default function InspectorDashboard({ setCurrentPage }) {
@@ -22,8 +36,10 @@ export default function InspectorDashboard({ setCurrentPage }) {
   const [filterProfile,   setFilterProfile]   = useState('All Profiles');
   const [filterDate,      setFilterDate]      = useState('');
   const [filterViolation, setFilterViolation] = useState('All Types');
+  const [filterAuthorization, setFilterAuthorization] = useState('All Access');
+  const [filterResolution, setFilterResolution] = useState('All resolutions');
   const [detections,      setDetections]      = useState([]);
-  const [detStats,        setDetStats]        = useState({ total: 0, violations: 0, compliant: 0, compliance_rate: 100 });
+  const [detStats,        setDetStats]        = useState({ total: 0, violations: 0, compliant: 0, manual_reviews: 0, pending_manual_reviews: 0, authorized: 0, denied: 0, pending_authorization: 0, authorization_rate: 100, compliance_rate: 100 });
   const [detLoading,      setDetLoading]      = useState(true);
   const [profile,         setProfile]         = useState(null);
   const [profileLoad,     setProfileLoad]     = useState(true);
@@ -40,6 +56,9 @@ export default function InspectorDashboard({ setCurrentPage }) {
   const [expandedStation, setExpandedStation] = useState(null);
   const [stationWorkers,  setStationWorkers]  = useState({});
   const [workersLoading,  setWorkersLoading]  = useState({});
+  const [notifications, setNotifications] = useState([]);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [notificationError, setNotificationError] = useState('');
 
   const storedUser = useMemo(() => JSON.parse(localStorage.getItem('user') || '{}'), []);
 
@@ -58,7 +77,48 @@ export default function InspectorDashboard({ setCurrentPage }) {
     return res;
   };
 
-  useEffect(() => { fetchProfile(); fetchDetections(); fetchStations(); }, []);
+  useEffect(() => { fetchProfile(); fetchDetections(); fetchStations(); fetchNotifications(); }, []);
+
+  const fetchNotifications = async () => {
+    try {
+      const res = await authFetch(`${API}/inspector/notifications`);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !Array.isArray(body)) throw new Error(body.error || `Notifications request failed (${res.status}).`);
+      setNotifications(body); setNotificationError('');
+    } catch (err) {
+      if (err.message === 'Session expired') return;
+      setNotificationError(err.name === 'TypeError'
+        ? 'Cannot reach the backend API. Check that the Render service is running and that Vercel has the correct VITE_API_ORIGIN.'
+        : err.message);
+    }
+  };
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) return undefined;
+    const protocol = API_ORIGIN.startsWith('https:') ? 'wss:' : 'ws:';
+    const socket = new WebSocket(`${protocol}//${new URL(API_ORIGIN).host}/alerts`);
+    socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'authenticate', token })));
+    socket.addEventListener('message', event => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.type !== 'notification' && !payload.detection_id) return;
+        setNotifications(previous => [{ id: `live-${payload.detection_id}`, detection_id: payload.detection_id, type: payload.alert_type === 'manual_review' ? 'INSPECTION_REQUIRED' : 'NON_COMPLIANT_WORKER', title: payload.title || 'Non-Compliant Worker Detected', message: payload.message || 'A worker requires review.', is_read: false, created_at: new Date().toISOString(), ...payload }, ...previous.filter(item => Number(item.detection_id) !== Number(payload.detection_id))]);
+      } catch { /* Ignore malformed real-time messages; persisted notifications remain available. */ }
+    });
+    return () => socket.close();
+  }, []);
+
+  const markNotificationRead = async (notification) => {
+    if (notification.is_read || String(notification.id).startsWith('live-')) { if (String(notification.id).startsWith('live-')) fetchNotifications(); return; }
+    try {
+      const res = await authFetch(`${API}/inspector/notifications/${notification.id}/read`, { method: 'PATCH' });
+      if (!res.ok) throw new Error('Could not mark notification as read.');
+      setNotifications(previous => previous.map(item => item.id === notification.id ? { ...item, is_read: true, read_at: new Date().toISOString() } : item));
+    } catch (err) { setNotificationError(err.message); }
+  };
+
+  const unreadNotifications = notifications.filter(notification => !notification.is_read);
 
   const fetchDetections = async () => {
     setDetLoading(true);
@@ -164,6 +224,27 @@ export default function InspectorDashboard({ setCurrentPage }) {
     }
   };
 
+  const handleManualReview = async (detectionId, decision) => {
+    if (!decision) return;
+    const notes = window.prompt('Optional authorization reason or inspection note:', '');
+    if (notes === null) return;
+    try {
+      const res = await authFetch(`${API}/inspector/detections/${detectionId}/review`, { method: 'PATCH', body: JSON.stringify({ decision, notes: notes.trim() || null }) });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Could not save the review decision.');
+      await fetchDetections();
+    } catch (err) { if (err.message !== 'Session expired') alert(err.message); }
+  };
+
+  const handleResolution = async (detectionId, status) => {
+    const reason = window.prompt(status === 'FALSE_DETECTION' || status === 'AUTHORIZED_EXCEPTION' ? 'Reason (required):' : 'Inspection notes (optional):', '');
+    if (reason === null || ((status === 'FALSE_DETECTION' || status === 'AUTHORIZED_EXCEPTION') && !reason.trim())) return;
+    try {
+      const res = await authFetch(`${API}/violations/${detectionId}/resolve`, { method: 'PATCH', body: JSON.stringify({ status, reason: reason.trim() || null }) });
+      const body = await res.json(); if (!res.ok) throw new Error(body.error || 'Could not resolve incident.'); await fetchDetections();
+    } catch (err) { if (err.message !== 'Session expired') alert(err.message); }
+  };
+
   const [photoModal,   setPhotoModal]   = useState(null);
   const [photoCache,   setPhotoCache]   = useState({});
   const [reportModal,  setReportModal]  = useState(false);
@@ -234,16 +315,18 @@ export default function InspectorDashboard({ setCurrentPage }) {
         });
 
     // Recompute stats for filtered period
+    const filteredDecided    = filtered.filter(d => d.result !== 'manual_review');
     const filteredTotal      = filtered.length;
     const filteredViolations = filtered.filter(d => d.result === 'violation').length;
     const filteredCompliant  = filtered.filter(d => d.result === 'compliant').length;
-    const filteredRate       = filteredTotal === 0 ? 100
-      : Math.round(((filteredTotal - filteredViolations) / filteredTotal) * 100);
+    const filteredManual     = filtered.filter(d => d.result === 'manual_review').length;
+    const filteredRate       = filteredDecided.length === 0 ? 100
+      : Math.round((filteredCompliant / filteredDecided.length) * 100);
 
     // Recompute PPE breakdown for filtered period
     const ppeCounts = {};
     const normalise = item => item.toLowerCase().replace(/^no-/, '').replace(/-/g, ' ').trim();
-    filtered.forEach(d => {
+    filteredDecided.forEach(d => {
       (d.detected_ppe || []).forEach(item => {
         const label = normalise(item); if (!label) return;
         if (!ppeCounts[label]) ppeCounts[label] = { present: 0, total: 0 };
@@ -263,7 +346,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
 
     // Recompute station compliance for filtered period
     const byStation = {};
-    filtered.forEach(d => {
+    filteredDecided.forEach(d => {
       const key = d.station || 'Unknown';
       if (!byStation[key]) byStation[key] = { total: 0, compliant: 0 };
       byStation[key].total++;
@@ -277,7 +360,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
 
     // Recompute daily trend for filtered period
     const byDate = {};
-    filtered.forEach(d => {
+    filteredDecided.forEach(d => {
       if (!d.date) return;
       if (!byDate[d.date]) byDate[d.date] = { total: 0, compliant: 0 };
       byDate[d.date].total++;
@@ -310,10 +393,11 @@ export default function InspectorDashboard({ setCurrentPage }) {
         <td style="font-family:monospace;font-size:11px">${escapeHtml(d.worker_employee_id || '—')}</td>
         <td>${escapeHtml(d.station || '—')}</td>
         <td>${escapeHtml(d.date)} ${escapeHtml(d.time)}</td>
-        <td style="color:${d.result === 'violation' ? '#dc2626' : '#16a34a'};font-weight:700">
-          ${d.result === 'violation' ? '⚠ Violation' : '✓ Compliant'}
+        <td style="color:${d.result === 'manual_review' ? '#b45309' : d.result === 'violation' ? '#dc2626' : '#16a34a'};font-weight:700">
+          ${d.result === 'manual_review' ? '⚠ Manual Review' : d.result === 'violation' ? '⚠ Violation' : '✓ Compliant'}
         </td>
-        <td>${escapeHtml((d.missing_ppe || []).join(', ') || '—')}</td>
+        <td style="font-weight:700">${escapeHtml(authorizationLabel(d.authorization_status))}</td>
+        <td>${escapeHtml([...(d.missing_ppe || []), ...(d.uncertain_ppe || []).map(item => `? ${item}`)].join(', ') || '—')}</td>
         <td>${escapeHtml((d.detected_ppe || []).join(', ') || '—')}</td>
       </tr>`).join('');
 
@@ -361,8 +445,8 @@ export default function InspectorDashboard({ setCurrentPage }) {
           <div style="font-weight:700">${escapeHtml(d.worker_name || 'Unknown')} <span style="font-family:monospace;color:#94a3b8">${escapeHtml(d.worker_employee_id || '')}</span></div>
           <div style="color:#64748b">${escapeHtml(d.station || '')} &middot; ${escapeHtml(d.date)} ${escapeHtml(d.time)}</div>
           <div style="color:#dc2626;margin-top:4px">${escapeHtml((d.missing_ppe||[]).join(', ') || '—')}</div>
-          <div style="margin-top:4px;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;display:inline-block;background:${d.result==='violation'?'#fee2e2':'#dcfce7'};color:${d.result==='violation'?'#dc2626':'#16a34a'}">
-            ${d.result === 'violation' ? '⚠ Violation' : '✓ Overridden'}
+          <div style="margin-top:4px;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;display:inline-block;background:${d.result==='manual_review'?'#fff7ed':d.result==='violation'?'#fee2e2':'#dcfce7'};color:${d.result==='manual_review'?'#b45309':d.result==='violation'?'#dc2626':'#16a34a'}">
+            ${d.result === 'manual_review' ? '⚠ Manual Review' : d.result === 'violation' ? '⚠ Violation' : '✓ Compliant'}
           </div>
         </div>
       </div>`).join('');
@@ -379,7 +463,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
     h2 { font-size: 15px; font-weight: 700; color: #0f766e; margin: 24px 0 10px; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px; }
     .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
     .header-meta { font-size: 11px; color: #64748b; text-align: right; line-height: 1.8; }
-    .stats-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 8px; }
+    .stats-grid { display: grid; grid-template-columns: repeat(5,1fr); gap: 12px; margin-bottom: 8px; }
     .stat-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; text-align: center; }
     .stat-val { font-size: 26px; font-weight: 800; color: #0f766e; }
     .stat-label { font-size: 11px; color: #94a3b8; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.05em; }
@@ -413,6 +497,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
     <div class="stat-box"><div class="stat-val">${filteredTotal}</div><div class="stat-label">Total Scans</div></div>
     <div class="stat-box"><div class="stat-val" style="color:#dc2626">${filteredViolations}</div><div class="stat-label">Violations</div></div>
     <div class="stat-box"><div class="stat-val" style="color:#16a34a">${filteredCompliant}</div><div class="stat-label">Compliant</div></div>
+    <div class="stat-box"><div class="stat-val" style="color:#b45309">${filteredManual}</div><div class="stat-label">Manual Review</div></div>
     <div class="stat-box"><div class="stat-val" style="color:${filteredRate>=80?'#16a34a':filteredRate>=50?'#f59e0b':'#dc2626'}">${filteredRate}%</div><div class="stat-label">Compliance Rate</div></div>
   </div>
 
@@ -436,8 +521,8 @@ export default function InspectorDashboard({ setCurrentPage }) {
 
   <h2>Full Detection Log</h2>
   <table>
-    <thead><tr><th>Worker</th><th>ID</th><th>Station</th><th>Date & Time</th><th>Status</th><th>Missing PPE</th><th>Present PPE</th></tr></thead>
-    <tbody>${logRows || '<tr><td colspan="7" style="color:#aaa;text-align:center">No data</td></tr>'}</tbody>
+    <thead><tr><th>Worker</th><th>ID</th><th>Station</th><th>Date & Time</th><th>PPE Result</th><th>Entry Access</th><th>Missing PPE</th><th>Present PPE</th></tr></thead>
+    <tbody>${logRows || '<tr><td colspan="8" style="color:#aaa;text-align:center">No data</td></tr>'}</tbody>
   </table>
 
   ${photoSection ? `<h2>Violation Proof Photos</h2><div class="photos-wrap">${photoSection}</div>` : ''}
@@ -450,7 +535,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
 
     printDocument(html);
   };
-  const resetFilters = () => { setFilterStation('All Stations'); setFilterProfile('All Profiles'); setFilterDate(''); setFilterViolation('All Types'); };
+  const resetFilters = () => { setFilterStation('All Stations'); setFilterProfile('All Profiles'); setFilterDate(''); setFilterViolation('All Types'); setFilterAuthorization('All Access'); setFilterResolution('All resolutions'); };
 
   const stationOptions = ['All Stations', ...new Set(detections.map(d => d.station).filter(Boolean))];
   const profileOptions = ['All Profiles', 'Custom requirements', ...new Set(detections.map(d => d.profile_name).filter(Boolean))];
@@ -463,12 +548,16 @@ export default function InspectorDashboard({ setCurrentPage }) {
     if (filterViolation === 'Violation'    && alertType !== 'non_compliant') return false;
     if (filterViolation === 'Manual Review' && alertType !== 'manual_review') return false;
     if (filterViolation === 'Compliant'    && alertType !== 'compliant') return false;
+    if (filterAuthorization === 'Authorized' && d.authorization_status !== 'authorized') return false;
+    if (filterAuthorization === 'Denied' && d.authorization_status !== 'denied') return false;
+    if (filterAuthorization === 'Pending Inspection' && d.authorization_status !== 'pending_inspection') return false;
+    if (filterResolution !== 'All resolutions' && (d.resolution_status || 'PENDING_REVIEW') !== filterResolution) return false;
     return true;
   });
 
   const dailyTrends = (() => {
     const byDate = {};
-    detections.forEach(d => {
+    detections.filter(d => d.result !== 'manual_review').forEach(d => {
       if (!d.date) return;
       if (!byDate[d.date]) byDate[d.date] = { total: 0, compliant: 0 };
       byDate[d.date].total++;
@@ -492,7 +581,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
     const normalise = (item) =>
       item.toLowerCase().replace(/^no-/, '').replace(/-/g, ' ').trim();
 
-    detections.forEach(d => {
+    detections.filter(d => d.result !== 'manual_review').forEach(d => {
       // Items in detected_ppe are compliant (present)
       (d.detected_ppe || []).forEach(item => {
         const label = normalise(item);
@@ -522,7 +611,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
 
   const stationCompliance = (() => {
     const byStation = {};
-    detections.forEach(d => {
+    detections.filter(d => d.result !== 'manual_review').forEach(d => {
       const key = d.station || 'Unknown';
       if (!byStation[key]) byStation[key] = { total: 0, compliant: 0, missing: {} };
       byStation[key].total++;
@@ -590,7 +679,11 @@ export default function InspectorDashboard({ setCurrentPage }) {
             </div>
             <div className="ins-topbar-sub">Welcome back, {displayName}</div>
           </div>
-          <span className="ins-badge">INSPECTOR</span>
+          <div className="ins-topbar-actions">
+            <button type="button" className="ins-notification-button" aria-label={`${unreadNotifications.length} unread notifications`} aria-expanded={notificationOpen} onClick={() => { setNotificationOpen(open => !open); if (!notificationOpen) fetchNotifications(); }}><Bell size={19} />{unreadNotifications.length > 0 && <span className="ins-notification-count">{unreadNotifications.length > 99 ? '99+' : unreadNotifications.length}</span>}</button>
+            <span className="ins-badge">INSPECTOR</span>
+            {notificationOpen && <div className="ins-notification-panel" role="dialog" aria-label="Inspector notifications"><div className="ins-notification-header"><strong>Notifications</strong><button type="button" onClick={fetchNotifications}>Refresh</button></div>{notificationError && <div className="ins-notification-error">{notificationError}</div>}{notifications.length === 0 ? <div className="ins-notification-empty">No notifications yet.</div> : <div className="ins-notification-list">{notifications.map(notification => <button type="button" key={notification.id} className={`ins-notification-item ${notification.is_read ? 'read' : 'unread'}`} onClick={() => { markNotificationRead(notification); if (notification.detection_id) { setActiveTab('violations'); window.setTimeout(() => document.querySelector(`[data-detection-id="${notification.detection_id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80); } }}><span className="ins-notification-dot" /><span><strong>{notification.title || 'Inspector notification'}</strong><small>{notification.message || 'Open the violation history to review this incident.'}</small><small>{notification.station || 'Checkpoint'} · {notification.worker_name || notification.worker_employee_id || 'Worker'} · {notification.created_at ? new Date(notification.created_at).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }) : 'Just now'}</small><small className="ins-notification-link">View incident →</small></span></button>)}</div>}</div>}
+          </div>
         </div>
 
         <div className="ins-content" key={activeTab}>
@@ -614,6 +707,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
                 {[
                   { icon: <ClipboardList size={20} />, val: detStats.total,                          label: 'Total Detections', sub: 'All time'    },
                   { icon: <AlertTriangle size={20} />, val: detStats.violations,                     label: 'Violations',       sub: 'Needs review' },
+                  { icon: <Clock size={20} />,         val: detStats.pending_manual_reviews || 0,   label: 'Manual Review',   sub: 'Pending decision' },
                   { icon: <CheckCircle size={20} />,   val: detStats.compliant,                      label: 'Compliant',        sub: 'All clear'    },
                   { icon: <BarChart3 size={20} />,     val: `${detStats.compliance_rate ?? 100}%`,   label: 'Compliance Rate',  sub: 'Overall'      },
                 ].map(card => (
@@ -658,6 +752,13 @@ export default function InspectorDashboard({ setCurrentPage }) {
                       <option>All Types</option><option>Violation</option><option>Manual Review</option><option>Compliant</option>
                     </select>
                   </div>
+                  <div className="ins-filter-group">
+                    <div className="ins-filter-label">Entry Access</div>
+                    <select className="ins-filter-select" value={filterAuthorization} onChange={e => setFilterAuthorization(e.target.value)}>
+                      <option>All Access</option><option>Authorized</option><option>Denied</option><option>Pending Inspection</option>
+                    </select>
+                  </div>
+                  <div className="ins-filter-group"><div className="ins-filter-label">Resolution</div><select className="ins-filter-select" value={filterResolution} onChange={e => setFilterResolution(e.target.value)}><option>All resolutions</option><option value="PENDING_REVIEW">Pending review</option><option value="CONFIRMED_VIOLATION">Confirmed violation</option><option value="FALSE_DETECTION">False detection</option><option value="RESOLVED_AFTER_CORRECTION">Resolved after correction</option><option value="AUTHORIZED_EXCEPTION">Authorized exception</option></select></div>
                   <button className="ins-filter-reset" onClick={resetFilters}>Reset</button>
                 </div>
 
@@ -670,16 +771,18 @@ export default function InspectorDashboard({ setCurrentPage }) {
                       <th>Checkpoint</th>
                       <th>Profile</th>
                       <th>Date & Time</th>
-                      <th>Status</th>
-                      <th>Missing PPE</th>
+                      <th>PPE Result</th>
+                      <th>Entry Access</th>
+                      <th>Inspector Resolution</th>
+                      <th>Missing / Uncertain PPE</th>
                       <th>Present PPE</th>
                     </tr>
                   </thead>
                   <tbody>
                     {detLoading ? (
-                      <tr><td colSpan={8} className="ins-empty">Loading detections…</td></tr>
+                      <tr><td colSpan={10} className="ins-empty">Loading detections…</td></tr>
                     ) : filteredViolations.length === 0 ? (
-                      <tr><td colSpan={8} className="ins-empty">No records match your filters</td></tr>
+                      <tr><td colSpan={10} className="ins-empty">No records match your filters</td></tr>
                     ) : filteredViolations.map((d, i) => {
                       const prevDate = i > 0 ? filteredViolations[i - 1].date : null;
                       const showDateHeader = d.date !== prevDate;
@@ -691,18 +794,18 @@ export default function InspectorDashboard({ setCurrentPage }) {
                         <React.Fragment key={d.id}>
                           {showDateHeader && (
                             <tr>
-                              <td colSpan={8} style={{ padding: '0.65rem 1rem', background: 'linear-gradient(90deg, #f0f0ff 0%, #f9fafb 100%)', borderTop: i > 0 ? '2px solid #e2e4f0' : 'none', borderBottom: '1px solid #eee', fontWeight: 700, fontSize: '0.82rem', color: '#4a5073', letterSpacing: '0.02em' }}>
+                              <td colSpan={10} style={{ padding: '0.65rem 1rem', background: 'linear-gradient(90deg, #f0f0ff 0%, #f9fafb 100%)', borderTop: i > 0 ? '2px solid #e2e4f0' : 'none', borderBottom: '1px solid #eee', fontWeight: 700, fontSize: '0.82rem', color: '#4a5073', letterSpacing: '0.02em' }}>
                                 <Calendar size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: '0.35rem' }} />{dateLabel}
                               </td>
                             </tr>
                           )}
-                          <tr>
+                          <tr data-detection-id={d.id}>
                             <td>
                               {d.has_photo
                                 ? <button type="button" onClick={() => openInspectorPhoto(d.id)} aria-label="Open violation proof photo"
                                     style={{ width: 48, height: 48, borderRadius: 6, cursor: 'pointer', border: '2px solid #fca5a5', background: '#fff1f2', fontSize: '1.1rem' }}>📷</button>
                                 : <div className="ins-photo">
-                                    {d.result === 'violation'
+                                    {d.result === 'manual_review' || d.result === 'violation'
                                       ? <AlertTriangle size={18} color="#e53e3e" />
                                       : <CheckCircle   size={18} color="#38a169" />}
                                   </div>}
@@ -736,12 +839,17 @@ export default function InspectorDashboard({ setCurrentPage }) {
                                     ✓ Override
                                   </button>
                                 )}
+                                {d.result === 'manual_review' && d.review_status === 'pending' && <select aria-label={`Resolve manual review ${d.id}`} defaultValue="" onChange={event => handleManualReview(d.id, event.target.value)} style={{ fontSize: '0.7rem', padding: '3px 6px', maxWidth: 210, borderRadius: 5, border: '1px solid #d6a646', color: '#8a5107', background: '#fffaf0' }}><option value="" disabled>Resolve entry…</option><option value="compliant">Allow Entry — PPE Confirmed</option><option value="non_compliant">Deny Entry — PPE Missing</option><option value="false_detection">Allow Entry — False Detection</option><option value="unable_to_verify">Deny Entry — Unable to Verify</option></select>}
+                                {d.result === 'manual_review' && d.review_status === 'reviewed' && <small style={{ color: '#8a5107' }}>Decision: {String(d.inspector_decision || '').replaceAll('_', ' ')}</small>}
                               </div>
                             </td>
+                            <td><span className="ins-vbadge" style={authorizationStyle(d.authorization_status)}>{authorizationLabel(d.authorization_status)}</span>{d.authorization_override_at && <small style={{ display: 'block', marginTop: 5, color: '#718096' }}>Overridden by inspector</small>}</td>
+                            <td><span className="ins-vbadge" style={{ background: d.resolution_status === 'CONFIRMED_VIOLATION' ? '#fee2e2' : d.resolution_status === 'FALSE_DETECTION' ? '#e0f2fe' : d.resolution_status === 'PENDING_REVIEW' ? '#fff7ed' : '#dcfce7', color: d.resolution_status === 'CONFIRMED_VIOLATION' ? '#b91c1c' : d.resolution_status === 'FALSE_DETECTION' ? '#075985' : d.resolution_status === 'PENDING_REVIEW' ? '#9a5706' : '#166534' }}>{resolutionLabel(d.resolution_status)}</span>{(d.resolution_status === 'PENDING_REVIEW' || (!d.resolution_status && d.result === 'violation')) && <div className="ins-resolution-actions"><button className="ins-resolution-action confirm" type="button" onClick={() => handleResolution(d.id, 'CONFIRMED_VIOLATION')}>Confirm</button><button className="ins-resolution-action false-detection" type="button" onClick={() => handleResolution(d.id, 'FALSE_DETECTION')}>False detection</button></div>}</td>
                             <td>
-                              {(d.missing_ppe || []).length > 0
-                                ? d.missing_ppe.map(p => <span key={p} className="ins-ppe-tag missing">{p}</span>)
-                                : <span style={{ color: '#ccc', fontSize: '0.78rem' }}>—</span>}
+                              {(d.missing_ppe || []).map(p => <span key={`missing-${p}`} className="ins-ppe-tag missing">{p}</span>)}
+                              {(d.uncertain_ppe || []).map(p => <span key={`uncertain-${p}`} className="ins-ppe-tag" style={{ background: '#fff2c7', color: '#94600b' }}>? {p}</span>)}
+                              {!(d.missing_ppe || []).length && !(d.uncertain_ppe || []).length && <span style={{ color: '#ccc', fontSize: '0.78rem' }}>—</span>}
+                              {d.manual_review_message && <small style={{ display: 'block', maxWidth: 220, marginTop: 5, color: '#8a5107' }}>{d.manual_review_message}</small>}
                             </td>
                             <td>
                               {(d.detected_ppe || []).length > 0
@@ -889,10 +997,10 @@ export default function InspectorDashboard({ setCurrentPage }) {
                           <div style={{
                             position: 'absolute', top: 8, right: 8,
                             padding: '3px 10px', borderRadius: 20, fontSize: '0.72rem', fontWeight: 700,
-                            background: d.result === 'violation' ? '#ef4444' : '#16a34a',
+                            background: d.result === 'manual_review' ? '#d69e2e' : d.result === 'violation' ? '#ef4444' : '#16a34a',
                             color: '#fff',
                           }}>
-                            {d.result === 'violation' ? '⚠ Violation' : '✓ Overridden'}
+                            {d.result === 'manual_review' ? '⚠ Manual Review' : d.result === 'violation' ? '⚠ Violation' : '✓ Compliant'}
                           </div>
                         </div>
 
@@ -1109,6 +1217,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
                   )}
                 </div>
               </div>
+              <MfaSettings />
             </div>
           )}
 

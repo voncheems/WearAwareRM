@@ -88,6 +88,45 @@ test('administrators manage checkpoint requirements and activation through check
   assert.equal((await call(`/api/checkpoints/${created.id}`, auth, 'DELETE')).status, 200);
 });
 
+test('secure employee QR tokens identify workers, support manual fallback, and revoke old codes', async () => {
+  const admin = token(1, 'admin');
+  const scanner = token(6, 'scanner');
+  assert.equal((await call('/api/workers/11/qr', token(2, 'inspector'))).status, 403);
+  assert.equal((await call('/api/workers/11/qr/regenerate', scanner, 'POST', {})).status, 403);
+
+  const qrResponse = await call('/api/workers/11/qr', admin);
+  assert.equal(qrResponse.status, 200);
+  const qr = await qrResponse.json();
+  assert.match(qr.qr_token, /^wearaware_emp_[A-Za-z0-9_-]{43}$/);
+  assert.equal(qr.qr_active, true);
+
+  const identified = await call('/api/workers/identify', scanner, 'POST', { qr_token: qr.qr_token });
+  assert.equal(identified.status, 200);
+  const identity = await identified.json();
+  assert.deepEqual({ id: identity.employee.id, code: identity.employee.employee_id, name: identity.employee.full_name }, { id: 11, code: 'W11', name: 'First' });
+  assert.equal(identity.employee.qr_token, undefined);
+  assert.equal(identity.checkpoint.id, 1);
+  assert.equal((await call('/api/workers/identify', scanner, 'POST', { employee_id: 'w11' })).status, 200);
+  assert.equal((await call('/api/workers/identify', scanner, 'POST', { qr_token: `wearaware_emp_${'A'.repeat(43)}` })).status, 404);
+  assert.equal((await call('/api/workers/identify', scanner, 'POST', { qr_token: 'W11' })).status, 400);
+
+  await db.collection('workers').updateOne({ id: 11 }, { $set: { status: 'terminated' } });
+  const inactive = await call('/api/workers/identify', scanner, 'POST', { qr_token: qr.qr_token });
+  assert.equal(inactive.status, 403); assert.equal((await inactive.json()).code, 'EMPLOYEE_INACTIVE');
+  await db.collection('workers').updateOne({ id: 11 }, { $set: { status: 'active' } });
+
+  const regenerated = await (await call('/api/workers/11/qr/regenerate', admin, 'POST', {})).json();
+  assert.notEqual(regenerated.worker.qr_token, qr.qr_token);
+  assert.equal((await call('/api/workers/identify', scanner, 'POST', { qr_token: qr.qr_token })).status, 404);
+  assert.equal((await call('/api/workers/identify', scanner, 'POST', { qr_token: regenerated.worker.qr_token })).status, 200);
+
+  assert.equal((await call('/api/workers/11/qr', admin, 'DELETE')).status, 200);
+  assert.equal((await call('/api/workers/identify', scanner, 'POST', { qr_token: regenerated.worker.qr_token })).status, 404);
+  const revoked = await (await call('/api/workers/11/qr', admin)).json();
+  assert.equal(revoked.qr_active, false); assert.equal(revoked.qr_token, null);
+  assert.equal((await call('/api/workers/11/qr/regenerate', admin, 'POST', {})).status, 200);
+});
+
 test('safe errors, headers, CORS and malformed/oversized request protection', async () => {
   const response = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{' });
   assert.equal(response.status, 400); assert.equal((await response.json()).error, 'Invalid request data.');
@@ -134,11 +173,19 @@ test('inspectors read only their stations while the dedicated scanner routes wri
   assert.equal(firstScannerCheck.status, 201);
   const firstRecord = await db.collection('detections').findOne({ id: (await firstScannerCheck.json()).detection_id });
   assert.equal(firstRecord.inspector_id, 2); assert.equal(firstRecord.device_id, 1); assert.equal(firstRecord.worker_id, 11);
+  assert.equal(firstRecord.worker_name, 'First'); assert.equal(firstRecord.worker_employee_id, 'W11');
   assert.equal(firstRecord.result, 'compliant'); assert.equal(firstRecord.checkpoint_name, 'First');
   assert.equal(firstRecord.checkpoint_code, 'FIRST-01');
   assert.equal(firstRecord.profile_id, reusableProfileId); assert.equal(firstRecord.profile_name, 'Test Warehouse');
   assert.equal(firstRecord.alert_type, 'compliant');
+  assert.equal(firstRecord.original_authorization, 'authorized');
+  assert.equal(firstRecord.authorization_status, 'authorized');
+  assert.equal(firstRecord.authorization_event, 'ACCESS_AUTHORIZED');
   assert.deepEqual(firstRecord.required_ppe, ['helmet', 'vest']); assert.deepEqual(firstRecord.missing_ppe, []);
+  const deniedResponse = await call('/api/detections', scannerAuth, 'POST', { worker_id: 11, checkpoint_id: 1, detected_ppe: ['vest'], confidence_score: 0.92, visibility_score: 1, frame_count: 5, confidence_summary: [{ ppe: 'helmet', average_confidence: 0, positive_frames: 0, weak_frames: 0, observed_frames: 0 }, { ppe: 'vest', average_confidence: 0.92, positive_frames: 5, weak_frames: 0, observed_frames: 5 }] });
+  assert.equal(deniedResponse.status, 201);
+  const deniedBody = await deniedResponse.json();
+  assert.equal(deniedBody.result, 'violation'); assert.equal(deniedBody.authorization_status, 'denied'); assert.equal(deniedBody.authorization_event, 'ACCESS_DENIED');
   const scanSessionId = '4ff73444-2c84-43d7-bb89-148529020d02';
   const sessionPayload = { worker_id: 11, checkpoint_id: 1, detected_ppe: ['helmet', 'vest'], confidence_score: 0.88, scan_session_id: scanSessionId, session_started_at: '2026-10-01T10:00:00.000Z', session_ended_at: '2026-10-01T10:00:05.000Z', frame_count: 4, confidence_summary: [{ ppe: 'helmet', average_confidence: 0.9, positive_frames: 4 }, { ppe: 'vest', average_confidence: 0.86, positive_frames: 3 }], manual_review_required: false };
   const beforeSessions = await db.collection('detections').countDocuments({ scan_session_id: scanSessionId });
@@ -157,11 +204,127 @@ test('inspectors read only their stations while the dedicated scanner routes wri
   const scannerRecord = await db.collection('detections').findOne({ id: (await scannerCheck.json()).detection_id });
   assert.equal(scannerRecord.inspector_id, 3); assert.equal(scannerRecord.device_id, 2); assert.equal(scannerRecord.worker_id, 12);
   const manualReview = await call('/api/detections', scannerAuth, 'POST', { worker_id: 12, checkpoint_id: 2, detected_ppe: ['gloves', 'goggles'], confidence_score: 0.31 });
-  assert.equal(manualReview.status, 201); assert.equal((await manualReview.json()).alert_type, 'manual_review');
+  const manualBody = await manualReview.json();
+  assert.equal(manualReview.status, 201); assert.equal(manualBody.alert_type, 'manual_review'); assert.equal(manualBody.result, 'manual_review');
+  assert.equal(manualBody.original_authorization, 'pending_inspection'); assert.equal(manualBody.authorization_status, 'pending_inspection'); assert.equal(manualBody.authorization_event, 'ACCESS_PENDING');
+  const manualRecord = await db.collection('detections').findOne({ id: manualBody.detection_id });
+  assert.equal(manualRecord.ai_result, 'manual_review'); assert.equal(manualRecord.review_status, 'pending');
+  assert.equal((await call(`/api/inspector/detections/${manualRecord.id}/review`, token(2), 'PATCH', { decision: 'compliant' })).status, 404);
+  const reviewed = await call(`/api/inspector/detections/${manualRecord.id}/review`, token(3), 'PATCH', { decision: 'compliant' });
+  assert.equal(reviewed.status, 200);
+  const reviewedRecord = await db.collection('detections').findOne({ id: manualRecord.id });
+  assert.equal(reviewedRecord.result, 'manual_review'); assert.equal(reviewedRecord.ai_result, 'manual_review');
+  assert.equal(reviewedRecord.review_status, 'reviewed'); assert.equal(reviewedRecord.inspector_decision, 'compliant');
+  assert.equal(reviewedRecord.original_authorization, 'pending_inspection'); assert.equal(reviewedRecord.authorization_status, 'authorized');
+  assert.equal(reviewedRecord.authorization_event, 'ACCESS_AUTHORIZED'); assert.equal(reviewedRecord.authorization_override_by, 3);
+  assert.ok(reviewedRecord.authorization_override_at instanceof Date); assert.ok(reviewedRecord.authorization_override_reason);
+  const manualDeny = await call('/api/detections', scannerAuth, 'POST', { worker_id: 12, checkpoint_id: 2, detected_ppe: ['gloves', 'goggles'], confidence_score: 0.31 });
+  const manualDenyBody = await manualDeny.json();
+  const deniedReview = await call(`/api/inspector/detections/${manualDenyBody.detection_id}/review`, token(3), 'PATCH', { decision: 'unable_to_verify', notes: 'PPE could not be visually confirmed.' });
+  assert.equal(deniedReview.status, 200);
+  const manuallyDenied = await db.collection('detections').findOne({ id: manualDenyBody.detection_id });
+  assert.equal(manuallyDenied.original_authorization, 'pending_inspection'); assert.equal(manuallyDenied.authorization_status, 'denied');
+  assert.equal(manuallyDenied.authorization_override_reason, 'PPE could not be visually confirmed.');
+  const stats = await (await call('/api/admin/stats', token(1, 'admin'))).json();
+  assert.ok(stats.manual_reviews >= 1); assert.equal(stats.pending_manual_reviews, 0);
   assert.equal((await call('/api/checkpoints/2/status', token(1, 'admin'), 'PATCH', { is_active: false })).status, 200);
   assert.equal((await call('/api/detections', scannerAuth, 'POST', { worker_id: 12, checkpoint_id: 2, detected_ppe: ['gloves', 'goggles'] })).status, 403);
   assert.equal((await call('/api/checkpoints/2/status', token(1, 'admin'), 'PATCH', { is_active: true })).status, 200);
   assert.equal((await call(`/api/compliance-profiles/${reusableProfileId}`, token(1, 'admin'), 'DELETE')).status, 409);
+});
+
+test('violation analytics aggregate final sessions, preserve snapshots and enforce filters and roles', async () => {
+  await db.collection('detections').insertMany([
+    { id: 8001, device_id: 1, profile_id: reusableProfileId, checkpoint_name: 'Old Main Gate', checkpoint_code: 'FIRST-01', result: 'compliant', required_ppe: ['helmet', 'vest'], detected_ppe: ['helmet', 'vest'], missing_ppe: [], uncertain_ppe: [], review_status: 'not_required', confidence_score: 0.9, session_status: 'completed', detected_at: new Date('2026-06-01T00:30:00.000Z') },
+    { id: 8002, device_id: 1, profile_id: reusableProfileId, checkpoint_name: 'New Main Gate', checkpoint_code: 'FIRST-01', result: 'violation', required_ppe: ['helmet', 'gloves'], detected_ppe: ['gloves'], missing_ppe: ['helmet'], uncertain_ppe: [], review_status: 'not_required', confidence_score: 0.8, session_status: 'completed', detected_at: new Date('2026-06-01T03:00:00.000Z') },
+    { id: 8003, device_id: 2, profile_id: null, checkpoint_name: 'Laboratory', checkpoint_code: 'OTHER-01', result: 'manual_review', required_ppe: ['goggles'], detected_ppe: [], missing_ppe: [], uncertain_ppe: ['goggles'], review_status: 'pending', manual_review_reason: 'LOW_CONFIDENCE', confidence_score: 0.48, session_status: 'completed', detected_at: new Date('2026-06-01T08:00:00.000Z') },
+    { id: 8004, device_id: 2, profile_id: null, checkpoint_name: 'Laboratory', checkpoint_code: 'OTHER-01', result: 'violation', required_ppe: ['gloves', 'goggles'], detected_ppe: ['goggles'], missing_ppe: ['gloves'], uncertain_ppe: [], review_status: 'not_required', confidence_score: 0.75, session_status: 'completed', detected_at: new Date('2026-06-01T10:00:00.000Z') },
+    { id: 8005, device_id: 1, profile_id: reusableProfileId, checkpoint_name: 'New Main Gate', checkpoint_code: 'FIRST-01', result: 'violation', required_ppe: ['helmet'], detected_ppe: [], missing_ppe: ['helmet'], uncertain_ppe: [], review_status: 'not_required', session_status: 'incomplete', detected_at: new Date('2026-06-01T11:00:00.000Z') },
+  ]);
+
+  const path = '/api/admin/analytics?period=custom&startDate=2026-06-01&endDate=2026-06-01&granularity=daily';
+  assert.equal((await call(path, token(2, 'inspector'))).status, 403);
+  const response = await call(path, token(1, 'admin'));
+  assert.equal(response.status, 200);
+  const analytics = await response.json();
+  assert.deepEqual({ total: analytics.summary.total, compliant: analytics.summary.compliant, violations: analytics.summary.violations, manual_reviews: analytics.summary.manual_reviews, manual_pending: analytics.summary.manual_pending, rate: analytics.summary.compliance_rate }, { total: 4, compliant: 1, violations: 2, manual_reviews: 1, manual_pending: 1, rate: 33.3 });
+  assert.deepEqual({ authorized: analytics.summary.authorized, denied: analytics.summary.denied, pending: analytics.summary.pending_authorization, rate: analytics.summary.authorization_rate }, { authorized: 1, denied: 2, pending: 1, rate: 33.3 });
+  assert.deepEqual(analytics.missing_ppe, [{ count: 1, ppe: 'gloves' }, { count: 1, ppe: 'helmet' }]);
+  assert.equal(analytics.checkpoints.find(row => row.checkpoint_id === 1).checkpoint_name, 'New Main Gate');
+  assert.deepEqual(new Set(analytics.checkpoints.find(row => row.checkpoint_id === 1).historical_names), new Set(['Old Main Gate', 'New Main Gate']));
+  assert.equal(analytics.busiest_checkpoints[0].total, 2);
+  assert.equal(analytics.trends[0].manual_reviews, 1);
+  assert.equal(analytics.time_of_day.find(row => row.bucket === '09:00–12:00').violations, 1);
+  assert.equal(analytics.time_of_day.find(row => row.bucket === '18:00–21:00').violations, 1);
+  assert.equal(analytics.recent_violations.length, 2);
+  assert.deepEqual(analytics.uncertain_ppe, [{ count: 1, ppe: 'goggles' }]);
+  assert.equal((await call(path.replace('granularity=daily', 'granularity=weekly'), token(1, 'admin'))).status, 200);
+
+  const checkpoint = await (await call(`${path}&checkpointId=1`, token(1, 'admin'))).json();
+  assert.equal(checkpoint.summary.total, 2);
+  const helmet = await (await call(`${path}&ppe=helmet`, token(1, 'admin'))).json();
+  assert.deepEqual({ total: helmet.summary.total, violations: helmet.summary.violations, rate: helmet.summary.compliance_rate }, { total: 2, violations: 1, rate: 50 });
+  assert.deepEqual(helmet.missing_ppe, [{ count: 1, ppe: 'helmet' }]);
+  const gloves = await (await call(`${path}&ppe=gloves`, token(1, 'admin'))).json();
+  assert.deepEqual({ total: gloves.summary.total, compliant: gloves.summary.compliant, violations: gloves.summary.violations, rate: gloves.summary.compliance_rate }, { total: 2, compliant: 1, violations: 1, rate: 50 });
+  assert.equal(gloves.recent_violations.length, 1);
+  assert.equal((await call('/api/admin/analytics?period=custom&startDate=bad&endDate=2026-06-01', token(1, 'admin'))).status, 400);
+  assert.equal((await call('/api/admin/analytics?period=all&unexpected=true', token(1, 'admin'))).status, 400);
+});
+test('repeat-violation tracking uses final inspector outcomes and remains separate from the current scan verdict', async () => {
+  const now = Date.now();
+  const ago = days => new Date(now - days * 86400000);
+  await db.collection('workers').insertOne({ id: 13, employee_id: 'WA-0013', full_name: 'Repeat Test Worker', position: 'Technician', device_id: 1, status: 'active' });
+  const baseDetection = {
+    worker_id: 13, worker_name: 'Repeat Test Worker', worker_employee_id: 'WA-0013',
+    device_id: 1, inspector_id: 2, checkpoint_name: 'First', checkpoint_code: 'FIRST-01',
+    required_ppe: ['helmet', 'vest', 'gloves'], uncertain_ppe: [], session_status: 'completed',
+  };
+  await db.collection('detections').insertMany([
+    { ...baseDetection, id: 8201, result: 'violation', ai_result: 'violation', alert_type: 'non_compliant', detected_ppe: ['vest', 'gloves'], missing_ppe: ['helmet'], review_status: 'not_required', inspector_decision: null, detected_at: ago(25) },
+    { ...baseDetection, id: 8202, result: 'manual_review', ai_result: 'manual_review', alert_type: 'manual_review', detected_ppe: ['helmet', 'vest'], missing_ppe: ['gloves'], review_status: 'reviewed', inspector_decision: 'non_compliant', reviewed_by: 2, reviewed_at: ago(19), detected_at: ago(20) },
+    { ...baseDetection, id: 8203, result: 'manual_review', ai_result: 'manual_review', alert_type: 'manual_review', detected_ppe: ['vest', 'gloves'], missing_ppe: ['helmet'], review_status: 'reviewed', inspector_decision: 'false_detection', reviewed_by: 2, reviewed_at: ago(14), detected_at: ago(15) },
+    { ...baseDetection, id: 8204, result: 'manual_review', ai_result: 'manual_review', alert_type: 'manual_review', detected_ppe: ['helmet'], missing_ppe: [], uncertain_ppe: ['vest'], review_status: 'pending', inspector_decision: null, detected_at: ago(10) },
+    { ...baseDetection, id: 8205, result: 'violation', ai_result: 'violation', alert_type: 'non_compliant', detected_ppe: ['helmet', 'gloves'], missing_ppe: ['vest'], review_status: 'not_required', inspector_decision: null, detected_at: ago(2) },
+    { ...baseDetection, id: 8206, result: 'compliant', ai_result: 'compliant', alert_type: 'compliant', detected_ppe: ['helmet', 'vest', 'gloves'], missing_ppe: [], review_status: 'not_required', inspector_decision: null, detected_at: ago(1) },
+  ]);
+
+  const overviewResponse = await call('/api/admin/repeat-violations?days=30&search=WA-0013', token(1, 'admin'));
+  assert.equal(overviewResponse.status, 200);
+  const overview = await overviewResponse.json();
+  assert.equal(overview.summary.employees_analyzed, 1);
+  assert.equal(overview.summary.employees_flagged, 1);
+  assert.equal((await (await call('/api/admin/repeat-violations?days=30&search=13', token(1, 'admin'))).json()).summary.employees_analyzed, 1);
+  const employee = overview.employees[0];
+  assert.deepEqual({ total: employee.total, compliant: employee.compliant, violations: employee.violations, manual: employee.manual_reviews, policy: employee.policy_violations, status: employee.repeat_status, rate: employee.compliance_rate }, { total: 5, compliant: 1, violations: 3, manual: 1, policy: 3, status: 'REPEAT_VIOLATION', rate: 25 });
+  assert.deepEqual(employee.most_missing_ppe.map(item => [item.ppe, item.count]).sort(), [['gloves', 1], ['helmet', 1], ['vest', 1]]);
+  assert.equal((await call('/api/admin/repeat-violations?days=5', token(1, 'admin'))).status, 400);
+  assert.equal((await call('/api/admin/repeat-violations', token(4, 'user'))).status, 403);
+
+  const historyResponse = await call('/api/admin/workers/13/compliance-history?days=30', token(1, 'admin'));
+  assert.equal(historyResponse.status, 200);
+  const history = await historyResponse.json();
+  assert.equal(history.repeat_status, 'REPEAT_VIOLATION');
+  assert.equal(history.summary.compliant_since_last_violation, 1);
+  assert.ok(history.history.some(record => record.final_outcome === 'excluded'));
+  assert.equal((await call('/api/inspector/workers/13/compliance-history?days=30', token(2, 'inspector'))).status, 200);
+  assert.equal((await call('/api/inspector/workers/13/compliance-history?days=30', token(3, 'inspector'))).status, 403);
+
+  await db.collection('detections').updateOne({ id: 8202 }, { $set: { inspector_decision: 'compliant' } });
+  const corrected = await (await call('/api/admin/workers/13/compliance-history?days=30', token(1, 'admin'))).json();
+  assert.deepEqual({ status: corrected.repeat_status, violations: corrected.summary.violations, compliant: corrected.summary.compliant, rate: corrected.summary.compliance_rate }, { status: 'NORMAL', violations: 2, compliant: 2, rate: 50 });
+
+  await db.collection('detections').updateOne({ id: 8202 }, { $set: { inspector_decision: 'non_compliant' } });
+  const scannerResponse = await call('/api/detections', token(6, 'scanner'), 'POST', { worker_id: 13, checkpoint_id: 1, detected_ppe: ['helmet', 'vest'], confidence_score: 0.92 });
+  assert.equal(scannerResponse.status, 201);
+  const scannerResult = await scannerResponse.json();
+  assert.equal(scannerResult.result, 'compliant');
+  assert.equal(scannerResult.authorization_status, 'authorized');
+  assert.equal(scannerResult.repeat_violation.is_repeat, true);
+  assert.equal(scannerResult.repeat_violation.violations_in_window, 3);
+  const saved = await db.collection('detections').findOne({ id: scannerResult.detection_id });
+  assert.equal(saved.worker_name, 'Repeat Test Worker');
+  assert.equal(saved.worker_employee_id, 'WA-0013');
 });
 test('recovery is generic, stores only hashes, enforces expiry and consumes a link once', async () => {
   const request = await call('/api/auth/forgot-password', null, 'POST', { email: 'worker@example.test' });

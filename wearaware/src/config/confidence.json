@@ -1,0 +1,12 @@
+{
+  "observationConfidence": 0.35,
+  "minimumDetectionConfidence": 0.60,
+  "manualReviewConfidence": 0.55,
+  "personConfidence": 0.50,
+  "minimumPositiveFrames": 2,
+  "minimumPositiveFrameRatio": 0.60,
+  "minimumValidFrames": 3,
+  "minimumVisibleFrameRatio": 0.60,
+  "frameEdgeMarginPixels": 6,
+  "minimumPersonAreaRatio": 0.08
+}

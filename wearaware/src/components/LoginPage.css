@@ -63,6 +63,7 @@
 .fp-sub { font-size: 12px; line-height: 1.8; color: #74816a; margin-bottom: 25px; }
 .fp-field { margin-bottom: 17px; }
 .fp-textarea { resize: vertical; min-height: 90px; }
+.login-mfa-note { padding: 12px 14px; border: 1px solid #dfe8d8; border-radius: 12px; background: #f7faf4; color: #526052; font-size: 12px; line-height: 1.55; }
 .fp-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; flex-wrap: wrap; }
 .fp-btn-ghost, .fp-btn-primary { font-size: 12px; font-weight: 550; border-radius: 11px; padding: 12px 16px; cursor: pointer; transition: background .2s; }
 .fp-btn-ghost { background: white; color: #627456; border: 1px solid #dfe6d7; }

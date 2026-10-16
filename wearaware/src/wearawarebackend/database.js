@@ -30,12 +30,17 @@ async function ensureIndexes(db) {
   await db.collection('devices').createIndex({ code: 1 }, { unique: true, partialFilterExpression: { code: { $type: 'string' } } });
   await db.collection('compliance_profiles').createIndex({ name_key: 1 }, { unique: true });
   await db.collection('users').createIndex({ worker_id: 1 }, { unique: true, partialFilterExpression: { worker_id: { $type: 'number' } } });
+  await db.collection('workers').createIndex({ qr_token: 1 }, { unique: true, partialFilterExpression: { qr_token: { $type: 'string' } } });
   await db.collection('detections').createIndex({ scan_session_id: 1 }, { unique: true, partialFilterExpression: { scan_session_id: { $type: 'string' } } });
+  await db.collection('notifications').createIndex({ detection_id: 1, inspector_id: 1 }, { unique: true });
   for (const [table, keys] of [
     ['users', { role_id: 1 }], ['workers', { device_id: 1 }], ['devices', { profile_id: 1 }],
     ['devices', { inspector_id: 1 }], ['detections', { inspector_id: 1, detected_at: -1 }],
     ['detections', { device_id: 1 }], ['detections', { worker_id: 1 }], ['detections', { profile_id: 1 }],
-    ['detections', { detected_at: -1 }], ['notifications', { inspector_id: 1, is_read: 1 }],
+    ['detections', { detected_at: -1 }], ['detections', { result: 1, detected_at: -1 }],
+    ['detections', { device_id: 1, detected_at: -1 }], ['detections', { profile_id: 1, detected_at: -1 }],
+    ['detections', { worker_id: 1, detected_at: -1 }],
+    ['notifications', { inspector_id: 1, is_read: 1 }],
     ['notifications', { detection_id: 1 }], ['password_reset_requests', { email: 1, status: 1 }],
     ['audit_logs', { occurred_at: -1 }], ['audit_logs', { category: 1, occurred_at: -1 }],
   ]) await db.collection(table).createIndex(keys);

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WearAware Checkpoint 02 — Implementation Addendum</title>
+  <style>
+    @page { size: A4; margin: 16mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #edf2f0; color: #1d2b27; font: 10.5pt/1.45 Arial, sans-serif; }
+    main { width: min(210mm, 100%); margin: 12px auto; background: #fff; padding: 16mm; box-shadow: 0 2px 10px #0002; }
+    h1, h2 { color: #185c4e; margin: 0 0 8px; } h1 { font-size: 25pt; } h2 { font-size: 15pt; margin-top: 22px; border-bottom: 2px solid #b8ddd4; padding-bottom: 5px; }
+    p { margin: 0 0 9px; } .subtitle { color: #50675f; font-size: 13pt; } .note { background: #fff6df; border-left: 4px solid #d99000; padding: 10px 12px; }
+    table { width: 100%; border-collapse: collapse; margin: 10px 0; } th, td { border: 1px solid #bed0ca; padding: 7px; vertical-align: top; text-align: left; } th { width: 30%; background: #e4f1ed; color: #16493e; }
+    ul { margin: 7px 0 10px; padding-left: 20px; } li { margin: 4px 0; } code { font: 9pt ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    a { color: #056d5a; } .toolbar { text-align:center; padding: 12px; } button { padding: 9px 14px; border:0; border-radius:5px; background:#185c4e; color:#fff; cursor:pointer; }
+    @media print { body { background:#fff; } main { box-shadow:none; margin:0; width:auto; } .toolbar { display:none; } }
+  </style>
+</head>
+<body>
+  <div class="toolbar"><button onclick="window.print()">Print / Save as PDF</button></div>
+  <main>
+    <p class="subtitle">GROUP 4 • BSIT 2-07</p>
+    <h1>WearAware Checkpoint 02</h1>
+    <p class="subtitle">Implementation Addendum — 24 September 2026</p>
+    <p>This addendum updates the original Checkpoint 02 submission with features implemented after the initial report. It should be submitted together with <em>WearAware_Checkpoint_02.pdf</em>.</p>
+
+    <h2>Deployed demo</h2>
+    <table>
+      <tr><th>Frontend</th><td><a href="https://wearaware-demo.vercel.app">https://wearaware-demo.vercel.app</a> — React/Vite frontend deployed on Vercel over HTTPS.</td></tr>
+      <tr><th>Backend and database</th><td>The Express API and MongoDB remain on the demonstration laptop. A Cloudflare Quick Tunnel provides the temporary HTTPS connection used by the Vercel frontend.</td></tr>
+      <tr><th>AI inference</th><td>The protected FastAPI/YOLO service runs locally beside the backend. The browser never receives the model’s shared API key; Express authenticates the inspector upload before forwarding it to the local service.</td></tr>
+    </table>
+    <p class="note"><strong>Demo limitation:</strong> this is a presentation deployment, not a permanent production backend. The laptop, MongoDB, backend, Python model process, and Cloudflare tunnel must remain running. A Quick Tunnel URL can change when restarted, requiring a frontend redeploy with the new API origin.</p>
+
+    <h2>Recent functionality</h2>
+    <ul>
+      <li>Added the <strong>User</strong> role, linked to a worker account. Users can view their own QR code, inspection history, and personal compliance rate. Server-side ownership checks prevent a user from accessing another worker’s records.</li>
+      <li>Completed the admin user-management workflow, including role selection, worker linking, active-status management, and the User role’s required unique worker association.</li>
+      <li>Updated the admin and inspector dashboards with the same responsive visual system and logout controls.</li>
+      <li>Improved QR scanning resilience with a retry for transient lookup failures and timeouts appropriate for the tunnel-backed demo.</li>
+      <li>Improved scanner continuity: after a completed scan, the scanner returns to QR mode for the next worker.</li>
+      <li>Changed detection lists so they return only a <code>has_photo</code> flag. Full camera photos load only after an administrator or inspector selects the record, reducing dashboard payload and initial loading time.</li>
+      <li>Adjusted PPE inference so a detected person with neither recognised helmet nor vest is recorded as an inferred <code>no-helmet</code> and <code>no-vest</code> violation. The camera confidence input was lowered from 0.35 to 0.25 while class-specific PPE filtering remains in place.</li>
+    </ul>
+
+    <h2>Security controls implemented</h2>
+    <ul>
+      <li>JWT authentication with active-account and current-database role checks for Administrator, Inspector, and User roles.</li>
+      <li>Role-based route authorization and inspector station/worker scope enforcement.</li>
+      <li>Typed request validation, strict MongoDB collection validators, unique indexes, safe error responses, and constrained photo/image validation.</li>
+      <li>Helmet security headers, explicit CORS origins, request-size limits, authentication rate limits, password-strength validation, and production configuration checks.</li>
+      <li>Single-use, expiring password recovery links; reset requests store a hash rather than a reusable plaintext password.</li>
+      <li>Authenticated WebSocket alerts scoped to the assigned inspector. Tokens are not placed in WebSocket URLs.</li>
+      <li>Protected AI uploads: inspector authorization, JPEG/PNG and size limits, backend-held service key, one-at-a-time inference, and safe failure responses.</li>
+    </ul>
+    <p>Known limitation: browser bearer tokens are currently stored in localStorage. A future improvement is an HttpOnly-cookie session design with CSRF protection. The Quick Tunnel is suitable for a controlled demo, not a permanent production exposure.</p>
+
+    <h2>Validation performed</h2>
+    <table>
+      <tr><th>Frontend</th><td><code>npm run build</code> completed successfully before deployment. Lint completed with no errors; one pre-existing React Hook dependency warning remains in InspectorDashboard.</td></tr>
+      <tr><th>Backend</th><td><code>npm --prefix src/wearawarebackend test</code> passed 27 of 27 tests. The suite covers authentication, authorization, validation, rate limiting, password recovery, WebSocket scoping, AI upload controls, database validation, and User-role ownership.</td></tr>
+      <tr><th>AI service</th><td>The local FastAPI health endpoint authenticated successfully using the backend-held key. The Python security suite completed successfully using its fake predictor. These checks verify request handling and security behavior; they do not measure real-world model accuracy.</td></tr>
+      <tr><th>Deployment</th><td>The Vercel production alias resolves to the frontend above. The temporary API tunnel and local AI service were restarted and checked after the latest scanner update.</td></tr>
+    </table>
+
+    <h2>Updated request flow</h2>
+    <p>Vercel React frontend → Cloudflare Quick Tunnel (HTTPS) → Express API on the demo laptop → local MongoDB for application records. For PPE scans, Express additionally forwards the authenticated image to the localhost FastAPI/YOLO service using a private service key. The result returns through Express to the browser. This design keeps database credentials, JWT secrets, and the AI key out of the frontend build.</p>
+
+    <h2>Run requirements for the demo</h2>
+    <p>Before presenting, keep the following processes running on the same laptop: local MongoDB, <code>npm --prefix src/wearawarebackend start</code>, the FastAPI/YOLO service on port 8000, and <code>cloudflared tunnel --url http://127.0.0.1:5000</code>. The frontend does not require <code>npm run dev</code> while using the Vercel URL. See <code>docs/FREE-DEMO.md</code> for the current setup steps.</p>
+  </main>
+</body>
+</html>

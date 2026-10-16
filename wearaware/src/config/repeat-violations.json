@@ -1,0 +1,5 @@
+{
+  "threshold": 3,
+  "windowDays": 30,
+  "historyLimit": 50
+}

@@ -3,6 +3,19 @@ const express = require('express');
 const router  = express.Router();
 
 const { data, requireAuth, requireRole } = require('./middleware');
+const { recordAudit } = require('./audit');
+const { getWorkerComplianceHistory } = require('./repeat-violations');
+
+router.get('/workers/:id/compliance-history', requireAuth, requireRole('inspector'), validateRequest, async (req, res, next) => {
+  try {
+    const history = await getWorkerComplianceHistory(req.params.id, req.query, { inspectorId: req.user.id });
+    if (!history) return res.status(404).json({ error: 'Worker not found.' });
+    res.json(history);
+  } catch (err) {
+    if (err.status === 400 || err.status === 403) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/inspector/detections
@@ -38,12 +51,9 @@ router.get('/detections/stats', requireAuth, requireRole('inspector'), validateR
       total:           parseInt(row.total)              || 0,
       violations:      parseInt(row.violations)         || 0,
       compliant:       parseInt(row.compliant)          || 0,
-      compliance_rate: (() => {
-        const total      = parseInt(row.total)      || 0;
-        const violations = parseInt(row.violations) || 0;
-        if (total === 0) return 100;
-        return Math.round(((total - violations) / total) * 100);
-      })(),
+      manual_reviews: parseInt(row.manual_reviews) || 0,
+      pending_manual_reviews: parseInt(row.pending_manual_reviews) || 0,
+      compliance_rate: Number(row.compliance_rate ?? 100),
     });
   } catch (err) {
     if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
@@ -159,7 +169,8 @@ router.get('/notifications', requireAuth, requireRole('inspector'), validateRequ
 // ══════════════════════════════════════════════════════════════
 router.patch('/notifications/:id/read', requireAuth, requireRole('inspector'), validateRequest, async (req, res) => {
   try {
-    await data.update('notifications', { id: req.params.id, inspector_id: req.user.id }, { is_read: true }, "*");
+    const updated = await data.update('notifications', { id: req.params.id, inspector_id: req.user.id }, { is_read: true, read_at: new Date() }, "id is_read read_at");
+    if (!updated.rows[0]) return res.status(404).json({ error: 'Notification not found.' });
     res.json({ success: true });
   } catch (err) {
     if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
@@ -177,15 +188,28 @@ router.patch('/detections/:id/override', requireAuth, requireRole('inspector'), 
     const check = await data.find('detections', { id: req.params.id, inspector_id: req.user.id }, "id result", {});
     if (!check.rows[0])
       return res.status(404).json({ error: 'Detection not found.' });
-    if (check.rows[0].result === 'compliant')
-      return res.status(409).json({ error: 'Already marked as compliant.' });
+    if (check.rows[0].result === 'compliant') return res.status(409).json({ error: 'Already marked as compliant.' });
+    if (check.rows[0].result === 'manual_review') return res.status(409).json({ error: 'Use the manual-review decision control for this record.' });
 
     const result = await data.overrideDetection(req.params.id, req.user.id);
+    await recordAudit({ category: 'action', action: 'Overrode entry authorization', actor: req.user, target: String(req.params.id), details: 'authorized' });
     res.json({ success: true, detection: result.rows[0] });
   } catch (err) {
     if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
     console.error('Request handler failed.');
     res.status(500).json({ error: 'Failed to override detection.' });
+  }
+});
+
+router.patch('/detections/:id/review', requireAuth, requireRole('inspector'), validateRequest, async (req, res) => {
+  try {
+    const result = await data.reviewDetection(req.params.id, req.user.id, 'inspector', req.body.decision, req.body.notes);
+    if (!result.rows[0]) return res.status(404).json({ error: 'Pending manual-review record not found.' });
+    await recordAudit({ category: 'action', action: 'Resolved manual PPE review and entry authorization', actor: req.user, target: String(req.params.id), details: `${req.body.decision}: ${result.rows[0].authorization_status}` });
+    res.json({ success: true, detection: result.rows[0] });
+  } catch (err) {
+    if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown )/.test(err.message || '')) return res.status(400).json({ error: 'Invalid review decision.' });
+    res.status(500).json({ error: 'Failed to save the manual-review decision.' });
   }
 });
 

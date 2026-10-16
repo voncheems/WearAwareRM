@@ -51,7 +51,7 @@
 .ins-page .ins-welcome-primary { background: #f5f8ef; color: #304527; border: 1px solid #f5f8ef; }
 .ins-page .ins-welcome-secondary { background: #ffffff12; color: #fff; border: 1px solid #ffffff60; }
 .ins-page .ins-welcome .ins-btn:hover { transform: translateY(-2px); }
-.ins-page .ins-stats { gap: 16px; margin-bottom: 24px; }
+.ins-page .ins-stats { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
 .ins-page .ins-stats-three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .ins-page :is(.ins-stat-card, .ins-panel, .ins-station-card) { border: 1px solid var(--ins-border); border-radius: 21px; box-shadow: 0 5px 20px #35432b04; background: white; min-width: 0; }
 .ins-page .ins-stat-card { padding: 23px; }
@@ -87,6 +87,7 @@
 .ins-page .ppe-mini-stat-val { color: #304527; font-size: 32px; font-weight: 550; }
 .ins-page .ppe-mini-stat-val.green { color: #3f7549; }
 .ins-page .ppe-mini-stat-val.red { color: #b83c38; }
+.ins-page .ppe-mini-stat-val.orange { color: #b45309; }
 .ins-page .ppe-mini-stat-val.yellow { color: #9b6c13; }
 .ins-page .ppe-mini-stat-label { color: #728165; font-size: 9px; font-weight: 500; }
 .ins-page .ppe-mini-stat:hover { box-shadow: 0 12px 28px #35432b0b; }

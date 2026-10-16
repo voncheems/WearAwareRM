@@ -67,7 +67,7 @@
 .ad-page .ad-welcome-secondary { background: #ffffff12; color: white; border: 1px solid #ffffff60; }
 .ad-page .ad-welcome .ad-btn:hover { transform: translateY(-2px); }
 .ad-page :is(.ad-btn, .ad-refresh-btn):disabled { opacity: .6; cursor: not-allowed; transform: none; box-shadow: none; }
-.ad-page .ad-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; }
+.ad-page .ad-stats { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
 .ad-page :is(.ad-stat-card, .admin-surface) { border: 1px solid var(--ad-border); border-radius: 21px; box-shadow: 0 5px 20px #35432b04; background: white; min-width: 0; }
 .ad-page .admin-surface { display: block; }
 .ad-page .ad-stat-card { padding: 23px; }

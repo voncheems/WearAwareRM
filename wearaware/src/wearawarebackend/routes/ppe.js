@@ -2,12 +2,18 @@ const router = require('express').Router();
 const multer = require('multer');
 const { requireAuth, requireRole } = require('../middleware');
 const { limiter } = require('../security');
-const { detectedPpeFromAi, filterAiDetections, filterPersonDetections } = require('../ppe-compliance');
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 1, fieldSize: 20, parts: 2 },
+const { confidenceConfig, detectedPpeFromAi, filterAiDetections, filterAiObservations, filterPersonDetections } = require('../ppe-compliance');
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 2, fieldSize: 1200, parts: 3 },
   fileFilter(req, file, cb) { cb(null, ['image/jpeg', 'image/png'].includes(file.mimetype)); } });
 router.post('/detect', requireAuth, requireRole('scanner'), limiter(60, 60 * 1000, { keyGenerator: req => String(req.user.id) }), upload.single('file'), async (req, res, next) => {
   if (!req.file) return res.status(400).json({ error: 'Upload one JPEG or PNG image (maximum 2 MB).' });
-  const conf = Number(req.body.conf ?? 0.35);
+  const conf = Number(req.body.conf ?? confidenceConfig.observationConfidence);
+  let requiredPpe = [];
+  try {
+    const raw = req.body.required_ppe ? JSON.parse(req.body.required_ppe) : [];
+    if (!Array.isArray(raw) || raw.length > 32 || raw.some(item => typeof item !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/i.test(item))) throw new Error('invalid');
+    requiredPpe = [...new Set(raw.map(item => item.trim().toLowerCase()))];
+  } catch { return res.status(400).json({ error: 'Invalid required PPE configuration.' }); }
   if (!Number.isFinite(conf) || conf < 0.1 || conf > 1) return res.status(400).json({ error: 'Invalid confidence threshold.' });
   if (!process.env.AI_API_KEY) return res.status(503).json({ error: 'Detection service is not configured.' });
   try {
@@ -18,15 +24,17 @@ router.post('/detect', requireAuth, requireRole('scanner'), limiter(60, 60 * 100
     // The live browser video remains visible. Returning an annotated base64 image
     // for every inference adds a large tunnel round trip with no effect on verdicts.
     url.searchParams.set('return_image', 'false');
+    url.searchParams.set('required_ppe', requiredPpe.join(','));
     const form = new FormData();
     form.append('file', new Blob([req.file.buffer], { type: req.file.mimetype }), 'ppe-image');
     const response = await fetch(url, { method: 'POST', headers: { 'X-API-Key': process.env.AI_API_KEY }, body: form, signal: AbortSignal.timeout(25000), redirect: 'error' });
     if (!response.ok) return res.status(503).json({ error: 'Detection service is unavailable. Please retry the scan.' });
     const result = await response.json();
     if (!Array.isArray(result.detections) || !Number.isInteger(result.total_detections)) return res.status(502).json({ error: 'Invalid detection service response.' });
+    const ppeObservations = filterAiObservations(result.detections);
     const ppeDetections = filterAiDetections(result.detections);
     const personDetections = filterPersonDetections(result.detections);
-    const detections = [...personDetections, ...ppeDetections];
+    const detections = [...personDetections, ...ppeObservations];
     // The AI reports observations only. WearAware evaluates those observations
     // against checkpoint requirements separately.
     res.json({
@@ -34,6 +42,8 @@ router.post('/detect', requireAuth, requireRole('scanner'), limiter(60, 60 * 100
       person_detections: personDetections,
       person_count: personDetections.length,
       detected_ppe: detectedPpeFromAi(ppeDetections),
+      requested_ppe: Array.isArray(result.requested_ppe) ? result.requested_ppe : requiredPpe,
+      unsupported_ppe: Array.isArray(result.unsupported_ppe) ? result.unsupported_ppe : [],
       total_detections: detections.length,
       inference_time_ms: Number.isFinite(result.inference_time_ms) ? result.inference_time_ms : null,
     });

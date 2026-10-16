@@ -90,6 +90,14 @@
 .ppe-qr-panel h3 { margin: 0 0 .45rem; font-size: 1.15rem; }
 .ppe-qr-panel p { margin: 0 0 1.25rem; color: #3b68b8; font-size: .84rem; line-height: 1.55; }
 .ppe-inline-status { display: inline-flex; align-items: center; gap: .5rem; padding: .45rem 1rem; border: 1px solid #93c5fd; border-radius: 999px; background: #dbeafe; color: #2563eb; font-size: .76rem; font-weight: 700; }
+.ppe-manual-id-divider { display: flex; align-items: center; gap: 10px; margin: 1.2rem 0 .85rem; color: #6d87af; font-size: .68rem; font-weight: 750; text-transform: uppercase; letter-spacing: .08em; }
+.ppe-manual-id-divider::before, .ppe-manual-id-divider::after { content: ''; height: 1px; flex: 1; background: #b8d2f4; }
+.ppe-manual-id { text-align: left; }
+.ppe-manual-id label { display: block; margin-bottom: .35rem; color: #345c9b; font-size: .7rem; font-weight: 800; }
+.ppe-manual-id > div { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 7px; }
+.ppe-manual-id input { min-width: 0; padding: .72rem .8rem; border: 1px solid #9fc2ed; border-radius: 9px; background: #fff; color: #203c69; font: 700 .82rem ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
+.ppe-manual-id button { border: 0; border-radius: 9px; padding: .7rem .9rem; background: #315f9e; color: #fff; font: inherit; font-size: .75rem; font-weight: 800; cursor: pointer; }
+.ppe-manual-id button:disabled { cursor: not-allowed; opacity: .55; }
 .ppe-error-box { margin-top: .85rem; padding: .7rem .85rem; border: 1px solid #fca5a5; border-radius: 9px; background: #fef2f2; color: #b91c1c; font-size: .78rem; line-height: 1.4; }
 .ppe-worker-card { display: flex; align-items: center; gap: .9rem; margin-bottom: 1rem; padding: .95rem 1.1rem; border: 1px solid #e0e7dc; border-radius: 12px; background: #fff; }
 .ppe-worker-avatar { width: 48px; height: 48px; display: grid; flex: 0 0 48px; place-items: center; border-radius: 50%; background: linear-gradient(135deg,#617d55,#304527); color: #fff; font-weight: 850; }
@@ -109,6 +117,11 @@
 .ppe-live-result { display: grid; gap: .7rem; padding: .9rem; border: 1px solid #e1e7dd; border-radius: 10px; background: #fafcf8; }
 .ppe-live-result strong, .ppe-result-group strong { color: #278041; font-size: .7rem; letter-spacing: .06em; text-transform: uppercase; }
 .ppe-live-result strong.missing, .ppe-result-group.missing strong { color: #c2413b; }
+.ppe-result-group.uncertain { padding: .85rem; border: 1px solid #f6c96b; border-radius: 10px; background: #fff8e8; }
+.ppe-result-group.uncertain strong, .ins-ppe-tag.uncertain { color: #9a5a07; }
+.ins-ppe-tag.uncertain { background: #ffedbd; }
+.ppe-review-reason { margin: .65rem 0 .35rem; color: #71410a; font-size: .83rem; }
+.ppe-check-manually { color: #71410a; font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; }
 .ppe-verdict-card { margin-bottom: 1rem; padding: 1.8rem 1.2rem; border-radius: 18px; color: #fff; text-align: center; }
 .ppe-verdict-card > div { font-size: 3rem; }
 .ppe-verdict-card h2 { margin: .4rem 0; font-size: clamp(1.2rem,2.4vw,1.65rem); letter-spacing: .06em; }
@@ -116,7 +129,22 @@
 .ppe-verdict-card.pass { background: linear-gradient(145deg,#052e16,#14532d); box-shadow: 0 8px 32px #16a34a35; }
 .ppe-verdict-card.fail { background: linear-gradient(145deg,#450a0a,#7f1d1d); box-shadow: 0 8px 32px #dc262635; }
 .ppe-verdict-card.review { background: linear-gradient(145deg,#422006,#78350f); box-shadow: 0 8px 32px #f59e0b30; }
+.ppe-authorization { display: flex; align-items: center; justify-content: center; gap: .85rem; margin: -0.2rem 0 1rem; padding: 1rem 1.15rem; border: 2px solid; border-radius: 14px; text-align: left; }
+.ppe-authorization > span { width: 38px; height: 38px; display: grid; flex: 0 0 38px; place-items: center; border-radius: 50%; color: #fff; font-size: 1.25rem; font-weight: 900; }
+.ppe-authorization h3 { margin: 0 0 .2rem; font-size: 1rem; letter-spacing: .06em; }
+.ppe-authorization p { margin: 0; font-size: .76rem; line-height: 1.45; }
+.ppe-authorization.authorized { border-color: #86d39a; background: #edf9f0; color: #17602e; }
+.ppe-authorization.authorized > span { background: #218a42; }
+.ppe-authorization.denied { border-color: #efaaaa; background: #fff1f1; color: #982a2a; }
+.ppe-authorization.denied > span { background: #c83737; }
+.ppe-authorization.pending_inspection, .ppe-authorization.unavailable { border-color: #efc46c; background: #fff8e8; color: #80500a; }
+.ppe-authorization.pending_inspection > span, .ppe-authorization.unavailable > span { background: #c77a0a; }
+.ppe-log-authorization { margin-top: 4px; color: #697663; font-size: .65rem; font-weight: 800; }
 .ppe-result-group { margin-bottom: .75rem; }
+.ppe-repeat-warning { display: flex; align-items: flex-start; gap: .75rem; margin: .85rem 0; padding: .9rem 1rem; border: 1px solid #f2b65c; border-radius: 12px; background: #fff8e8; color: #7c3f00; }
+.ppe-repeat-warning > span { font-size: 1.35rem; line-height: 1; }
+.ppe-repeat-warning strong { display: block; margin-bottom: .25rem; color: #8a4600; font-size: .82rem; letter-spacing: .02em; }
+.ppe-repeat-warning p { margin: 0; color: #8a5a24; font-size: .76rem; line-height: 1.45; }
 .ppe-recent-log { margin-top: 1.5rem; overflow-x: auto; }
 .ppe-recent-log h3 { display: flex; align-items: center; gap: .45rem; color: #64705d; font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; }
 .ppe-recent-log h3 i { width: 8px; height: 8px; border-radius: 50%; background: #527345; }
@@ -124,5 +152,6 @@
 .ppe-recent-log td small { color: #9aa394; font-size: .7rem; }
 @media (max-width: 640px) { .ppe-page-header { padding: 0 1rem; } .ppe-page-back { font-size: 0; padding: .6rem; } .ppe-page-back svg { margin: 0; } .ppe-page-content { width: min(92vw, 1180px); padding-top: 2.25rem; } .ppe-page-selector { grid-template-columns: auto 1fr; } .ppe-page-selector select, .ppe-page-selector span { grid-column: 1 / -1; } }
 @media (max-width: 640px) { .ppe-checkpoint-card { grid-template-columns: 1fr; } }
+@media (max-width: 480px) { .ppe-manual-id > div { grid-template-columns: 1fr; } }
 @media (max-width: 900px) { .ppe-assigned-checkpoint { grid-template-columns: auto 1fr; } .ppe-assigned-status, .ppe-local-controls { grid-column: 1 / -1; } .ppe-local-controls { justify-content: stretch; flex-wrap: wrap; } .ppe-local-controls button { flex: 1; } }
 @media (max-width: 720px) { .ppe-setup-card { grid-template-columns: 1fr; } .ppe-setup-card > * { grid-column: 1; } }

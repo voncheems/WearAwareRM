@@ -1,28 +1,31 @@
 import { API } from '../config/api';
 import { createElement, useEffect, useState } from 'react';
 import QRCode from 'qrcode';
-import { LayoutDashboard, ClipboardList, QrCode, User, ShieldCheck, CheckCircle, AlertTriangle, ArrowUpRight, RefreshCw, Download } from 'lucide-react';
+import { LayoutDashboard, ClipboardList, QrCode, User, ShieldCheck, CheckCircle, AlertTriangle, ArrowUpRight, RefreshCw, Download, Clock } from 'lucide-react';
 import './InspectorDashboard.css';
 import './InspectorTheme.css';
 import './UserDashboard.css';
+import MfaSettings from './MfaSettings';
 
 const tabs = [['overview', 'My overview', LayoutDashboard], ['history', 'PPE history', ClipboardList], ['qr', 'My QR code', QrCode], ['profile', 'My profile', User]];
 const dateLabel = value => value ? new Date(value).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' }) : 'Date unavailable';
+const authorizationLabel = value => ({ authorized: 'Authorized', denied: 'Denied', pending_inspection: 'Pending Inspection' })[value] || 'Not Recorded';
 
-function WorkerQR({ employeeId, name }) {
+function WorkerQR({ employeeId, name, qrToken }) {
   const [image, setImage] = useState('');
   const [error, setError] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    QRCode.toDataURL(employeeId, { width: 320, margin: 4, errorCorrectionLevel: 'H', color: { dark: '#253021', light: '#ffffff' } })
+    if (!qrToken) return () => { cancelled = true; };
+    QRCode.toDataURL(qrToken, { width: 320, margin: 4, errorCorrectionLevel: 'H', color: { dark: '#253021', light: '#ffffff' } })
       .then(url => { if (!cancelled) setImage(url); })
       .catch(() => { if (!cancelled) setError(true); });
     return () => { cancelled = true; };
-  }, [employeeId]);
+  }, [qrToken]);
   return <section className="ins-panel user-qr-card" aria-labelledby="qr-title">
     <div className="user-eyebrow">YOUR CHECKPOINT ID</div><h2 id="qr-title">One code. Your record.</h2>
     <p>Show this code to your inspector before your PPE check.</p>
-    {error ? <p role="alert">Your QR code couldn’t be generated. Please refresh and try again.</p> : image ? <img className="user-qr-image" src={image} alt={`Worker QR code for ${employeeId}`} width="320" height="320" /> : <p role="status">Preparing your QR code…</p>}
+    {!qrToken || error ? <p role="alert">Your QR code is unavailable or has been revoked. Please contact your administrator.</p> : image ? <img className="user-qr-image" src={image} alt={`Worker QR code for ${employeeId}`} width="320" height="320" /> : <p role="status">Preparing your QR code…</p>}
     <strong>{name}</strong><span className="user-employee-id">{employeeId}</span>
     {image && <a className="ins-btn ins-btn-primary" href={image} download={`WearAware-${employeeId}.png`}><Download size={16} /> Download QR code</a>}
     <p className="user-helper">This code identifies your worker record. Your inspector still checks your safety gear.</p>
@@ -78,19 +81,20 @@ export default function UserDashboard({ setCurrentPage }) {
           {tab === 'overview' && <>
             <section className="ins-welcome"><div><div className="ins-eyebrow">YOUR SAFETY JOURNEY</div><h2>Ready for work.<br /><span>Aware of your safety.</span></h2><p>Welcome, {name}. Keep your checkpoint ID and PPE history close at hand.</p><div className="ins-welcome-actions"><button className="ins-btn ins-welcome-primary" onClick={() => setTab('qr')}>Show my QR code <ArrowUpRight size={17} /></button><button className="ins-btn ins-welcome-secondary" onClick={() => setTab('history')}>View my history</button></div></div><div className="ins-welcome-mark" aria-hidden="true"><ShieldCheck size={64} strokeWidth={1} /></div></section>
             <div className="ins-stats">
-              <Stat icon={<ShieldCheck size={20} />} value={stats.compliance_rate === null ? '—' : `${stats.compliance_rate}%`} label="Compliance rate" note={stats.total ? 'All-time compliant scans ÷ total scans' : 'No scans yet'} />
+              <Stat icon={<ShieldCheck size={20} />} value={stats.compliance_rate === null ? '—' : `${stats.compliance_rate}%`} label="Compliance rate" note={stats.total ? 'Compliant ÷ decided scans' : 'No scans yet'} />
               <Stat icon={<ClipboardList size={20} />} value={stats.total} label="Total scans" note="Your checkpoint history" />
               <Stat icon={<CheckCircle size={20} />} value={stats.compliant} label="Compliant" note="Required gear detected" />
               <Stat icon={<AlertTriangle size={20} />} value={stats.violations} label="Violations" note="Missing gear recorded" />
+              <Stat icon={<Clock size={20} />} value={stats.pending_manual_reviews || 0} label="Manual review" note="Pending inspector decision" />
             </div>
             <section className="ins-panel"><h2 className="ins-panel-title">Your assigned station</h2><p className="user-station">{data.worker.station_label || 'No station assigned'}</p><p className="ins-panel-sub">{data.worker.station_location || 'Contact your administrator if your assignment needs updating.'}</p></section>
           </>}
           {tab === 'history' && <section className="ins-panel"><div className="ins-panel-header"><div><h2 className="ins-panel-title">Your PPE history</h2><p className="ins-panel-sub">{stats.total} scans · Times shown in Philippine time</p></div></div>
-            {data.history.length === 0 ? <p className="ins-empty">No scans to show. Your inspector’s checks will appear here.</p> : <div className="ins-table-scroll" tabIndex={0} role="region" aria-label="Your PPE history"><table className="ins-table"><thead><tr><th>Date & time</th><th>Station</th><th>Profile</th><th>Result</th><th>Detected PPE</th><th>Missing PPE</th></tr></thead><tbody>{data.history.map(scan => <tr key={scan.id}><td>{dateLabel(scan.detected_at)}</td><td>{scan.station}</td><td>{scan.profile_name || 'Custom'}</td><td><span className={`ins-vbadge ${scan.result === 'violation' ? 'yes' : 'no'}`} style={scan.alert_type === 'manual_review' ? { background: '#fff7ed', color: '#b45309' } : undefined}>{scan.alert_type === 'manual_review' ? 'Manual Review' : scan.result === 'violation' ? 'Violation' : 'Compliant'}</span></td><td>{scan.detected_ppe?.join(', ') || '—'}</td><td>{scan.missing_ppe?.join(', ') || 'None'}</td></tr>)}</tbody></table></div>}
+            {data.history.length === 0 ? <p className="ins-empty">No scans to show. Your inspector’s checks will appear here.</p> : <div className="ins-table-scroll" tabIndex={0} role="region" aria-label="Your PPE history"><table className="ins-table"><thead><tr><th>Date & time</th><th>Station</th><th>Profile</th><th>PPE Result</th><th>Entry Access</th><th>Detected PPE</th><th>Missing / Uncertain PPE</th></tr></thead><tbody>{data.history.map(scan => <tr key={scan.id}><td>{dateLabel(scan.detected_at)}</td><td>{scan.station}</td><td>{scan.profile_name || 'Custom'}</td><td><span className={`ins-vbadge ${scan.result === 'violation' ? 'yes' : 'no'}`} style={scan.alert_type === 'manual_review' ? { background: '#fff7ed', color: '#b45309' } : undefined}>{scan.alert_type === 'manual_review' ? 'Manual Review' : scan.result === 'violation' ? 'Violation' : 'Compliant'}</span>{scan.review_status === 'reviewed' && <small style={{ display: 'block', marginTop: 4 }}>{String(scan.inspector_decision || '').replaceAll('_', ' ')}</small>}</td><td><span className="ins-vbadge" style={scan.authorization_status === 'authorized' ? { background: '#dcfce7', color: '#166534' } : scan.authorization_status === 'denied' ? { background: '#fee2e2', color: '#b91c1c' } : { background: '#fff7ed', color: '#9a5706' }}>{authorizationLabel(scan.authorization_status)}</span></td><td>{scan.detected_ppe?.join(', ') || '—'}</td><td>{scan.missing_ppe?.join(', ') || scan.uncertain_ppe?.map(item => `? ${item}`).join(', ') || 'None'}</td></tr>)}</tbody></table></div>}
             <div className="user-pagination"><button className="ins-btn ins-btn-secondary" disabled={page <= 1} onClick={() => setPage(n => n - 1)}>Previous</button><span>Page {page} of {data.totalPages}</span><button className="ins-btn ins-btn-secondary" disabled={page >= data.totalPages} onClick={() => setPage(n => n + 1)}>Next</button></div>
           </section>}
-          {tab === 'qr' && <WorkerQR key={data.worker.employee_id} employeeId={data.worker.employee_id} name={name} />}
-          {tab === 'profile' && <section className="ins-panel user-profile"><div className="user-eyebrow">YOUR WORKER PROFILE</div><h2>{name}</h2><p className="user-helper">Contact your administrator to update your account or worker details.</p><dl>{[['Employee ID', data.worker.employee_id], ['Login email', data.account.email], ['Position', data.worker.position], ['Station', data.worker.station_label], ['Contact number', data.worker.contact_number], ['Worker status', data.worker.status?.replaceAll('_', ' ')]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || 'Not provided'}</dd></div>)}</dl></section>}
+          {tab === 'qr' && <WorkerQR key={`${data.worker.employee_id}-${data.worker.qr_generated_at || ''}`} employeeId={data.worker.employee_id} name={name} qrToken={data.worker.qr_token} />}
+          {tab === 'profile' && <><section className="ins-panel user-profile"><div className="user-eyebrow">YOUR WORKER PROFILE</div><h2>{name}</h2><p className="user-helper">Contact your administrator to update your account or worker details.</p><dl>{[['Employee ID', data.worker.employee_id], ['Login email', data.account.email], ['Position', data.worker.position], ['Station', data.worker.station_label], ['Contact number', data.worker.contact_number], ['Worker status', data.worker.status?.replaceAll('_', ' ')]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || 'Not provided'}</dd></div>)}</dl></section><MfaSettings /></>}
         </>}
       </div>
     </main>

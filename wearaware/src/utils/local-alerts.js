@@ -38,9 +38,10 @@ export async function emitLocalAlert(detail, soundEnabled) {
   const unlocked = await unlockLocalAlerts().catch(() => false);
   if (!unlocked) return false;
   const now = audioContext.currentTime;
-  if (detail.alertType === ALERT_TYPES.COMPLIANT) {
+  const authorization = detail.authorizationStatus;
+  if (authorization === 'authorized' || (!authorization && detail.alertType === ALERT_TYPES.COMPLIANT)) {
     tone(audioContext, 660, now, 0.12); tone(audioContext, 880, now + 0.14, 0.2);
-  } else if (detail.alertType === ALERT_TYPES.NON_COMPLIANT) {
+  } else if (authorization === 'denied' || (!authorization && detail.alertType === ALERT_TYPES.NON_COMPLIANT)) {
     tone(audioContext, 240, now, 0.22, 0.16); tone(audioContext, 190, now + 0.26, 0.3, 0.16);
   } else {
     tone(audioContext, 440, now, 0.14, 0.13); tone(audioContext, 440, now + 0.22, 0.14, 0.13); tone(audioContext, 520, now + 0.44, 0.2, 0.13);

@@ -58,6 +58,9 @@ test('station, worker, detection and notification joins preserve inspector scope
   const updated = (await data.overrideDetection(detection.id, 20)).rows[0];
   assert.deepEqual(updated.detected_ppe, ['helmet', 'vest']);
   assert.deepEqual(updated.missing_ppe, []);
+  assert.equal(updated.original_authorization, 'denied');
+  assert.equal(updated.authorization_status, 'authorized');
+  assert.equal(updated.authorization_override_by, 20);
   assert.equal((await data.stats({ inspector_id: 20 })).rows[0].compliance_rate, 100);
   await assert.rejects(data.remove('devices', { id: station.id }), /linked data/);
   assert.equal((await data.userActivity()).rows.length, 3);
@@ -67,13 +70,16 @@ test('concurrent ID allocation is unique', async () => {
   const ids = await Promise.all(Array.from({ length: 25 }, () => data.nextId('employee_id')));
   assert.equal(new Set(ids).size, 25);
 });
-test('deleting workers clears historical references without deleting detections', async () => {
+test('deleting workers preserves historical identity snapshots without deleting detections', async () => {
   const worker = (await data.find('workers', { employee_id: 'WA-0001' })).rows[0];
   const before = await db.collection('detections').countDocuments();
   await data.remove('workers', { id: worker.id });
   assert.equal(await db.collection('detections').countDocuments(), before);
-  assert.equal((await db.collection('detections').findOne({ id: 1 })).worker_id, null);
-  assert.equal((await data.detections({}, 'admin')).rows[0].worker_name, null);
+  const historical = await db.collection('detections').findOne({ id: 1 });
+  assert.equal(historical.worker_id, null);
+  assert.equal(historical.worker_name, 'Worker');
+  assert.equal(historical.worker_employee_id, 'WA-0001');
+  assert.equal((await data.detections({}, 'admin')).rows[0].worker_name, 'Worker');
 });
 test('HTTP login, authorization and user responses work against MongoDB', async () => {
   const { connectDatabase, closeDatabase } = require('../database');

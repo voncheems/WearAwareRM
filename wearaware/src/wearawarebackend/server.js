@@ -8,8 +8,11 @@ const { installRecovery } = require('./password-recovery');
 const { createAlerts } = require('./alerts');
 const { applyDatabaseSecurity, verifyDatabaseSecurity, cleanLegacyPasswords, ensureAuditLogCollection, ensureCheckpointData } = require('./database-security');
 const { recordAudit } = require('./audit');
-const { evaluateCompliance, classifyLocalAlert } = require('./ppe-compliance');
+const { evaluateSessionEvidence } = require('./ppe-compliance');
 const { ensureDefaultComplianceProfiles } = require('./compliance-profiles');
+const { getWorkerRepeatStatus } = require('./repeat-violations');
+const { authorizationRecord } = require('./entry-authorization');
+const { installMfa, issueLoginOtp, createMfaChallenge, readMfaChallenge, verifyMfaCode } = require('./mfa');
 const bcrypt   = require('bcrypt');
 const jwt      = require('jsonwebtoken');
 const http = require('node:http');
@@ -53,6 +56,7 @@ app.use('/api/checkpoints', require('./routes/devices'));
 app.use('/api/compliance-profiles', require('./routes/compliance-profiles'));
 app.use('/api/inspector', require('./Inspector'));
 app.use('/api/user', require('./routes/user'));
+app.use('/api/violations', require('./routes/violations'));
 
 // ══════════════════════════════════════════════════════════════
 //  PUT /api/users/:id  — admin only
@@ -93,13 +97,13 @@ require('./routes/contact')(app, transporter);
 //  POST /api/auth/login
 // ══════════════════════════════════════════════════════════════
 app.post('/api/auth/login', validateRequest, async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, mfa_token, mfa_code } = req.body;
 
   if (!email || !password)
     return res.status(400).json({ error: 'Email and password are required.' });
 
   try {
-    const result = await data.users({ email: email }, "id full_name email password_hash is_active role session_version password_reset_required", {});
+    const result = await data.users({ email: email }, "id full_name email gmail password_hash is_active role session_version password_reset_required mfa_enabled mfa_login_otp_hash mfa_login_otp_expires_at mfa_recovery_codes", {});
 
     const user = result.rows[0];
 
@@ -119,6 +123,18 @@ app.post('/api/auth/login', validateRequest, async (req, res) => {
     if (!match) {
       await recordAudit({ category: 'login_attempt', action: 'Sign in failed', actor: user, actorEmail: email, details: 'Incorrect password' });
       return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+
+    if (user.mfa_enabled) {
+      if (!mfa_token || !mfa_code || !readMfaChallenge(mfa_token, user)) {
+        try { await issueLoginOtp(user, transporter); } catch { return res.status(503).json({ error: 'Email delivery is not configured. Please contact your administrator.' }); }
+        return res.json({ mfa_required: true, mfa_token: createMfaChallenge(user) });
+      }
+      const mfaResult = await verifyMfaCode(user, mfa_code);
+      if (!mfaResult.ok) {
+        await recordAudit({ category: 'login_attempt', action: 'MFA verification failed', actor: user, actorEmail: email, details: 'Invalid authenticator or recovery code' });
+        return res.status(401).json({ error: 'Invalid verification code.' });
+      }
     }
 
     const token = jwt.sign(
@@ -152,7 +168,7 @@ app.post('/api/auth/login', validateRequest, async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 app.get('/api/auth/me', requireAuth, validateRequest, async (req, res) => {
   try {
-    const result = await data.users({ id: req.user.id }, "id full_name email role is_active", {});
+    const result = await data.users({ id: req.user.id }, "id full_name email role is_active mfa_enabled", {});
     if (!result.rows[0]) return res.status(404).json({ error: 'User not found.' });
     res.json({ user: result.rows[0] });
   } catch (err) {
@@ -319,19 +335,22 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
     session_ended_at = null,
     frame_count = null,
     confidence_summary = [],
+    visibility_score = null,
+    multiple_people_detected = false,
     manual_review_required = false,
   } = req.body;
 
   try {
     if (session_started_at && session_ended_at && session_ended_at < session_started_at) return res.status(400).json({ error: 'Session end time must follow its start time.' });
-    const worker = (await data.find('workers', { id: worker_id, status: 'active' }, 'id device_id')).rows[0];
+    const worker = (await data.find('workers', { id: worker_id, status: 'active' }, 'id device_id full_name employee_id status')).rows[0];
     if (!worker?.device_id) return res.status(403).json({ error: 'Worker is not assigned to an active checkpoint.' });
     if (checkpoint_id && Number(checkpoint_id) !== Number(worker.device_id)) return res.status(409).json({ error: 'The worker is assigned to a different checkpoint. Scan the worker again.' });
     const station = (await data.find('devices', { id: worker.device_id, is_active: true }, 'id code label location checkpoint_type profile_id required_ppe inspector_id')).rows[0];
     if (!station?.inspector_id) return res.status(403).json({ error: 'This worker has no inspector assigned to their active station.' });
     const profile = station.profile_id && (await data.find('compliance_profiles', { id: station.profile_id }, 'id name')).rows[0];
+    const assignedInspectorId = station.inspector_id;
 
-    const responseFor = (record, duplicate = false) => ({
+    const responseFor = async (record, duplicate = false) => ({
       success: true,
       duplicate,
       detection_id: record.id,
@@ -339,26 +358,44 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
       checkpoint: { id: station.id, name: station.label, code: station.code, profile_id: profile?.id || null, profile_name: profile?.name || null },
       result: record.result,
       is_compliant: record.result === 'compliant',
+      original_authorization: record.original_authorization,
+      authorization_status: record.authorization_status,
+      authorization_event: record.authorization_event,
+      authorization_decided_at: record.authorization_decided_at || null,
+      authorization_override_by: record.authorization_override_by || null,
+      authorization_override_at: record.authorization_override_at || null,
+      authorization_override_reason: record.authorization_override_reason || null,
       alert_type: record.alert_type,
       required_ppe: record.required_ppe || [],
       detected_ppe: record.detected_ppe || [],
       missing_ppe: record.missing_ppe || [],
+      uncertain_ppe: record.uncertain_ppe || [],
+      manual_review_reason: record.manual_review_reason || null,
+      manual_review_message: record.manual_review_message || null,
+      review_status: record.review_status || 'not_required',
+      inspector_decision: record.inspector_decision || null,
+      repeat_violation: await getWorkerRepeatStatus(worker_id).catch(() => null),
     });
 
     if (scan_session_id) {
-      const existing = (await data.find('detections', { scan_session_id }, 'id scan_session_id worker_id device_id result alert_type required_ppe detected_ppe missing_ppe')).rows[0];
+      const existing = (await data.find('detections', { scan_session_id }, 'id scan_session_id worker_id device_id result alert_type original_authorization authorization_status authorization_event authorization_decided_at authorization_override_by authorization_override_at authorization_override_reason required_ppe detected_ppe missing_ppe uncertain_ppe manual_review_reason manual_review_message review_status inspector_decision')).rows[0];
       if (existing) {
         if (Number(existing.worker_id) !== Number(worker_id) || Number(existing.device_id) !== Number(station.id)) return res.status(409).json({ error: 'This scan session belongs to a different worker or checkpoint.' });
-        return res.status(200).json(responseFor(existing, true));
+        if (existing.result !== 'compliant') await data.createNotificationOnce({ detection_id: existing.id, inspector_id: assignedInspectorId, type: existing.alert_type === 'manual_review' ? 'INSPECTION_REQUIRED' : 'NON_COMPLIANT_WORKER', title: existing.alert_type === 'manual_review' ? 'Inspection Required' : 'Non-Compliant Worker Detected', message: existing.alert_type === 'manual_review' ? `A scan requires inspection at ${station.label}.` : `A worker is missing required PPE at ${station.label}.` });
+        return res.status(200).json(await responseFor(existing, true));
       }
     }
 
     // The database checkpoint configuration is authoritative. Client-supplied
     // result and missing-PPE fields are ignored for backward compatibility.
     const deviceDbId = station.id;
-    const assignedInspectorId = station.inspector_id;
-    let compliance = classifyLocalAlert(evaluateCompliance(station.required_ppe || [], detected_ppe), confidence_score);
-    if (manual_review_required) compliance = { ...compliance, result: 'violation', is_compliant: false, alert_type: 'manual_review' };
+    const compliance = evaluateSessionEvidence({
+      requiredPpe: station.required_ppe || [], detectedPpe: detected_ppe,
+      confidenceSummary: confidence_summary, frameCount: frame_count,
+      confidenceScore: confidence_score, visibilityScore: visibility_score,
+      manualReviewRequired: manual_review_required, multiplePeopleDetected: multiple_people_detected,
+    });
+    const authorization = authorizationRecord(compliance.result);
 
     const det = await data.insert('detections', {
       device_id: deviceDbId,
@@ -368,12 +405,25 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
       profile_name: profile?.name || null,
       inspector_id: assignedInspectorId,
       result: compliance.result,
+      ai_result: compliance.result,
       alert_type: compliance.alert_type,
+      ...authorization,
       required_ppe: compliance.required_ppe,
       missing_ppe: compliance.missing_ppe,
       detected_ppe: compliance.detected_ppe,
+      uncertain_ppe: compliance.uncertain_ppe || [],
+      manual_review_reason: compliance.manual_review_reason,
+      manual_review_message: compliance.manual_review_message,
+      review_status: compliance.result === 'manual_review' ? 'pending' : 'not_required',
+      inspector_decision: null,
+      reviewed_by: null,
+      reviewed_at: null,
+      review_notes: null,
       confidence_score: confidence_score ?? null,
+      visibility_score: visibility_score ?? null,
       worker_id,
+      worker_name: worker.full_name,
+      worker_employee_id: worker.employee_id,
       photo_url: photo_url || null,
       ...(scan_session_id ? {
         scan_session_id,
@@ -387,9 +437,7 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
     const detectionId = det.rows[0].id;
     await recordAudit({ category: 'action', action: 'Recorded PPE check', actor: req.user, target: String(worker_id), details: `${station.label}: ${compliance.alert_type}` });
 
-    if (compliance.result === 'violation') {
-      await data.insert('notifications', { detection_id: detectionId, inspector_id: assignedInspectorId }, "*");
-
+    if (compliance.result !== 'compliant') {
       // ── Look up worker name and employee ID ──
       let workerName = null;
       let workerEmployeeId = null;
@@ -405,9 +453,12 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
       const stationLocation = station.location || null;
 
       const alertPayload = {
+        type:               'notification',
         title:              compliance.alert_type === 'manual_review' ? 'MANUAL PPE INSPECTION REQUIRED' : 'PPE VIOLATION DETECTED',
         message:            compliance.alert_type === 'manual_review' ? `Review the scan at ${stationLabel}` : `Missing: ${compliance.missing_ppe.join(', ') || 'PPE'} at ${stationLabel}`,
         alert_type:         compliance.alert_type,
+        authorization_status: authorization.authorization_status,
+        authorization_event: authorization.authorization_event,
         missing_ppe:        compliance.missing_ppe,
         worker_name:        workerName,
         worker_employee_id: workerEmployeeId,
@@ -416,14 +467,22 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
         detection_id:       detectionId,
       };
 
+      const notificationTitle = compliance.alert_type === 'manual_review' ? 'Inspection Required' : 'Non-Compliant Worker Detected';
+      const notificationMessage = compliance.alert_type === 'manual_review'
+        ? `${workerName || workerEmployeeId || 'A worker'} requires inspection at ${stationLabel}.`
+        : `${workerName || workerEmployeeId || 'A worker'} is missing ${compliance.missing_ppe.join(', ') || 'required PPE'} at ${stationLabel}.`;
+      await data.createNotificationOnce({ detection_id: detectionId, inspector_id: assignedInspectorId, type: compliance.alert_type === 'manual_review' ? 'INSPECTION_REQUIRED' : 'NON_COMPLIANT_WORKER', title: notificationTitle, message: notificationMessage });
+      alertPayload.title = notificationTitle;
+      alertPayload.message = notificationMessage;
+
       if (wss) await wss.broadcastToInspector(assignedInspectorId, alertPayload);
     }
 
-    res.status(201).json(responseFor({ id: detectionId, scan_session_id, ...compliance }));
+    res.status(201).json(await responseFor({ id: detectionId, scan_session_id, ...compliance, ...authorization }));
   } catch (err) {
     if (err.code === 11000 && scan_session_id) {
-      const existing = (await data.find('detections', { scan_session_id }, 'id scan_session_id worker_id device_id result alert_type required_ppe detected_ppe missing_ppe')).rows[0];
-      if (existing && Number(existing.worker_id) === Number(worker_id)) return res.status(200).json({ success: true, duplicate: true, detection_id: existing.id, scan_session_id, result: existing.result, is_compliant: existing.result === 'compliant', alert_type: existing.alert_type, required_ppe: existing.required_ppe, detected_ppe: existing.detected_ppe, missing_ppe: existing.missing_ppe });
+      const existing = (await data.find('detections', { scan_session_id }, 'id scan_session_id worker_id device_id result alert_type original_authorization authorization_status authorization_event authorization_decided_at authorization_override_by authorization_override_at authorization_override_reason required_ppe detected_ppe missing_ppe uncertain_ppe manual_review_reason manual_review_message review_status inspector_decision')).rows[0];
+      if (existing && Number(existing.worker_id) === Number(worker_id)) return res.status(200).json({ success: true, duplicate: true, detection_id: existing.id, scan_session_id, result: existing.result, is_compliant: existing.result === 'compliant', alert_type: existing.alert_type, original_authorization: existing.original_authorization, authorization_status: existing.authorization_status, authorization_event: existing.authorization_event, authorization_decided_at: existing.authorization_decided_at || null, authorization_override_by: existing.authorization_override_by || null, authorization_override_at: existing.authorization_override_at || null, authorization_override_reason: existing.authorization_override_reason || null, required_ppe: existing.required_ppe, detected_ppe: existing.detected_ppe, missing_ppe: existing.missing_ppe, uncertain_ppe: existing.uncertain_ppe || [], manual_review_reason: existing.manual_review_reason || null, manual_review_message: existing.manual_review_message || null, review_status: existing.review_status || 'not_required', inspector_decision: existing.inspector_decision || null, repeat_violation: await getWorkerRepeatStatus(worker_id).catch(() => null) });
     }
     if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
     console.error('Request handler failed.');
@@ -456,6 +515,12 @@ app.get('/api/detections/stats', requireAuth, requireRole('inspector'), validate
       total          : parseInt(row.total)             || 0,
       violations     : parseInt(row.violations)        || 0,
       compliant      : parseInt(row.compliant)         || 0,
+      manual_reviews : parseInt(row.manual_reviews)    || 0,
+      pending_manual_reviews: parseInt(row.pending_manual_reviews) || 0,
+      authorized: parseInt(row.authorized) || 0,
+      denied: parseInt(row.denied) || 0,
+      pending_authorization: parseInt(row.pending_authorization) || 0,
+      authorization_rate: Number(row.authorization_rate ?? 100),
       compliance_rate: Number(row.compliance_rate ?? 100),
     });
   } catch (err) {
@@ -482,6 +547,7 @@ app.get('/api/notifications/count', requireAuth, requireRole('inspector'), valid
 //  POST /api/auth/forgot-password  — public, no auth needed
 // ══════════════════════════════════════════════════════════════
 installRecovery(app, transporter);
+installMfa(app, transporter);
 app.use('/api/ppe', require('./routes/ppe'));
 
 app.use((req, res) => res.status(404).json({ error: 'Not found.' }));
@@ -537,6 +603,12 @@ async function start() {
 if (require.main === module) {
   start().catch(async err => {
     console.error(startupFailureMessage(err));
+    if (process.env.NODE_ENV !== 'production') {
+      const privateValues = [process.env.MONGODB_URI, process.env.JWT_SECRET, process.env.AI_API_KEY].filter(Boolean);
+      const detail = [err?.name, err?.code, err?.message].filter(Boolean).join(' | ');
+      const safeDetail = privateValues.reduce((message, value) => message.replaceAll(value, '[redacted]'), detail);
+      console.error(`Startup detail: ${safeDetail}`);
+    }
     await closeDatabase();
     process.exitCode = 1;
   });

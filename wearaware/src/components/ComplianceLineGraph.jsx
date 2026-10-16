@@ -7,7 +7,7 @@ export default function ComplianceLineGraph({ detections }) {
     if (!detections.length) return [];
 
     const byDate = {};
-    detections.forEach(d => {
+    detections.filter(d => d.result !== 'manual_review').forEach(d => {
       if (!d.date) return;
       if (!byDate[d.date]) byDate[d.date] = { total: 0, compliant: 0 };
       byDate[d.date].total++;

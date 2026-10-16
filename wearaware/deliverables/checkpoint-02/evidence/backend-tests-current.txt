@@ -1,0 +1,43 @@
+
+> wearaware-backend@1.0.0 test
+> node --test test/*.test.js
+
+✔ imported IDs coexist with new records and user projections hide passwords (3274.18325ms)
+✔ station, worker, detection and notification joins preserve inspector scope (103.918666ms)
+✔ concurrent ID allocation is unique (22.541042ms)
+✔ deleting workers clears historical references without deleting detections (12.162042ms)
+[dotenv@17.3.1] injecting env (14) from .env -- tip: ⚙️  write to custom object with { processEnv: myObject }
+✔ HTTP login, authorization and user responses work against MongoDB (479.624416ms)
+✔ local migration verification preserves BSON values and ignores document/key order (1.929333ms)
+Verified roles: 1 records, including all field values
+✔ migration validates IDs, unique keys, and all relationships (0.791833ms)
+✔ verification compares values, including hashes, rather than only counts (3.537333ms)
+✔ integer foreign keys are normalized but scanner UUIDs stay strings (0.7295ms)
+✔ Manila display dates cross the UTC day boundary correctly (13.589125ms)
+[dotenv@17.3.1] injecting env (8) from .env -- tip: 🔐 prevent committing .env to code: https://dotenvx.com/precommit
+✔ admin worker status actions preserve worker identity and station assignment (3832.627167ms)
+✔ safe errors, headers, CORS and malformed/oversized request protection (20.013416ms)
+✔ typed validation rejects query operators, weak passwords, unexpected fields and invalid IDs (21.607083ms)
+✔ invalid login stays generic and role/algorithm/session checks cannot be bypassed (294.046667ms)
+✔ inspector reads and scan writes are confined to assigned stations (38.354625ms)
+✔ recovery is generic, stores only hashes, enforces expiry and consumes a link once (1134.029ms)
+✔ authenticated WebSocket alerts are isolated and recheck revoked sessions (19.496792ms)
+✔ rate limiting blocks repeated failed authentication with Retry-After (21.122709ms)
+✔ production refuses insecure configuration and HTTP including forged forwarding headers (4.192041ms)
+✔ AI uploads require inspector authentication and forward confidence and service credentials privately (21.332417ms)
+✔ legacy plaintext cleanup revokes access and strict database validation rejects unsafe records (195.356208ms)
+[dotenv@17.3.1] injecting env (14) from .env -- tip: 🛡️ auth for agents: https://vestauth.com
+✔ role registration is idempotent and User accounts can log in (3761.230417ms)
+✔ worker owns history, profile and full-history compliance even when request IDs are forged (29.567375ms)
+✔ no scans are distinct from perfect compliance and missing links fail closed (15.316958ms)
+✔ User role cannot reach admin, inspector or mutation endpoints, including stale role claims (25.0035ms)
+✔ admin must link a real, unique worker when creating or editing a User account (337.778459ms)
+✔ deleting a worker clears the account link and blocks access without exposing unowned scans (20.2715ms)
+ℹ tests 27
+ℹ suites 0
+ℹ pass 27
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6214.368875
