@@ -170,6 +170,12 @@
 
         /* ── Action Buttons ── */
         .ad-action-btns { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+        .ad-resolution-actions { display: flex; gap: 4px; margin-top: 5px; flex-wrap: wrap; }
+        .ad-resolution-action { border: 1px solid; border-radius: 6px; padding: 4px 7px; font: inherit; font-size: .68rem; font-weight: 700; line-height: 1.15; cursor: pointer; transition: background .15s ease, color .15s ease, border-color .15s ease; }
+        .ad-resolution-action.confirm { border-color: #86c895; background: #f0fbf2; color: #24743a; }
+        .ad-resolution-action.confirm:hover { border-color: #4b9b60; background: #dcf5e1; }
+        .ad-resolution-action.false-detection { border-color: #83b9d8; background: #f0f9ff; color: #075985; }
+        .ad-resolution-action.false-detection:hover { border-color: #3987b7; background: #e0f2fe; }
         .ad-btn-deactivate {
         background: none; border: 1px solid #fed7d7; color: #e53e3e;
         padding: 0.3rem 0.7rem; border-radius: 8px; font-size: 0.78rem;
