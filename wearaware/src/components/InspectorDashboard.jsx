@@ -90,26 +90,6 @@ export default function InspectorDashboard({ setCurrentPage }) {
     }
   }, [activeTab]);
 
-  // Load proof images as soon as the tab opens so the first viewport contains
-  // actual evidence instead of a list of click-to-load placeholders.
-  useEffect(() => {
-    if (activeTab !== 'proof') return undefined;
-    let cancelled = false;
-    const records = detections.filter(detection => detection.has_photo && !photoCache[detection.id]);
-    if (!records.length) return undefined;
-    Promise.all(records.map(async detection => {
-      try {
-        const response = await authFetch(`${API}/inspector/detections/${detection.id}/photo`);
-        const body = await response.json();
-        return response.ok && body.photo_url ? [detection.id, body.photo_url] : null;
-      } catch { return null; }
-    })).then(entries => {
-      if (cancelled) return;
-      setPhotoCache(previous => ({ ...previous, ...Object.fromEntries(entries.filter(Boolean)) }));
-    });
-    return () => { cancelled = true; };
-  }, [activeTab, detections, photoCache]);
-
   const fetchNotifications = async () => {
     try {
       const res = await authFetch(`${API}/inspector/notifications`);
@@ -282,6 +262,26 @@ export default function InspectorDashboard({ setCurrentPage }) {
   const [reportPeriod, setReportPeriod] = useState('all');
   const [reportFrom,   setReportFrom]   = useState('');
   const [reportTo,     setReportTo]     = useState('');
+
+  // Load proof images as soon as the tab opens so the first viewport contains
+  // actual evidence instead of a list of click-to-load placeholders.
+  useEffect(() => {
+    if (activeTab !== 'proof') return undefined;
+    let cancelled = false;
+    const records = detections.filter(detection => detection.has_photo && !photoCache[detection.id]);
+    if (!records.length) return undefined;
+    Promise.all(records.map(async detection => {
+      try {
+        const response = await authFetch(`${API}/inspector/detections/${detection.id}/photo`);
+        const body = await response.json();
+        return response.ok && body.photo_url ? [detection.id, body.photo_url] : null;
+      } catch { return null; }
+    })).then(entries => {
+      if (cancelled) return;
+      setPhotoCache(previous => ({ ...previous, ...Object.fromEntries(entries.filter(Boolean)) }));
+    });
+    return () => { cancelled = true; };
+  }, [activeTab, detections, photoCache]);
 
   const openInspectorPhoto = async (detectionId) => {
     if (photoCache[detectionId]) {
