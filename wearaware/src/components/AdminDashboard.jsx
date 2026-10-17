@@ -1172,7 +1172,6 @@ export default function AdminDashboard({ setCurrentPage }) {
     { id: 'workers',    icon: <HardHat size={18} />,         label: 'Worker Registry'    },
     { id: 'employee-compliance', icon: <UserRoundSearch size={18} />, label: 'Employee Compliance' },
     { id: 'stations',   icon: <MapPin size={18} />,          label: 'Checkpoints'        },
-    { id: 'profiles',   icon: <ShieldCheck size={18} />,     label: 'Compliance Profiles' },
     { id: 'risk-rules', icon: <AlertTriangle size={18} />,    label: 'Risk Rules'          },
     { id: 'detections', icon: <ScanLine size={18} />,        label: 'Detection Log'      },
     { id: 'audit',      icon: <ClipboardList size={18} />,   label: 'Audit Logs'         },
@@ -1236,7 +1235,6 @@ export default function AdminDashboard({ setCurrentPage }) {
               {activeTab === 'workers'    && 'Worker Registry'}
               {activeTab === 'employee-compliance' && 'Employee Compliance History'}
               {activeTab === 'stations'   && 'Checkpoint Management'}
-              {activeTab === 'profiles'   && 'Compliance Profiles'}
               {activeTab === 'detections' && 'Detection Log'}
               {activeTab === 'audit'      && 'Audit Logs'}
               {activeTab === 'pwrequests' && 'Password Reset Requests'}
@@ -1535,32 +1533,6 @@ export default function AdminDashboard({ setCurrentPage }) {
                     </tbody>
                   </table></div>
                 )}
-              </div>
-            </div>
-          )}
-
-          {/* ── COMPLIANCE PROFILES ── */}
-          {activeTab === 'profiles' && (
-            <div className="ad-grid-full">
-              <div className="admin-surface">
-                <div className="ad-panel-header">
-                  <div><div className="ad-panel-title">Compliance Profiles</div><div className="ad-panel-sub">Reusable PPE templates. Profile edits are applied to checkpoints only when explicitly selected again.</div></div>
-                  <div className="ad-panel-actions"><button className="ad-refresh-btn" onClick={fetchProfiles}>↻ Refresh</button><button className="ad-btn ad-btn-primary" onClick={() => openProfileModal()}>+ Add Profile</button></div>
-                </div>
-                {loadErrors['Compliance profiles'] && <div className="ad-error-msg">{loadErrors['Compliance profiles']}</div>}
-                {profilesLoading ? <div className="ad-empty">Loading compliance profiles…</div>
-                : profiles.length === 0 ? <div className="ad-empty">No compliance profiles yet.</div>
-                : <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Compliance profiles"><table className="ad-table">
-                    <thead><tr><th>Profile</th><th>Description</th><th>Required PPE</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead>
-                    <tbody>{profiles.map(profile => <tr key={profile.id}>
-                      <td style={{ fontWeight: 700 }}>{profile.name}</td>
-                      <td style={{ color: '#66705f', maxWidth: 300 }}>{profile.description || '—'}</td>
-                      <td>{profile.required_ppe.map(item => <span key={item} className="ad-ppe-tag">{ppeLabel(item)}</span>)}</td>
-                      <td><span className={`ad-status ${profile.is_active ? 'active' : 'inactive'}`}><span className="ad-status-dot" />{profile.is_active ? 'Active' : 'Inactive'}</span></td>
-                      <td>{dateLabel(profile.updated_at)}</td>
-                      <td><div className="ad-action-btns"><button className="ad-btn-reactivate" onClick={() => openProfileModal(profile)}>Edit</button><button className={profile.is_active ? 'ad-btn-deactivate' : 'ad-btn-reactivate'} onClick={() => handleProfileStatus(profile)}>{profile.is_active ? 'Deactivate' : 'Activate'}</button><button className="ad-btn-delete" onClick={() => handleDeleteProfile(profile)}>Delete</button></div></td>
-                    </tr>)}</tbody>
-                  </table></div>}
               </div>
             </div>
           )}
