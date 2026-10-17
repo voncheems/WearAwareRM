@@ -1,6 +1,6 @@
 const { MongoClient } = require('mongodb');
 
-const TABLES = ['roles', 'users', 'compliance_profiles', 'devices', 'workers', 'detections', 'notifications', 'password_reset_requests', 'audit_logs'];
+const TABLES = ['roles', 'users', 'compliance_profiles', 'devices', 'workers', 'detections', 'notifications', 'password_reset_requests', 'audit_logs', 'risk_rules'];
 let client;
 let database;
 
@@ -29,6 +29,8 @@ async function ensureIndexes(db) {
   }
   await db.collection('devices').createIndex({ code: 1 }, { unique: true, partialFilterExpression: { code: { $type: 'string' } } });
   await db.collection('compliance_profiles').createIndex({ name_key: 1 }, { unique: true });
+  await db.collection('risk_rules').createIndex({ name: 1 }, { unique: true });
+  await db.collection('risk_rules').createIndex({ is_active: 1, checkpoint_id: 1, profile_id: 1 });
   await db.collection('users').createIndex({ worker_id: 1 }, { unique: true, partialFilterExpression: { worker_id: { $type: 'number' } } });
   await db.collection('workers').createIndex({ qr_token: 1 }, { unique: true, partialFilterExpression: { qr_token: { $type: 'string' } } });
   await db.collection('detections').createIndex({ scan_session_id: 1 }, { unique: true, partialFilterExpression: { scan_session_id: { $type: 'string' } } });

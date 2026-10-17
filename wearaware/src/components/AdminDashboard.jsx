@@ -488,6 +488,13 @@ export default function AdminDashboard({ setCurrentPage }) {
   const [profileFormMsg,    setProfileFormMsg]    = useState({ type: '', text: '' });
   const [profileSubmitting, setProfileSubmitting] = useState(false);
 
+  /* ── Risk rule state ── */
+  const [riskRules, setRiskRules] = useState([]);
+  const [riskRulesLoading, setRiskRulesLoading] = useState(false);
+  const [riskRuleForm, setRiskRuleForm] = useState({ name: '', condition_type: 'missing_ppe', ppe_item: 'helmet', checkpoint_id: '', profile_id: '', severity: 'Medium', is_active: true });
+  const [editingRiskRule, setEditingRiskRule] = useState(null);
+  const [showRiskRuleModal, setShowRiskRuleModal] = useState(false);
+
   const user = JSON.parse(localStorage.getItem('user') || '{}');
 
   /* ── Password reset requests ── */
@@ -495,7 +502,7 @@ export default function AdminDashboard({ setCurrentPage }) {
   const [pwLoading,      setPwLoading]      = useState(false);
   const [resetLink, setResetLink] = useState('');
 
-  useEffect(() => { fetchUsers(); fetchDetections(); fetchAuditLogs(); fetchWorkers(); fetchDevices(); fetchProfiles(); fetchPwRequests(); }, []);
+  useEffect(() => { fetchUsers(); fetchDetections(); fetchAuditLogs(); fetchWorkers(); fetchDevices(); fetchProfiles(); fetchRiskRules(); fetchPwRequests(); }, []);
   useEffect(() => {
     if (activeTab !== 'pwrequests') return undefined;
     fetchPwRequests();
@@ -606,6 +613,32 @@ export default function AdminDashboard({ setCurrentPage }) {
       setProfiles(data);
     } catch (err) { setLoadErrors(prev => ({ ...prev, 'Compliance profiles': err.message })); }
     finally { setProfilesLoading(false); }
+  };
+
+  const fetchRiskRules = async () => {
+    setRiskRulesLoading(true);
+    setLoadErrors(prev => ({ ...prev, 'Risk rules': '' }));
+    try {
+      const res = await adminFetch(`${API}/admin/risk-rules`, { headers: getAuthHeaders() });
+      const body = await res.json();
+      if (!Array.isArray(body)) throw new Error('The server returned an invalid risk-rule list.');
+      setRiskRules(body);
+    } catch (err) { setLoadErrors(prev => ({ ...prev, 'Risk rules': err.message })); }
+    finally { setRiskRulesLoading(false); }
+  };
+
+  const saveRiskRule = async (event) => {
+    event.preventDefault();
+    const payload = { ...riskRuleForm, checkpoint_id: riskRuleForm.checkpoint_id || null, profile_id: riskRuleForm.profile_id || null, ppe_item: riskRuleForm.condition_type === 'missing_ppe' ? riskRuleForm.ppe_item : null };
+    try {
+      await adminFetch(editingRiskRule ? `${API}/admin/risk-rules/${editingRiskRule.id}` : `${API}/admin/risk-rules`, { method: editingRiskRule ? 'PUT' : 'POST', headers: getAuthHeaders(), body: JSON.stringify(payload) });
+      setShowRiskRuleModal(false); setEditingRiskRule(null); fetchRiskRules();
+    } catch (err) { alert(err.message); }
+  };
+
+  const toggleRiskRule = async (rule) => {
+    try { await adminFetch(`${API}/admin/risk-rules/${rule.id}/status`, { method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify({ is_active: !rule.is_active }) }); fetchRiskRules(); }
+    catch (err) { alert(err.message); }
   };
 
   const fetchPwRequests = async () => {
@@ -1140,6 +1173,7 @@ export default function AdminDashboard({ setCurrentPage }) {
     { id: 'employee-compliance', icon: <UserRoundSearch size={18} />, label: 'Employee Compliance' },
     { id: 'stations',   icon: <MapPin size={18} />,          label: 'Checkpoints'        },
     { id: 'profiles',   icon: <ShieldCheck size={18} />,     label: 'Compliance Profiles' },
+    { id: 'risk-rules', icon: <AlertTriangle size={18} />,    label: 'Risk Rules'          },
     { id: 'detections', icon: <ScanLine size={18} />,        label: 'Detection Log'      },
     { id: 'audit',      icon: <ClipboardList size={18} />,   label: 'Audit Logs'         },
     { id: 'pwrequests', icon: <KeyRound size={18} />,        label: `Password Requests${passwordRequests.filter(r=>r.status==='pending').length > 0 ? ` (${passwordRequests.filter(r=>r.status==='pending').length})` : ''}` },
@@ -1297,7 +1331,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                     <div><div className="ad-panel-title">Recent Users</div><div className="ad-panel-sub">Latest registered accounts</div></div>
                     <button className="ad-panel-action" onClick={() => setActiveTab('users')}>View All →</button>
                   </div>
-                  <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Scrollable admin records"><table className="ad-table">
+                  <div className="ad-table-scroll ad-checkpoint-table-scroll" tabIndex={0} role="region" aria-label="Scrollable admin records"><table className="ad-table ad-checkpoint-table">
                     <thead><tr><th>Name</th><th>Role</th><th>Status</th></tr></thead>
                     <tbody>
                       {accountUsers.slice(0, 5).map(u => (
@@ -1527,6 +1561,24 @@ export default function AdminDashboard({ setCurrentPage }) {
                       <td><div className="ad-action-btns"><button className="ad-btn-reactivate" onClick={() => openProfileModal(profile)}>Edit</button><button className={profile.is_active ? 'ad-btn-deactivate' : 'ad-btn-reactivate'} onClick={() => handleProfileStatus(profile)}>{profile.is_active ? 'Deactivate' : 'Activate'}</button><button className="ad-btn-delete" onClick={() => handleDeleteProfile(profile)}>Delete</button></div></td>
                     </tr>)}</tbody>
                   </table></div>}
+              </div>
+            </div>
+          )}
+
+          {/* ── RISK RULES ── */}
+          {activeTab === 'risk-rules' && (
+            <div className="ad-grid-full">
+              <div className="admin-surface">
+                <div className="ad-panel-header">
+                  <div><div className="ad-panel-title">Risk Rules</div><div className="ad-panel-sub">Severity is recorded for violations only; manual reviews remain deferred.</div></div>
+                  <div className="ad-panel-actions"><button className="ad-refresh-btn" onClick={fetchRiskRules}>↻ Refresh</button><button className="ad-btn ad-btn-primary" onClick={() => { setEditingRiskRule(null); setRiskRuleForm({ name: '', condition_type: 'missing_ppe', ppe_item: 'helmet', checkpoint_id: '', profile_id: '', severity: 'Medium', is_active: true }); setShowRiskRuleModal(true); }}>+ Add Risk Rule</button></div>
+                </div>
+                {loadErrors['Risk rules'] && <div className="ad-error-msg">{loadErrors['Risk rules']}</div>}
+                {riskRulesLoading ? <div className="ad-empty">Loading risk rules…</div> : riskRules.length === 0 ? <div className="ad-empty">No risk rules configured. Unmatched violations remain unclassified.</div> : (
+                  <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Risk rules"><table className="ad-table"><thead><tr><th>Rule</th><th>Condition</th><th>Scope</th><th>Severity</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+                    {riskRules.map(rule => <tr key={rule.id}><td><strong>{rule.name}</strong></td><td>{rule.condition_type === 'missing_ppe' ? `Missing ${ppeLabel(rule.ppe_item)}` : 'Any PPE violation'}</td><td>{rule.checkpoint_id ? `Checkpoint ${rule.checkpoint_id}` : rule.profile_id ? `Profile ${rule.profile_id}` : 'All checkpoints'}</td><td><span className={`ad-risk-severity ad-risk-${String(rule.severity).toLowerCase()}`}>{rule.severity}</span></td><td><span className={`ad-status ${rule.is_active ? 'active' : 'inactive'}`}><span className="ad-status-dot" />{rule.is_active ? 'Active' : 'Disabled'}</span></td><td><div className="ad-action-btns"><button className="ad-btn-reactivate" onClick={() => { setEditingRiskRule(rule); setRiskRuleForm({ name: rule.name, condition_type: rule.condition_type, ppe_item: rule.ppe_item || 'helmet', checkpoint_id: rule.checkpoint_id || '', profile_id: rule.profile_id || '', severity: rule.severity, is_active: rule.is_active }); setShowRiskRuleModal(true); }}>Edit</button><button className={rule.is_active ? 'ad-btn-deactivate' : 'ad-btn-reactivate'} onClick={() => toggleRiskRule(rule)}>{rule.is_active ? 'Disable' : 'Enable'}</button></div></td></tr>)}
+                  </tbody></table></div>
+                )}
               </div>
             </div>
           )}
@@ -2023,6 +2075,24 @@ export default function AdminDashboard({ setCurrentPage }) {
               </div>
               {editingProfile && <div className="ad-modal-field"><label className="ad-modal-label">Status</label><select className="ad-modal-select" value={profileForm.is_active} onChange={event => setProfileForm(current => ({ ...current, is_active: event.target.value === 'true' }))}><option value="true">Active</option><option value="false">Inactive</option></select></div>}
               <div className="ad-modal-footer"><button type="button" className="ad-btn ad-btn-ghost" onClick={() => { setShowProfileModal(false); setEditingProfile(null); setProfileForm({ ...EMPTY_PROFILE }); }}>Cancel</button><button type="submit" className="ad-btn ad-btn-primary" disabled={profileSubmitting}>{profileSubmitting ? 'Saving…' : editingProfile ? 'Update Profile' : 'Create Profile'}</button></div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showRiskRuleModal && (
+        <div className="ad-modal-overlay" onClick={event => event.target === event.currentTarget && setShowRiskRuleModal(false)}>
+          <div className="ad-modal">
+            <div className="ad-modal-title">{editingRiskRule ? 'Edit Risk Rule' : 'Add Risk Rule'}</div>
+            <div className="ad-modal-sub">Risk is recorded with the incident and never changes entry authorization automatically.</div>
+            <form className="ad-modal-form" onSubmit={saveRiskRule}>
+              <div className="ad-modal-field"><label className="ad-modal-label">Rule name</label><input required className="ad-modal-input" value={riskRuleForm.name} onChange={event => setRiskRuleForm(current => ({ ...current, name: event.target.value }))} placeholder="Missing helmet at entrance" /></div>
+              <div className="ad-modal-field"><label className="ad-modal-label">Condition</label><select className="ad-modal-select" value={riskRuleForm.condition_type} onChange={event => setRiskRuleForm(current => ({ ...current, condition_type: event.target.value }))}><option value="missing_ppe">Missing specific PPE</option><option value="violation">Any PPE violation</option></select></div>
+              {riskRuleForm.condition_type === 'missing_ppe' && <div className="ad-modal-field"><label className="ad-modal-label">PPE item</label><select className="ad-modal-select" value={riskRuleForm.ppe_item} onChange={event => setRiskRuleForm(current => ({ ...current, ppe_item: event.target.value }))}>{PPE_OPTIONS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></div>}
+              <div className="ad-modal-field"><label className="ad-modal-label">Checkpoint scope</label><select className="ad-modal-select" value={riskRuleForm.checkpoint_id} onChange={event => setRiskRuleForm(current => ({ ...current, checkpoint_id: event.target.value }))}><option value="">All checkpoints</option>{stationDevices.map(checkpoint => <option key={checkpoint.id} value={checkpoint.id}>{checkpoint.label}</option>)}</select></div>
+              <div className="ad-modal-field"><label className="ad-modal-label">Profile scope</label><select className="ad-modal-select" value={riskRuleForm.profile_id} onChange={event => setRiskRuleForm(current => ({ ...current, profile_id: event.target.value }))}><option value="">All profiles</option>{profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></div>
+              <div className="ad-modal-field"><label className="ad-modal-label">Severity</label><select className="ad-modal-select" value={riskRuleForm.severity} onChange={event => setRiskRuleForm(current => ({ ...current, severity: event.target.value }))}>{['Low', 'Medium', 'High', 'Critical'].map(level => <option key={level}>{level}</option>)}</select></div>
+              <div className="ad-modal-footer"><button type="button" className="ad-btn ad-btn-ghost" onClick={() => setShowRiskRuleModal(false)}>Cancel</button><button type="submit" className="ad-btn ad-btn-primary">{editingRiskRule ? 'Update Rule' : 'Create Rule'}</button></div>
             </form>
           </div>
         </div>

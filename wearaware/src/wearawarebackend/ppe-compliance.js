@@ -23,6 +23,22 @@ function normalizePpeList(values = []) {
   return [...new Set(values.map(normalizePpeName).filter(Boolean))];
 }
 
+// Preserve the detector's observation layer without allowing arbitrary request
+// objects into detection records. Compliance is evaluated separately below.
+function normalizeAiObservations(values = []) {
+  if (!Array.isArray(values)) return [];
+  return values.slice(0, 256).map(value => {
+    const className = normalizePpeName(value?.class_name);
+    if (!className) return null;
+    const confidence = value?.confidence == null ? null : Number(value.confidence);
+    if (confidence !== null && (!Number.isFinite(confidence) || confidence < 0 || confidence > 1)) return null;
+    const rawBox = value?.bbox;
+    const boxValues = [rawBox?.x1, rawBox?.y1, rawBox?.x2, rawBox?.y2].map(Number);
+    const bbox = boxValues.every(Number.isFinite) ? { x1: boxValues[0], y1: boxValues[1], x2: boxValues[2], y2: boxValues[3] } : null;
+    return { class_name: className, confidence, bbox, inferred: value?.inferred === true, violation: value?.violation === true };
+  }).filter(Boolean);
+}
+
 // Retain weak observations so session aggregation can distinguish uncertainty
 // from a PPE item that was never observed.
 function filterAiObservations(detections = []) {
@@ -155,5 +171,5 @@ function evaluateSessionEvidence({ requiredPpe, detectedPpe, confidenceSummary, 
 }
 
 module.exports = { confidenceConfig, AI_MIN_CONFIDENCE, MANUAL_REVIEW_CONFIDENCE, PERSON_MIN_CONFIDENCE,
-  normalizePpeName, normalizePpeList, filterAiObservations, filterAiDetections, filterPersonDetections,
+  normalizePpeName, normalizePpeList, normalizeAiObservations, filterAiObservations, filterAiDetections, filterPersonDetections,
   detectedPpeFromAi, evaluateCompliance, classifyLocalAlert, evaluateSessionEvidence };

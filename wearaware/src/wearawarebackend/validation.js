@@ -20,6 +20,7 @@ const checkpointCode = z.string().trim().min(2).max(40).regex(/^[A-Za-z0-9]+(?:-
 const profilePpe = z.array(ppeItem).min(1).max(32).transform(items => [...new Set(items)]);
 const complianceProfile = z.object({ name: text(120), description: optionalText(500), required_ppe: profilePpe, is_active: z.boolean().optional() }).strict();
 const station = z.object({ label: text(120), code: checkpointCode, description: optionalText(500), location: optionalText(200), checkpoint_type: z.enum(['entrance', 'exit', 'internal']), profile_id: optionalId, required_ppe: ppe.optional(), inspector_id: optionalId, is_active: z.boolean().optional() }).strict();
+const riskRule = z.object({ name: text(160), condition_type: z.enum(['violation', 'missing_ppe']), ppe_item: z.preprocess(v => v === '' || v === undefined ? null : v, ppeItem.nullable()), checkpoint_id: optionalId, profile_id: optionalId, severity: z.enum(['Low', 'Medium', 'High', 'Critical']), is_active: z.boolean().optional() }).strict().superRefine((value, ctx) => { if (value.condition_type === 'missing_ppe' && !value.ppe_item) ctx.addIssue({ code: 'custom', path: ['ppe_item'], message: 'PPE item is required for missing-PPE rules.' }); });
 const confidenceEvidence = z.array(z.object({
   ppe: ppeItem,
   average_confidence: z.number().min(0).max(1),
@@ -28,6 +29,13 @@ const confidenceEvidence = z.array(z.object({
   observed_frames: z.number().int().min(0).max(1000).optional(),
   status: z.enum(['DETECTED', 'MISSING', 'UNCERTAIN']).optional(),
 }).strict()).max(32);
+const aiObservation = z.object({
+  class_name: text(40),
+  confidence: z.number().min(0).max(1).nullable().optional(),
+  bbox: z.object({ x1: z.number(), y1: z.number(), x2: z.number(), y2: z.number() }).strict().nullable().optional(),
+  inferred: z.boolean().optional(),
+  violation: z.boolean().optional(),
+}).strict();
 const reviewDecision = z.object({ decision: z.enum(['compliant', 'non_compliant', 'false_detection', 'unable_to_verify']), notes: optionalText(1000) }).strict();
 const resolutionStatus = z.enum(['CONFIRMED_VIOLATION', 'FALSE_DETECTION', 'RESOLVED_AFTER_CORRECTION', 'AUTHORIZED_EXCEPTION']);
 const violationResolution = z.object({
@@ -56,13 +64,16 @@ const schemas = {
   'PATCH /api/checkpoints/:id/status': z.object({ is_active: z.boolean() }).strict(),
   'POST /api/compliance-profiles': complianceProfile, 'PUT /api/compliance-profiles/:id': complianceProfile,
   'PATCH /api/compliance-profiles/:id/status': z.object({ is_active: z.boolean() }).strict(),
+  'POST /api/admin/risk-rules': riskRule,
+  'PUT /api/admin/risk-rules/:id': riskRule,
+  'PATCH /api/admin/risk-rules/:id/status': z.object({ is_active: z.boolean() }).strict(),
   'PATCH /api/devices/:id/assign': z.object({ inspector_id: optionalId }).strict(),
   'PATCH /api/inspector/workers/:id/assign': z.object({ station_id: id }).strict(),
   'PATCH /api/inspector/detections/:id/review': reviewDecision,
   'PATCH /api/admin/detections/:id/review': reviewDecision,
   'PATCH /api/violations/:id/resolve': violationResolution,
   'PATCH /api/admin/password-requests/:id/reset': z.object({}).strict(),
-  'POST /api/detections': z.object({ worker_id: id, checkpoint_id: id.optional(), device_uuid: text(100).optional(), result: z.enum(['compliant', 'violation', 'manual_review']).optional(), detected_ppe: ppe.optional(), missing_ppe: ppe.optional(), confidence_score: z.number().min(0).max(1).nullable().optional(), visibility_score: z.number().min(0).max(1).nullable().optional(), multiple_people_detected: z.boolean().optional(), photo_url: z.string().max(2800000).regex(/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/).nullable().optional(), scan_session_id: z.string().uuid().optional(), session_started_at: z.coerce.date().optional(), session_ended_at: z.coerce.date().optional(), frame_count: z.number().int().min(1).max(1000).optional(), confidence_summary: confidenceEvidence.optional(), manual_review_required: z.boolean().optional() }).strict(),
+  'POST /api/detections': z.object({ worker_id: id, checkpoint_id: id.optional(), device_uuid: text(100).optional(), result: z.enum(['compliant', 'violation', 'manual_review']).optional(), detected_ppe: ppe.optional(), missing_ppe: ppe.optional(), confidence_score: z.number().min(0).max(1).nullable().optional(), visibility_score: z.number().min(0).max(1).nullable().optional(), multiple_people_detected: z.boolean().optional(), photo_url: z.string().max(2800000).regex(/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/).nullable().optional(), ai_observations: z.array(aiObservation).max(256).optional(), scan_session_id: z.string().uuid().optional(), session_started_at: z.coerce.date().optional(), session_ended_at: z.coerce.date().optional(), frame_count: z.number().int().min(1).max(1000).optional(), confidence_summary: confidenceEvidence.optional(), manual_review_required: z.boolean().optional() }).strict(),
 };
 function validateRequest(req, res, next) {
   if (req.params.id && !id.safeParse(req.params.id).success) return res.status(400).json({ error: 'Invalid record ID.' });

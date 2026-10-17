@@ -2,7 +2,7 @@ const { getDatabase } = require('./database');
 const { authorizationFromCompliance, authorizationFromInspectorDecision } = require('./entry-authorization');
 
 // Keep the public integer IDs used by the web and Android clients.
-const numericFields = new Set(['id', 'role_id', 'profile_id', 'inspector_id', 'worker_id', 'detection_id', 'reviewed_by', 'authorization_override_by', 'resolution_inspector_id', 'resolution_corrected_by_scan_id']);
+const numericFields = new Set(['id', 'role_id', 'profile_id', 'inspector_id', 'worker_id', 'detection_id', 'reviewed_by', 'authorization_override_by', 'resolution_inspector_id', 'resolution_corrected_by_scan_id', 'risk_rule_id', 'checkpoint_id', 'created_by']);
 function normalize(table, values) {
   return Object.fromEntries(Object.entries(values).map(([key, value]) => {
     const numeric = numericFields.has(key) || (key === 'device_id' && table !== 'devices');
@@ -13,6 +13,7 @@ function normalize(table, values) {
     }
     if (Array.isArray(value)) {
       const validPpeList = ['required_ppe', 'detected_ppe', 'missing_ppe', 'uncertain_ppe'].includes(key) && value.every(item => typeof item === 'string');
+      const validRuleIds = key === 'matched_rule_ids' && value.every(item => Number.isSafeInteger(item) && item > 0);
       const validConfidenceSummary = key === 'confidence_summary' && value.every(item => item && typeof item === 'object' && !Array.isArray(item)
         && Object.keys(item).every(field => ['ppe', 'average_confidence', 'positive_frames', 'weak_frames', 'observed_frames', 'status'].includes(field))
         && typeof item.ppe === 'string'
@@ -21,10 +22,18 @@ function normalize(table, values) {
         && (item.weak_frames === undefined || Number.isSafeInteger(item.weak_frames))
         && (item.observed_frames === undefined || Number.isSafeInteger(item.observed_frames))
         && (item.status === undefined || ['DETECTED', 'MISSING', 'UNCERTAIN'].includes(item.status)));
-      if (!validPpeList && !validConfidenceSummary) throw new Error(`Invalid ${key}`);
+      const validAiObservations = key === 'ai_observations' && value.length <= 256 && value.every(item => item && typeof item === 'object' && !Array.isArray(item)
+        && Object.keys(item).every(field => ['class_name', 'confidence', 'bbox', 'inferred', 'violation'].includes(field))
+        && typeof item.class_name === 'string'
+        && (item.confidence === null || (typeof item.confidence === 'number' && Number.isFinite(item.confidence) && item.confidence >= 0 && item.confidence <= 1))
+        && (item.bbox === null || (item.bbox && typeof item.bbox === 'object' && ['x1', 'y1', 'x2', 'y2'].every(field => typeof item.bbox[field] === 'number' && Number.isFinite(item.bbox[field]))))
+        && (item.inferred === undefined || typeof item.inferred === 'boolean')
+        && (item.violation === undefined || typeof item.violation === 'boolean'));
+      if (!validPpeList && !validConfidenceSummary && !validRuleIds && !validAiObservations) throw new Error(`Invalid ${key}`);
     }
     if (['is_active', 'is_read'].includes(key) && value !== null && typeof value !== 'boolean') throw new Error(`Invalid ${key}`);
     // Values from requests must never become MongoDB query operators.
+    if (key === 'risk_rule_snapshot' && (value === null || (typeof value === 'object' && !Array.isArray(value)))) return [key, value ?? null];
     if (value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date)) {
       throw new Error(`Invalid ${key}`);
     }
@@ -57,7 +66,8 @@ function createRepository(dbProvider = getDatabase) {
   async function references(table, doc) {
     const refs = {
       users: { role_id: 'roles', worker_id: 'workers' }, devices: { profile_id: 'compliance_profiles', inspector_id: 'users' }, workers: { device_id: 'devices' },
-      detections: { device_id: 'devices', profile_id: 'compliance_profiles', inspector_id: 'users', worker_id: 'workers', reviewed_by: 'users', resolution_inspector_id: 'users', resolution_corrected_by_scan_id: 'detections' },
+      detections: { device_id: 'devices', profile_id: 'compliance_profiles', inspector_id: 'users', worker_id: 'workers', reviewed_by: 'users', resolution_inspector_id: 'users', resolution_corrected_by_scan_id: 'detections', risk_rule_id: 'risk_rules' },
+      risk_rules: { checkpoint_id: 'devices', profile_id: 'compliance_profiles', created_by: 'users' },
       notifications: { detection_id: 'detections', inspector_id: 'users' },
     }[table] || {};
     for (const [field, target] of Object.entries(refs)) {
@@ -75,6 +85,12 @@ function createRepository(dbProvider = getDatabase) {
     if (table === 'detections' && doc.inspector_decision !== undefined && doc.inspector_decision !== null && !['compliant', 'non_compliant', 'false_detection', 'unable_to_verify'].includes(doc.inspector_decision)) throw new Error('Invalid inspector decision');
     if (table === 'detections' && doc.resolution_status !== undefined && doc.resolution_status !== null && !['PENDING_REVIEW', 'CONFIRMED_VIOLATION', 'FALSE_DETECTION', 'RESOLVED_AFTER_CORRECTION', 'AUTHORIZED_EXCEPTION'].includes(doc.resolution_status)) throw new Error('Invalid resolution status');
     if (table === 'detections' && doc.resolution_decision !== undefined && doc.resolution_decision !== null && !['CONFIRM', 'FALSE_DETECTION', 'RESOLVE_AFTER_CORRECTION', 'AUTHORIZE_EXCEPTION'].includes(doc.resolution_decision)) throw new Error('Invalid resolution decision');
+    if (table === 'risk_rules') {
+      if (!['violation', 'missing_ppe'].includes(doc.condition_type)) throw new Error('Invalid risk condition');
+      if (!['Low', 'Medium', 'High', 'Critical'].includes(doc.severity)) throw new Error('Invalid risk severity');
+      if (doc.condition_type === 'missing_ppe' && (!doc.ppe_item || typeof doc.ppe_item !== 'string')) throw new Error('PPE item is required for missing-PPE rules');
+      if (doc.condition_type === 'violation') doc.ppe_item = null;
+    }
   }
   const api = {
     nextId,
@@ -91,7 +107,8 @@ function createRepository(dbProvider = getDatabase) {
         compliance_profiles: { description: null, is_active: true, created_at: now, updated_at: now },
         devices: { is_active: true, profile_id: null, inspector_id: null, code: null, description: null, location: null, checkpoint_type: 'internal', required_ppe: ['helmet', 'vest'], created_at: now, registered_at: now, updated_at: now },
         workers: { device_id: null, position: null, contact_number: null, status: 'active', qr_token: null, qr_generated_at: null, qr_revoked_at: null, created_at: now, updated_at: now },
-        detections: { worker_id: null, worker_name: null, worker_employee_id: null, profile_id: null, profile_name: null, checkpoint_name: null, checkpoint_code: null, alert_type: null, required_ppe: [], missing_ppe: [], detected_ppe: [], uncertain_ppe: [], photo_url: null, confidence_score: null, visibility_score: null, manual_review_reason: null, manual_review_message: null, ai_result: null, review_status: 'not_required', inspector_decision: null, reviewed_by: null, reviewed_at: null, review_notes: null, resolution_status: null, resolution_decision: null, resolution_inspector_id: null, resolution_resolved_at: null, resolution_notes: null, resolution_corrected_by_scan_id: null, detected_at: now },
+        detections: { worker_id: null, worker_name: null, worker_employee_id: null, profile_id: null, profile_name: null, checkpoint_name: null, checkpoint_code: null, alert_type: null, required_ppe: [], missing_ppe: [], detected_ppe: [], uncertain_ppe: [], ai_observations: [], photo_url: null, confidence_score: null, visibility_score: null, manual_review_reason: null, manual_review_message: null, ai_result: null, review_status: 'not_required', inspector_decision: null, reviewed_by: null, reviewed_at: null, review_notes: null, resolution_status: null, resolution_decision: null, resolution_inspector_id: null, resolution_resolved_at: null, resolution_notes: null, resolution_corrected_by_scan_id: null, risk_status: 'not_applicable', risk_severity: null, risk_rule_id: null, risk_rule_name: null, risk_rule_snapshot: null, matched_rule_ids: [], risk_evaluated_at: now, detected_at: now },
+        risk_rules: { condition_type: 'violation', ppe_item: null, checkpoint_id: null, profile_id: null, is_active: true, created_at: now, updated_at: now },
         notifications: { type: 'NON_COMPLIANT_WORKER', title: 'Non-Compliant Worker Detected', message: 'A worker requires inspector review.', is_read: false, read_at: null, created_at: now },
         password_reset_requests: { status: 'pending', reason: null, created_at: now },
       };
@@ -112,7 +129,7 @@ function createRepository(dbProvider = getDatabase) {
       }
       const required = {
         users: ['role_id', 'full_name', 'email', 'password_hash'], compliance_profiles: ['name', 'name_key', 'required_ppe'], devices: ['device_id', 'label', 'required_ppe'],
-        workers: ['employee_id', 'full_name'], detections: ['device_id', 'checkpoint_name', 'checkpoint_code', 'alert_type', 'required_ppe', 'result'],
+        workers: ['employee_id', 'full_name'], detections: ['device_id', 'checkpoint_name', 'checkpoint_code', 'alert_type', 'required_ppe', 'result'], risk_rules: ['name', 'condition_type', 'severity', 'is_active', 'created_by'],
         notifications: ['detection_id', 'inspector_id'], password_reset_requests: ['email', 'status'],
       }[table] || [];
       if (required.some(key => doc[key] == null)) throw new Error('Missing required record fields');
@@ -189,7 +206,7 @@ function createRepository(dbProvider = getDatabase) {
       pipeline.push(...join('devices', 'device_id', 'stationDoc'));
       if (view !== 'legacy') pipeline.push(...join('workers', 'worker_id', 'workerDoc'));
       if (view === 'admin') pipeline.push(...join('users', 'inspector_id', 'inspectorDoc'));
-      const fields = 'id device_id worker_name worker_employee_id profile_id profile_name checkpoint_code alert_type result ai_result original_authorization authorization_status authorization_event authorization_decided_at authorization_override_by authorization_override_at authorization_override_reason resolution_status resolution_decision resolution_inspector_id resolution_resolved_at resolution_notes resolution_corrected_by_scan_id required_ppe missing_ppe detected_ppe uncertain_ppe manual_review_reason manual_review_message review_status inspector_decision reviewed_by reviewed_at review_notes scan_session_id session_status session_started_at session_ended_at frame_count confidence_summary visibility_score' + (view === 'inspector' ? '' : ' confidence_score detected_at');
+      const fields = 'id device_id worker_name worker_employee_id profile_id profile_name checkpoint_code alert_type result ai_result original_authorization authorization_status authorization_event authorization_decided_at authorization_override_by authorization_override_at authorization_override_reason resolution_status resolution_decision resolution_inspector_id resolution_resolved_at resolution_notes resolution_corrected_by_scan_id risk_status risk_severity risk_rule_id risk_rule_name risk_rule_snapshot matched_rule_ids risk_evaluated_at required_ppe missing_ppe detected_ppe uncertain_ppe manual_review_reason manual_review_message review_status inspector_decision reviewed_by reviewed_at review_notes scan_session_id session_status session_started_at session_ended_at frame_count confidence_summary visibility_score' + (view === 'inspector' ? '' : ' confidence_score detected_at');
       pipeline.push({ $project: { ...project(fields), _timestamp: '$detected_at', station: { $ifNull: ['$checkpoint_name', { $ifNull: ['$stationDoc.label', null] }] },
         checkpoint: { id: '$device_id', name: { $ifNull: ['$checkpoint_name', { $ifNull: ['$stationDoc.label', null] }] }, code: { $ifNull: ['$checkpoint_code', { $ifNull: ['$stationDoc.code', null] }] } },
         has_photo: { $ne: [{ $ifNull: ['$photo_url', ''] }, ''] },
@@ -215,7 +232,7 @@ function createRepository(dbProvider = getDatabase) {
       return result([{ ...row, compliance_rate: decided ? Math.round(row.compliant / decided * 1000) / 10 : 100, authorization_rate: authorizationDecided ? Math.round(row.authorized / authorizationDecided * 1000) / 10 : 100 }]);
     },
     notifications(inspectorId) {
-      return aggregate('notifications', [{ $match: normalize('notifications', { inspector_id: inspectorId }) }, { $sort: { created_at: -1 } }, ...join('detections', 'detection_id', 'detectionDoc', true), ...join('devices', 'detectionDoc.device_id', 'stationDoc', true), ...join('workers', 'detectionDoc.worker_id', 'workerDoc'), { $limit: 50 }, { $project: { ...project('id detection_id inspector_id type title message is_read read_at created_at'), result: '$detectionDoc.result', alert_type: '$detectionDoc.alert_type', authorization_status: '$detectionDoc.authorization_status', authorization_event: '$detectionDoc.authorization_event', missing_ppe: '$detectionDoc.missing_ppe', uncertain_ppe: '$detectionDoc.uncertain_ppe', manual_review_reason: '$detectionDoc.manual_review_reason', manual_review_message: '$detectionDoc.manual_review_message', review_status: '$detectionDoc.review_status', resolution_status: '$detectionDoc.resolution_status', photo_url: nullable('detectionDoc.photo_url'), station: { $ifNull: ['$detectionDoc.checkpoint_name', '$stationDoc.label'] }, location: nullable('stationDoc.location'), worker_name: { $ifNull: ['$detectionDoc.worker_name', { $ifNull: ['$workerDoc.full_name', null] }] }, worker_employee_id: { $ifNull: ['$detectionDoc.worker_employee_id', { $ifNull: ['$workerDoc.employee_id', null] }] } } }]);
+      return aggregate('notifications', [{ $match: normalize('notifications', { inspector_id: inspectorId }) }, { $sort: { created_at: -1 } }, ...join('detections', 'detection_id', 'detectionDoc', true), ...join('devices', 'detectionDoc.device_id', 'stationDoc', true), ...join('workers', 'detectionDoc.worker_id', 'workerDoc'), { $limit: 50 }, { $project: { ...project('id detection_id inspector_id type title message is_read read_at created_at'), result: '$detectionDoc.result', alert_type: '$detectionDoc.alert_type', risk_status: '$detectionDoc.risk_status', risk_severity: '$detectionDoc.risk_severity', risk_rule_name: '$detectionDoc.risk_rule_name', authorization_status: '$detectionDoc.authorization_status', authorization_event: '$detectionDoc.authorization_event', missing_ppe: '$detectionDoc.missing_ppe', uncertain_ppe: '$detectionDoc.uncertain_ppe', manual_review_reason: '$detectionDoc.manual_review_reason', manual_review_message: '$detectionDoc.manual_review_message', review_status: '$detectionDoc.review_status', resolution_status: '$detectionDoc.resolution_status', photo_url: nullable('detectionDoc.photo_url'), station: { $ifNull: ['$detectionDoc.checkpoint_name', '$stationDoc.label'] }, location: nullable('stationDoc.location'), worker_name: { $ifNull: ['$detectionDoc.worker_name', { $ifNull: ['$workerDoc.full_name', null] }] }, worker_employee_id: { $ifNull: ['$detectionDoc.worker_employee_id', { $ifNull: ['$workerDoc.employee_id', null] }] } } }]);
     },
     async createNotificationOnce(values) {
       const normalized = normalize('notifications', values);

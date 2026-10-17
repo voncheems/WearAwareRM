@@ -169,15 +169,16 @@ test('inspectors read only their stations while the dedicated scanner routes wri
   const lookup = await call('/api/workers/by-employee-id/W11', scannerAuth);
   assert.equal(lookup.status, 200);
   assert.deepEqual((await lookup.json()).checkpoint.required_ppe, ['helmet', 'vest']);
-  const firstScannerCheck = await call('/api/detections', scannerAuth, 'POST', { worker_id: 11, checkpoint_id: 1, result: 'violation', missing_ppe: ['gloves'], detected_ppe: ['helmet', 'vest'], confidence_score: 0.9 });
+  const firstScannerCheck = await call('/api/detections', scannerAuth, 'POST', { worker_id: 11, checkpoint_id: 1, result: 'violation', missing_ppe: ['gloves'], detected_ppe: ['helmet', 'vest'], confidence_score: 0.9, ai_observations: [{ class_name: 'helmet', confidence: 0.91, bbox: { x1: 10, y1: 20, x2: 100, y2: 120 } }] });
   assert.equal(firstScannerCheck.status, 201);
   const firstRecord = await db.collection('detections').findOne({ id: (await firstScannerCheck.json()).detection_id });
   assert.equal(firstRecord.inspector_id, 2); assert.equal(firstRecord.device_id, 1); assert.equal(firstRecord.worker_id, 11);
   assert.equal(firstRecord.worker_name, 'First'); assert.equal(firstRecord.worker_employee_id, 'W11');
-  assert.equal(firstRecord.result, 'compliant'); assert.equal(firstRecord.checkpoint_name, 'First');
+  assert.equal(firstRecord.result, 'compliant'); assert.equal(firstRecord.ai_result, 'compliant'); assert.equal(firstRecord.checkpoint_name, 'First');
   assert.equal(firstRecord.checkpoint_code, 'FIRST-01');
   assert.equal(firstRecord.profile_id, reusableProfileId); assert.equal(firstRecord.profile_name, 'Test Warehouse');
   assert.equal(firstRecord.alert_type, 'compliant');
+  assert.deepEqual(firstRecord.ai_observations, [{ class_name: 'helmet', confidence: 0.91, bbox: { x1: 10, y1: 20, x2: 100, y2: 120 }, inferred: false, violation: false }]);
   assert.equal(firstRecord.original_authorization, 'authorized');
   assert.equal(firstRecord.authorization_status, 'authorized');
   assert.equal(firstRecord.authorization_event, 'ACCESS_AUTHORIZED');

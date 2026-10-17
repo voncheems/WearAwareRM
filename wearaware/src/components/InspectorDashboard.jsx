@@ -713,7 +713,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
           <div className="ins-topbar-actions">
             <button type="button" className="ins-notification-button" aria-label={`${unreadNotifications.length} unread notifications`} aria-expanded={notificationOpen} onClick={() => { setNotificationOpen(open => !open); if (!notificationOpen) fetchNotifications(); }}><Bell size={19} />{unreadNotifications.length > 0 && <span className="ins-notification-count">{unreadNotifications.length > 99 ? '99+' : unreadNotifications.length}</span>}</button>
             <span className="ins-badge">INSPECTOR</span>
-            {notificationOpen && <div className="ins-notification-panel" role="dialog" aria-label="Inspector notifications"><div className="ins-notification-header"><strong>Notifications</strong><button type="button" onClick={fetchNotifications}>Refresh</button></div>{notificationError && <div className="ins-notification-error">{notificationError}</div>}{notifications.length === 0 ? <div className="ins-notification-empty">No notifications yet.</div> : <div className="ins-notification-list">{notifications.map(notification => <button type="button" key={notification.id} className={`ins-notification-item ${notification.is_read ? 'read' : 'unread'}`} onClick={() => { markNotificationRead(notification); if (notification.detection_id) { setActiveTab('violations'); window.setTimeout(() => document.querySelector(`[data-detection-id="${notification.detection_id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80); } }}><span className="ins-notification-dot" /><span><strong>{notification.title || 'Inspector notification'}</strong><small>{notification.message || 'Open the violation history to review this incident.'}</small><small>{notification.station || 'Checkpoint'} · {notification.worker_name || notification.worker_employee_id || 'Worker'} · {notification.created_at ? new Date(notification.created_at).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }) : 'Just now'}</small><small className="ins-notification-link">View incident →</small></span></button>)}</div>}</div>}
+            {notificationOpen && <div className="ins-notification-panel" role="dialog" aria-label="Inspector notifications"><div className="ins-notification-header"><strong>Notifications</strong><button type="button" onClick={fetchNotifications}>Refresh</button></div>{notificationError && <div className="ins-notification-error">{notificationError}</div>}{notifications.length === 0 ? <div className="ins-notification-empty">No notifications yet.</div> : <div className="ins-notification-list">{notifications.map(notification => <button type="button" key={notification.id} className={`ins-notification-item ${notification.is_read ? 'read' : 'unread'}`} onClick={() => { markNotificationRead(notification); if (notification.detection_id) { setActiveTab('violations'); window.setTimeout(() => document.querySelector(`[data-detection-id="${notification.detection_id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80); } }}><span className="ins-notification-dot" /><span><strong>{notification.title || 'Inspector notification'}{notification.risk_severity && <em className={`ins-risk-badge ins-risk-${String(notification.risk_severity).toLowerCase()}`}>{notification.risk_severity} risk</em>}</strong><small>{notification.message || 'Open the violation history to review this incident.'}</small><small>{notification.station || 'Checkpoint'} · {notification.worker_name || notification.worker_employee_id || 'Worker'} · {notification.created_at ? new Date(notification.created_at).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }) : 'Just now'}</small><small className="ins-notification-link">View incident →</small></span></button>)}</div>}</div>}
           </div>
         </div>
 
@@ -803,6 +803,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
                       <th>Profile</th>
                       <th>Date & Time</th>
                       <th>PPE Result</th>
+                      <th>Risk</th>
                       <th>Entry Access</th>
                       <th>Inspector Resolution</th>
                       <th>Missing / Uncertain PPE</th>
@@ -811,9 +812,9 @@ export default function InspectorDashboard({ setCurrentPage }) {
                   </thead>
                   <tbody>
                     {detLoading ? (
-                      <tr><td colSpan={10} className="ins-empty">Loading detections…</td></tr>
+                      <tr><td colSpan={11} className="ins-empty">Loading detections…</td></tr>
                     ) : filteredViolations.length === 0 ? (
-                      <tr><td colSpan={10} className="ins-empty">No records match your filters</td></tr>
+                      <tr><td colSpan={11} className="ins-empty">No records match your filters</td></tr>
                     ) : filteredViolations.map((d, i) => {
                       const prevDate = i > 0 ? filteredViolations[i - 1].date : null;
                       const showDateHeader = d.date !== prevDate;
@@ -825,7 +826,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
                         <React.Fragment key={d.id}>
                           {showDateHeader && (
                             <tr>
-                              <td colSpan={10} style={{ padding: '0.65rem 1rem', background: 'linear-gradient(90deg, #f0f0ff 0%, #f9fafb 100%)', borderTop: i > 0 ? '2px solid #e2e4f0' : 'none', borderBottom: '1px solid #eee', fontWeight: 700, fontSize: '0.82rem', color: '#4a5073', letterSpacing: '0.02em' }}>
+                              <td colSpan={11} style={{ padding: '0.65rem 1rem', background: 'linear-gradient(90deg, #f0f0ff 0%, #f9fafb 100%)', borderTop: i > 0 ? '2px solid #e2e4f0' : 'none', borderBottom: '1px solid #eee', fontWeight: 700, fontSize: '0.82rem', color: '#4a5073', letterSpacing: '0.02em' }}>
                                 <Calendar size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: '0.35rem' }} />{dateLabel}
                               </td>
                             </tr>
@@ -874,6 +875,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
                                 {d.result === 'manual_review' && d.review_status === 'reviewed' && <small style={{ color: '#8a5107' }}>Decision: {String(d.inspector_decision || '').replaceAll('_', ' ')}</small>}
                               </div>
                             </td>
+                            <td><span className={`ins-risk-badge ins-risk-${String(d.risk_severity || 'unmatched').toLowerCase()}`}>{d.risk_severity || (d.risk_status === 'deferred' ? 'Deferred' : 'Unmatched')}</span></td>
                             <td><span className="ins-vbadge" style={authorizationStyle(d.authorization_status)}>{authorizationLabel(d.authorization_status)}</span>{d.authorization_override_at && <small style={{ display: 'block', marginTop: 5, color: '#718096' }}>Overridden by inspector</small>}</td>
                             <td><span className="ins-vbadge" style={{ background: d.resolution_status === 'CONFIRMED_VIOLATION' ? '#fee2e2' : d.resolution_status === 'FALSE_DETECTION' ? '#e0f2fe' : d.resolution_status === 'PENDING_REVIEW' ? '#fff7ed' : '#dcfce7', color: d.resolution_status === 'CONFIRMED_VIOLATION' ? '#b91c1c' : d.resolution_status === 'FALSE_DETECTION' ? '#075985' : d.resolution_status === 'PENDING_REVIEW' ? '#9a5706' : '#166534' }}>{resolutionLabel(d.resolution_status)}</span>{(d.resolution_status === 'PENDING_REVIEW' || (!d.resolution_status && d.result === 'violation')) && <div className="ins-resolution-actions"><button className="ins-resolution-action confirm" type="button" onClick={() => handleResolution(d.id, 'CONFIRMED_VIOLATION')}>Confirm</button><button className="ins-resolution-action false-detection" type="button" onClick={() => handleResolution(d.id, 'FALSE_DETECTION')}>False detection</button></div>}</td>
                             <td>

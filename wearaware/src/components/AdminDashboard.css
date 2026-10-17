@@ -138,6 +138,23 @@
         }
         .ad-table tr:last-child td { border-bottom: none; }
         .ad-table tr:hover td { background: #fafafe; }
+        .ad-checkpoint-table { min-width: 1180px; table-layout: fixed; }
+        .ad-checkpoint-table th, .ad-checkpoint-table td { padding: 1.1rem 1rem; }
+        .ad-checkpoint-table th:nth-child(1) { width: 13%; }
+        .ad-checkpoint-table th:nth-child(2) { width: 12%; }
+        .ad-checkpoint-table th:nth-child(3) { width: 13%; }
+        .ad-checkpoint-table th:nth-child(4) { width: 10%; }
+        .ad-checkpoint-table th:nth-child(5) { width: 9%; }
+        .ad-checkpoint-table th:nth-child(6) { width: 8%; }
+        .ad-checkpoint-table th:nth-child(7) { width: 12%; }
+        .ad-checkpoint-table th:nth-child(8) { width: 15%; }
+        .ad-checkpoint-table th:nth-child(9) { width: 11%; }
+        .ad-checkpoint-table td { line-height: 1.45; }
+        .ad-checkpoint-table td:nth-child(7) { white-space: normal; }
+        .ad-checkpoint-table .ad-ppe-tag { display: inline-flex; margin: .15rem .2rem .15rem 0; }
+        .ad-checkpoint-table .ad-filter-select { width: 100%; min-width: 0 !important; }
+        .ad-checkpoint-table .ad-action-btns { flex-direction: column; align-items: stretch; gap: .45rem; min-width: 92px; }
+        .ad-checkpoint-table .ad-action-btns button { width: 100%; white-space: nowrap; }
 
         /* ── Badges & Status ── */
         .ad-role-badge {
@@ -170,8 +187,8 @@
 
         /* ── Action Buttons ── */
         .ad-action-btns { display: flex; gap: 0.4rem; flex-wrap: wrap; }
-        .ad-resolution-actions { display: flex; gap: 4px; margin-top: 5px; flex-wrap: wrap; }
-        .ad-resolution-action { border: 1px solid; border-radius: 6px; padding: 4px 7px; font: inherit; font-size: .68rem; font-weight: 700; line-height: 1.15; cursor: pointer; transition: background .15s ease, color .15s ease, border-color .15s ease; }
+        .ad-resolution-actions { display: flex; flex-direction: column; align-items: stretch; gap: 7px; width: 148px; margin-top: 9px; padding: 8px; border: 1px solid #edf1eb; border-radius: 12px; background: #fbfcfa; }
+        .ad-resolution-action { display: inline-flex; align-items: center; justify-content: center; width: 100%; min-height: 34px; border: 1px solid; border-radius: 9px; padding: 7px 9px; font: inherit; font-size: .76rem; font-weight: 700; line-height: 1.2; text-align: center; cursor: pointer; transition: background .15s ease, color .15s ease, border-color .15s ease; }
         .ad-resolution-action.confirm { border-color: #86c895; background: #f0fbf2; color: #24743a; }
         .ad-resolution-action.confirm:hover { border-color: #4b9b60; background: #dcf5e1; }
         .ad-resolution-action.false-detection { border-color: #83b9d8; background: #f0f9ff; color: #075985; }
@@ -327,3 +344,8 @@
         .ad-stats   { grid-template-columns: repeat(2, 1fr); }
         .ad-filters { flex-direction: column; }
         }
+.ad-risk-severity { display: inline-flex; align-items: center; border-radius: 999px; padding: 0.35rem 0.65rem; font-size: 0.78rem; font-weight: 700; }
+.ad-risk-low { background: #dcfce7; color: #166534; }
+.ad-risk-medium { background: #fef3c7; color: #92400e; }
+.ad-risk-high { background: #ffedd5; color: #c2410c; }
+.ad-risk-critical { background: #fee2e2; color: #b91c1c; }

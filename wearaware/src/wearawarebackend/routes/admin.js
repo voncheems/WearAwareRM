@@ -8,6 +8,47 @@ const { recordAudit } = require('../audit');
 const { getViolationAnalytics } = require('../analytics');
 const { getRepeatViolationOverview, getWorkerComplianceHistory } = require('../repeat-violations');
 
+const riskRuleFields = 'id name condition_type ppe_item checkpoint_id profile_id severity is_active created_by created_at updated_at';
+
+router.get('/risk-rules', requireAuth, requireRole('admin'), validateRequest, async (req, res, next) => {
+  try { res.json((await data.find('risk_rules', {}, riskRuleFields, { sort: { updated_at: -1, id: -1 } })).rows); }
+  catch (err) { next(err); }
+});
+
+router.post('/risk-rules', requireAuth, requireRole('admin'), validateRequest, async (req, res, next) => {
+  try {
+    const rule = (await data.insert('risk_rules', { ...req.body, created_by: req.user.id }, riskRuleFields)).rows[0];
+    await recordAudit({ category: 'action', action: 'Created PPE risk rule', actor: req.user, target: String(rule.id), details: `${rule.name}: ${rule.severity}` });
+    res.status(201).json(rule);
+  } catch (err) {
+    if (err.code === 11000) return res.status(409).json({ error: 'A risk rule with this name already exists.' });
+    if (err.status === 400 || /^(Invalid |Unknown |Missing required)/.test(err.message || '')) return res.status(400).json({ error: err.message });
+    next(err);
+  }
+});
+
+router.put('/risk-rules/:id', requireAuth, requireRole('admin'), validateRequest, async (req, res, next) => {
+  try {
+    const updated = (await data.update('risk_rules', { id: req.params.id }, { ...req.body }, riskRuleFields)).rows[0];
+    if (!updated) return res.status(404).json({ error: 'Risk rule not found.' });
+    await recordAudit({ category: 'action', action: 'Updated PPE risk rule', actor: req.user, target: String(req.params.id), details: `${updated.name}: ${updated.severity}` });
+    res.json(updated);
+  } catch (err) {
+    if (err.code === 11000) return res.status(409).json({ error: 'A risk rule with this name already exists.' });
+    if (err.status === 400 || /^(Invalid |Unknown |Missing required)/.test(err.message || '')) return res.status(400).json({ error: err.message });
+    next(err);
+  }
+});
+
+router.patch('/risk-rules/:id/status', requireAuth, requireRole('admin'), validateRequest, async (req, res, next) => {
+  try {
+    const updated = (await data.update('risk_rules', { id: req.params.id }, { is_active: req.body.is_active }, riskRuleFields)).rows[0];
+    if (!updated) return res.status(404).json({ error: 'Risk rule not found.' });
+    await recordAudit({ category: 'action', action: `${updated.is_active ? 'Enabled' : 'Disabled'} PPE risk rule`, actor: req.user, target: String(req.params.id), details: updated.name });
+    res.json(updated);
+  } catch (err) { next(err); }
+});
+
 router.get('/analytics', requireAuth, requireRole('admin'), validateRequest, async (req, res, next) => {
   try {
     res.json(await getViolationAnalytics(req.query));

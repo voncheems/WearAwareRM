@@ -6,9 +6,10 @@ const { configureSecurity, assertProductionConfig, safeErrors } = require('./sec
 const { validateRequest } = require('./validation');
 const { installRecovery } = require('./password-recovery');
 const { createAlerts } = require('./alerts');
-const { applyDatabaseSecurity, verifyDatabaseSecurity, cleanLegacyPasswords, ensureAuditLogCollection, ensureCheckpointData } = require('./database-security');
+const { applyDatabaseSecurity, verifyDatabaseSecurity, cleanLegacyPasswords, ensureAuditLogCollection, ensureCheckpointData, ensureRiskRulesCollection } = require('./database-security');
 const { recordAudit } = require('./audit');
-const { evaluateSessionEvidence } = require('./ppe-compliance');
+const { evaluateSessionEvidence, normalizeAiObservations } = require('./ppe-compliance');
+const { assessRisk } = require('./risk-assessment');
 const { ensureDefaultComplianceProfiles } = require('./compliance-profiles');
 const { getWorkerRepeatStatus } = require('./repeat-violations');
 const { authorizationRecord } = require('./entry-authorization');
@@ -335,6 +336,7 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
     session_ended_at = null,
     frame_count = null,
     confidence_summary = [],
+    ai_observations = [],
     visibility_score = null,
     multiple_people_detected = false,
     manual_review_required = false,
@@ -374,14 +376,18 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
       manual_review_message: record.manual_review_message || null,
       review_status: record.review_status || 'not_required',
       inspector_decision: record.inspector_decision || null,
+      risk_status: record.risk_status || 'not_applicable',
+      risk_severity: record.risk_severity || null,
+      risk_rule_id: record.risk_rule_id || null,
+      risk_rule_name: record.risk_rule_name || null,
       repeat_violation: await getWorkerRepeatStatus(worker_id).catch(() => null),
     });
 
     if (scan_session_id) {
-      const existing = (await data.find('detections', { scan_session_id }, 'id scan_session_id worker_id device_id result alert_type original_authorization authorization_status authorization_event authorization_decided_at authorization_override_by authorization_override_at authorization_override_reason required_ppe detected_ppe missing_ppe uncertain_ppe manual_review_reason manual_review_message review_status inspector_decision')).rows[0];
+      const existing = (await data.find('detections', { scan_session_id }, 'id scan_session_id worker_id device_id result alert_type original_authorization authorization_status authorization_event authorization_decided_at authorization_override_by authorization_override_at authorization_override_reason required_ppe detected_ppe missing_ppe uncertain_ppe manual_review_reason manual_review_message review_status inspector_decision risk_status risk_severity risk_rule_id risk_rule_name')).rows[0];
       if (existing) {
         if (Number(existing.worker_id) !== Number(worker_id) || Number(existing.device_id) !== Number(station.id)) return res.status(409).json({ error: 'This scan session belongs to a different worker or checkpoint.' });
-        if (existing.result !== 'compliant') await data.createNotificationOnce({ detection_id: existing.id, inspector_id: assignedInspectorId, type: existing.alert_type === 'manual_review' ? 'INSPECTION_REQUIRED' : 'NON_COMPLIANT_WORKER', title: existing.alert_type === 'manual_review' ? 'Inspection Required' : 'Non-Compliant Worker Detected', message: existing.alert_type === 'manual_review' ? `A scan requires inspection at ${station.label}.` : `A worker is missing required PPE at ${station.label}.` });
+        if (existing.result !== 'compliant') await data.createNotificationOnce({ detection_id: existing.id, inspector_id: assignedInspectorId, type: existing.alert_type === 'manual_review' ? 'INSPECTION_REQUIRED' : 'NON_COMPLIANT_WORKER', title: existing.alert_type === 'manual_review' ? 'Inspection Required' : 'Non-Compliant Worker Detected', message: existing.alert_type === 'manual_review' ? `A scan requires inspection at ${station.label}.` : `${existing.risk_severity ? `[${existing.risk_severity} risk] ` : ''}A worker is missing required PPE at ${station.label}.` });
         return res.status(200).json(await responseFor(existing, true));
       }
     }
@@ -395,6 +401,8 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
       confidenceScore: confidence_score, visibilityScore: visibility_score,
       manualReviewRequired: manual_review_required, multiplePeopleDetected: multiple_people_detected,
     });
+    const activeRiskRules = (await data.find('risk_rules', { is_active: true }, 'id name condition_type ppe_item checkpoint_id profile_id severity is_active created_at updated_at')).rows;
+    const risk = assessRisk(activeRiskRules, { result: compliance.result, missing_ppe: compliance.missing_ppe, uncertain_ppe: compliance.uncertain_ppe, checkpoint_id: station.id, profile_id: profile?.id || null });
     const authorization = authorizationRecord(compliance.result);
 
     const det = await data.insert('detections', {
@@ -408,10 +416,13 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
       ai_result: compliance.result,
       alert_type: compliance.alert_type,
       ...authorization,
+      ...risk,
+      risk_evaluated_at: new Date(),
       required_ppe: compliance.required_ppe,
       missing_ppe: compliance.missing_ppe,
       detected_ppe: compliance.detected_ppe,
       uncertain_ppe: compliance.uncertain_ppe || [],
+      ai_observations: normalizeAiObservations(ai_observations),
       manual_review_reason: compliance.manual_review_reason,
       manual_review_message: compliance.manual_review_message,
       review_status: compliance.result === 'manual_review' ? 'pending' : 'not_required',
@@ -465,12 +476,15 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
         station:            stationLabel,
         location:           stationLocation,
         detection_id:       detectionId,
+        risk_status:        risk.risk_status,
+        risk_severity:      risk.risk_severity,
+        risk_rule_name:     risk.risk_rule_name,
       };
 
       const notificationTitle = compliance.alert_type === 'manual_review' ? 'Inspection Required' : 'Non-Compliant Worker Detected';
       const notificationMessage = compliance.alert_type === 'manual_review'
         ? `${workerName || workerEmployeeId || 'A worker'} requires inspection at ${stationLabel}.`
-        : `${workerName || workerEmployeeId || 'A worker'} is missing ${compliance.missing_ppe.join(', ') || 'required PPE'} at ${stationLabel}.`;
+        : `${risk.risk_severity ? `[${risk.risk_severity} risk] ` : ''}${workerName || workerEmployeeId || 'A worker'} is missing ${compliance.missing_ppe.join(', ') || 'required PPE'} at ${stationLabel}.`;
       await data.createNotificationOnce({ detection_id: detectionId, inspector_id: assignedInspectorId, type: compliance.alert_type === 'manual_review' ? 'INSPECTION_REQUIRED' : 'NON_COMPLIANT_WORKER', title: notificationTitle, message: notificationMessage });
       alertPayload.title = notificationTitle;
       alertPayload.message = notificationMessage;
@@ -577,6 +591,7 @@ async function start() {
   const migration = await db.collection('_migration').findOne({ _id: 'postgres-v1' });
   if (migration?.status !== 'complete') throw new Error('Database initialization is incomplete. Run the verified migration first.');
   await ensureAuditLogCollection(db);
+  await ensureRiskRulesCollection(db);
   await ensureDefaultComplianceProfiles(db);
   await ensureCheckpointData(db);
   await ensureIndexes(db);

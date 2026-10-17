@@ -84,8 +84,8 @@
 .ins-notification-item .ins-notification-link { margin-top: .3rem; color: #4b7651; font-weight: 800; }
 .ins-notification-empty, .ins-notification-error { padding: 1.2rem; color: #738072; font-size: .8rem; }
 .ins-notification-error { color: #a53b35; background: #fff4f3; }
-.ins-resolution-actions { display: flex; gap: 4px; margin-top: 5px; flex-wrap: wrap; }
-.ins-resolution-action { border: 1px solid; border-radius: 6px; padding: 4px 7px; font: inherit; font-size: .68rem; font-weight: 700; line-height: 1.15; cursor: pointer; transition: background .15s ease, color .15s ease, border-color .15s ease; }
+.ins-resolution-actions { display: flex; flex-direction: column; align-items: stretch; gap: 7px; width: 148px; margin-top: 9px; padding: 8px; border: 1px solid #edf1eb; border-radius: 12px; background: #fbfcfa; }
+.ins-resolution-action { display: inline-flex; align-items: center; justify-content: center; width: 100%; min-height: 34px; border: 1px solid; border-radius: 9px; padding: 7px 9px; font: inherit; font-size: .76rem; font-weight: 700; line-height: 1.2; text-align: center; cursor: pointer; transition: background .15s ease, color .15s ease, border-color .15s ease; }
 .ins-resolution-action.confirm { border-color: #86c895; background: #f0fbf2; color: #24743a; }
 .ins-resolution-action.confirm:hover { border-color: #4b9b60; background: #dcf5e1; }
 .ins-resolution-action.false-detection { border-color: #83b9d8; background: #f0f9ff; color: #075985; }
@@ -434,3 +434,9 @@
         .ins-main    { margin-left: 0; }
         .ins-stats   { grid-template-columns: repeat(2, 1fr); }
         }
+.ins-risk-badge { display: inline-flex; margin-left: .4rem; padding: .15rem .4rem; border-radius: 999px; font-size: .68rem; font-style: normal; }
+.ins-risk-low { background: #dcfce7; color: #166534; }
+.ins-risk-medium { background: #fef3c7; color: #92400e; }
+.ins-risk-high { background: #ffedd5; color: #c2410c; }
+.ins-risk-critical { background: #fee2e2; color: #b91c1c; }
+.ins-risk-unmatched { background: #f1f5f9; color: #64748b; }

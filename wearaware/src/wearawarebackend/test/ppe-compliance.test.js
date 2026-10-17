@@ -1,7 +1,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { classifyLocalAlert, detectedPpeFromAi, evaluateCompliance, evaluateSessionEvidence, filterAiDetections, filterAiObservations, filterPersonDetections, normalizePpeList } = require('../ppe-compliance');
+const { classifyLocalAlert, detectedPpeFromAi, evaluateCompliance, evaluateSessionEvidence, filterAiDetections, filterAiObservations, filterPersonDetections, normalizeAiObservations, normalizePpeList } = require('../ppe-compliance');
 const { authorizationFromCompliance, authorizationFromInspectorDecision, authorizationRecord } = require('../entry-authorization');
+const { assessRisk } = require('../risk-assessment');
 
 test('entry authorization is centralized and fails closed for manual inspection', () => {
   assert.deepEqual(authorizationFromCompliance('compliant'), { status: 'authorized', event: 'ACCESS_AUTHORIZED' });
@@ -26,6 +27,21 @@ test('AI observations are normalized without deciding checkpoint compliance', ()
     { class_name: 'no-gloves' },
   ]);
   assert.deepEqual(detected, ['helmet', 'vest']);
+});
+
+test('raw AI observations remain separate from compliance, risk, and authorization fields', () => {
+  const observations = normalizeAiObservations([
+    { class_name: 'hard-hat', confidence: 0.91, bbox: { x1: 10, y1: 20, x2: 100, y2: 120 } },
+    { class_name: 'human', confidence: 0.98, bbox: { x1: 0, y1: 0, x2: 640, y2: 480 } },
+  ]);
+  assert.equal(observations[0].class_name, 'helmet');
+  assert.equal(observations[0].confidence, 0.91);
+  assert.deepEqual(evaluateCompliance(['helmet', 'vest'], ['helmet']), {
+    required_ppe: ['helmet', 'vest'], detected_ppe: ['helmet'], missing_ppe: ['vest'], result: 'violation', is_compliant: false,
+  });
+  assert.equal(assessRisk([{ id: 1, name: 'Missing vest', condition_type: 'missing_ppe', ppe_item: 'vest', severity: 'High', is_active: true }], { result: 'violation', missing_ppe: ['vest'], uncertain_ppe: [] }).risk_severity, 'High');
+  assert.equal(authorizationRecord('violation').authorization_status, 'denied');
+  assert.equal(observations[0].class_name, 'helmet');
 });
 
 test('low-confidence forehead helmet matches and their inferred violations are removed', () => {
