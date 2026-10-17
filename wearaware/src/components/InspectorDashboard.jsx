@@ -79,6 +79,12 @@ export default function InspectorDashboard({ setCurrentPage }) {
 
   useEffect(() => { fetchProfile(); fetchDetections(); fetchStations(); fetchNotifications(); }, []);
 
+  // Start each inspector section at its header so proof photos are immediately visible
+  // instead of inheriting the previous section's scroll position.
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [activeTab]);
+
   const fetchNotifications = async () => {
     try {
       const res = await authFetch(`${API}/inspector/notifications`);
@@ -969,18 +975,14 @@ export default function InspectorDashboard({ setCurrentPage }) {
                 ) : detections.filter(d => d.has_photo).length === 0 ? (
                   <div className="ins-empty">No proof photos yet — violation snapshots will appear here after checkpoint scans</div>
                 ) : (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.25rem', padding: '0.5rem 0' }}>
+                  <div className="ins-proof-grid">
                     {detections.filter(d => d.has_photo).map(d => (
-                      <div key={d.id} style={{
-                        background: '#fff', border: '1px solid #e2e8f0',
-                        borderRadius: 12, overflow: 'hidden',
-                        boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
-                      }}>
+                      <div key={d.id} className="ins-proof-card">
                         {/* Photo */}
                         <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => openInspectorPhoto(d.id)}>
                           {photoCache[d.id]
-                            ? <img src={photoCache[d.id]} alt="Violation proof" style={{ width: '100%', height: 180, objectFit: 'cover', display: 'block' }} />
-                            : <div style={{ width: '100%', height: 180, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fff1f2', color: '#be123c', fontWeight: 700 }}>📷 Click to load photo</div>}
+                            ? <img className="ins-proof-image" src={photoCache[d.id]} alt="Violation proof" />
+                            : <div className="ins-proof-image ins-proof-placeholder">📷 Click to load photo</div>}
                           <div style={{
                             position: 'absolute', inset: 0,
                             background: 'rgba(0,0,0,0.25)',
