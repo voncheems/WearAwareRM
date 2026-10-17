@@ -1,5 +1,5 @@
 import { escapeHtml, printDocument, safePhoto } from '../utils/print';
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import './InspectorDashboard.css';
 import './InspectorTheme.css';
 import {
@@ -59,6 +59,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
   const [notifications, setNotifications] = useState([]);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [notificationError, setNotificationError] = useState('');
+  const proofPanelRef = useRef(null);
 
   const storedUser = useMemo(() => JSON.parse(localStorage.getItem('user') || '{}'), []);
 
@@ -82,7 +83,11 @@ export default function InspectorDashboard({ setCurrentPage }) {
   // Start each inspector section at its header so proof photos are immediately visible
   // instead of inheriting the previous section's scroll position.
   useEffect(() => {
-    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    if (activeTab === 'proof') {
+      requestAnimationFrame(() => proofPanelRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' }));
+    } else {
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    }
   }, [activeTab]);
 
   const fetchNotifications = async () => {
@@ -954,7 +959,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
           {/* ── PROOF PHOTOS ── */}
           {activeTab === 'proof' && (
             <>
-              <div className="ins-panel">
+              <div ref={proofPanelRef} className="ins-panel ins-proof-panel">
                 <div className="ins-panel-header">
                   <div>
                     <div className="ins-panel-title">Violation Proof Photos</div>
