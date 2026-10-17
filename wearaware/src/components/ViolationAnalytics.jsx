@@ -4,8 +4,7 @@ import { API } from '../config/api';
 import './ViolationAnalytics.css';
 
 const PPE_OPTIONS = [
-  ['helmet', 'Helmet'], ['vest', 'Safety Vest'], ['gloves', 'Gloves'],
-  ['goggles', 'Goggles'], ['boots', 'Safety Shoes'], ['mask', 'Face Mask'], ['lab-coat', 'Lab Coat'],
+  ['helmet', 'Helmet'], ['vest', 'Safety Vest'],
 ];
 const EMPTY_SUMMARY = { total: 0, compliant: 0, violations: 0, manual_reviews: 0, manual_resolved: 0, manual_pending: 0, authorized: 0, denied: 0, pending_authorization: 0, authorization_rate: null, low_confidence: 0, compliance_rate: null, average_confidence: null };
 

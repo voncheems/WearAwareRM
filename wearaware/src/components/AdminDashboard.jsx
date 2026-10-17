@@ -18,12 +18,9 @@ import { API } from '../config/api';
 const PPE_OPTIONS = [
   ['helmet', 'Helmet'],
   ['vest', 'Safety Vest'],
-  ['gloves', 'Gloves'],
-  ['goggles', 'Goggles'],
-  ['boots', 'Safety Shoes'],
-  ['mask', 'Face Mask'],
-  ['lab-coat', 'Lab Coat'],
 ];
+const SUPPORTED_PPE_KEYS = new Set(PPE_OPTIONS.map(([key]) => key));
+const supportedPpe = values => (Array.isArray(values) ? values : []).filter(item => SUPPORTED_PPE_KEYS.has(item));
 const EMPTY_CHECKPOINT = { label: '', code: '', description: '', location: '', checkpoint_type: 'entrance', profile_id: '', required_ppe: ['helmet', 'vest'], inspector_id: '', is_active: true };
 const EMPTY_PROFILE = { name: '', description: '', required_ppe: ['helmet', 'vest'], is_active: true };
 
@@ -779,7 +776,7 @@ export default function AdminDashboard({ setCurrentPage }) {
         location: station.location || '',
         checkpoint_type: station.checkpoint_type || 'internal',
         profile_id: station.profile_id || '',
-        required_ppe: Array.isArray(station.required_ppe) ? station.required_ppe : [],
+        required_ppe: supportedPpe(station.required_ppe),
         inspector_id: station.inspector_id || '',
         is_active: station.is_active ?? true,
       });
@@ -817,7 +814,7 @@ export default function AdminDashboard({ setCurrentPage }) {
       const payload  = {
         label: newStation.label, code: newStation.code, description: newStation.description,
         location: newStation.location, checkpoint_type: newStation.checkpoint_type,
-        profile_id: newStation.profile_id || null, required_ppe: newStation.required_ppe, inspector_id: newStation.inspector_id || null,
+        profile_id: newStation.profile_id || null, required_ppe: supportedPpe(newStation.required_ppe), inspector_id: newStation.inspector_id || null,
         is_active: newStation.is_active,
       };
       const url    = editingStation ? `${API}/checkpoints/${editingStation.id}` : `${API}/checkpoints`;
@@ -859,7 +856,7 @@ export default function AdminDashboard({ setCurrentPage }) {
     setProfileForm(profile ? {
       name: profile.name,
       description: profile.description || '',
-      required_ppe: Array.isArray(profile.required_ppe) ? profile.required_ppe : [],
+      required_ppe: supportedPpe(profile.required_ppe),
       is_active: profile.is_active ?? true,
     } : { ...EMPTY_PROFILE });
     setProfileErrors({});
@@ -1548,7 +1545,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                 {loadErrors['Risk rules'] && <div className="ad-error-msg">{loadErrors['Risk rules']}</div>}
                 {riskRulesLoading ? <div className="ad-empty">Loading risk rules…</div> : riskRules.length === 0 ? <div className="ad-empty">No risk rules configured. Unmatched violations remain unclassified.</div> : (
                   <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Risk rules"><table className="ad-table"><thead><tr><th>Rule</th><th>Condition</th><th>Scope</th><th>Severity</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-                    {riskRules.map(rule => <tr key={rule.id}><td><strong>{rule.name}</strong></td><td>{rule.condition_type === 'missing_ppe' ? `Missing ${ppeLabel(rule.ppe_item)}` : 'Any PPE violation'}</td><td>{rule.checkpoint_id ? `Checkpoint ${rule.checkpoint_id}` : rule.profile_id ? `Profile ${rule.profile_id}` : 'All checkpoints'}</td><td><span className={`ad-risk-severity ad-risk-${String(rule.severity).toLowerCase()}`}>{rule.severity}</span></td><td><span className={`ad-status ${rule.is_active ? 'active' : 'inactive'}`}><span className="ad-status-dot" />{rule.is_active ? 'Active' : 'Disabled'}</span></td><td><div className="ad-action-btns"><button className="ad-btn-reactivate" onClick={() => { setEditingRiskRule(rule); setRiskRuleForm({ name: rule.name, condition_type: rule.condition_type, ppe_item: rule.ppe_item || 'helmet', checkpoint_id: rule.checkpoint_id || '', profile_id: rule.profile_id || '', severity: rule.severity, is_active: rule.is_active }); setShowRiskRuleModal(true); }}>Edit</button><button className={rule.is_active ? 'ad-btn-deactivate' : 'ad-btn-reactivate'} onClick={() => toggleRiskRule(rule)}>{rule.is_active ? 'Disable' : 'Enable'}</button></div></td></tr>)}
+                    {riskRules.map(rule => <tr key={rule.id}><td><strong>{rule.name}</strong></td><td>{rule.condition_type === 'missing_ppe' ? `Missing ${ppeLabel(rule.ppe_item)}` : 'Any PPE violation'}</td><td>{rule.checkpoint_id ? `Checkpoint ${rule.checkpoint_id}` : rule.profile_id ? `Profile ${rule.profile_id}` : 'All checkpoints'}</td><td><span className={`ad-risk-severity ad-risk-${String(rule.severity).toLowerCase()}`}>{rule.severity}</span></td><td><span className={`ad-status ${rule.is_active ? 'active' : 'inactive'}`}><span className="ad-status-dot" />{rule.is_active ? 'Active' : 'Disabled'}</span></td><td><div className="ad-action-btns"><button className="ad-btn-reactivate" onClick={() => { setEditingRiskRule(rule); setRiskRuleForm({ name: rule.name, condition_type: rule.condition_type, ppe_item: supportedPpe([rule.ppe_item])[0] || 'helmet', checkpoint_id: rule.checkpoint_id || '', profile_id: rule.profile_id || '', severity: rule.severity, is_active: rule.is_active }); setShowRiskRuleModal(true); }}>Edit</button><button className={rule.is_active ? 'ad-btn-deactivate' : 'ad-btn-reactivate'} onClick={() => toggleRiskRule(rule)}>{rule.is_active ? 'Disable' : 'Enable'}</button></div></td></tr>)}
                   </tbody></table></div>
                 )}
               </div>
@@ -1968,7 +1965,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                 <select className="ad-modal-select" value={newStation.profile_id} onChange={event => {
                   const profileId = event.target.value;
                   const selectedProfile = profiles.find(profile => String(profile.id) === String(profileId));
-                  setNewStation(current => ({ ...current, profile_id: profileId, required_ppe: selectedProfile ? [...selectedProfile.required_ppe] : current.required_ppe }));
+                  setNewStation(current => ({ ...current, profile_id: profileId, required_ppe: selectedProfile ? supportedPpe(selectedProfile.required_ppe) : current.required_ppe }));
                 }}>
                   <option value="">Custom requirements</option>
                   {profiles.map(profile => <option key={profile.id} value={profile.id} disabled={!profile.is_active && Number(profile.id) !== Number(newStation.profile_id)}>{profile.name}{profile.is_active ? '' : ' (Inactive)'}</option>)}

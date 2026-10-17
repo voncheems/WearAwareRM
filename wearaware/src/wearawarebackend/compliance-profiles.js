@@ -1,8 +1,8 @@
 const DEFAULT_PROFILES = [
-  { name: 'Construction', description: 'Standard PPE requirements for construction areas.', required_ppe: ['helmet', 'vest', 'boots', 'gloves'] },
-  { name: 'Warehouse', description: 'Standard PPE requirements for warehouse operations.', required_ppe: ['vest', 'boots', 'gloves'] },
-  { name: 'Laboratory', description: 'Standard PPE requirements for laboratory areas.', required_ppe: ['gloves', 'goggles', 'mask', 'lab-coat'] },
-  { name: 'Manufacturing', description: 'Standard PPE requirements for manufacturing floors.', required_ppe: ['helmet', 'vest', 'gloves', 'boots', 'goggles'] },
+  { name: 'Construction', description: 'Standard PPE requirements for construction areas.', required_ppe: ['helmet', 'vest'] },
+  { name: 'Warehouse', description: 'Standard PPE requirements for warehouse operations.', required_ppe: ['helmet', 'vest'] },
+  { name: 'Laboratory', description: 'Standard PPE requirements for laboratory areas.', required_ppe: ['helmet', 'vest'] },
+  { name: 'Manufacturing', description: 'Standard PPE requirements for manufacturing floors.', required_ppe: ['helmet', 'vest'] },
 ];
 
 function profileNameKey(name) {
