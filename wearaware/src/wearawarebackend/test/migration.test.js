@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { digest, validate, verify } = require('../scripts/migrate-postgres');
 const { normalize, manilaDate } = require('../repository');
-const source = () => ({ roles: [{ id: 1, name: 'admin' }], users: [{ id: 1, role_id: 1, email: 'admin@example.test', password_hash: 'preserved-hash' }], devices: [{ id: 5, device_id: 'scanner-uuid', inspector_id: 1 }], workers: [{ id: 7, employee_id: 'WA-0007', device_id: 5 }], detections: [{ id: 8, worker_id: 7, device_id: 5, inspector_id: 1 }], notifications: [{ id: 9, detection_id: 8, inspector_id: 1 }], password_reset_requests: [] });
+const source = () => ({ roles: [{ id: 1, name: 'admin' }], users: [{ id: 1, role_id: 1, email: 'admin@example.test', password_hash: 'preserved-hash' }], devices: [{ id: 5, device_id: 'scanner-uuid', inspector_id: 1 }], workers: [{ id: 7, employee_id: 'WA-0007', device_id: 5 }], detections: [{ id: 8, worker_id: 7, device_id: 5, inspector_id: 1 }], notifications: [{ id: 9, detection_id: 8, inspector_id: 1 }], password_reset_requests: [], risk_rules: [{ id: 10, name: 'Missing helmet', condition_type: 'missing_ppe', ppe_item: 'helmet', checkpoint_id: 5, profile_id: null, severity: 'High', is_active: true, created_by: 1 }] });
 test('migration validates IDs, unique keys, and all relationships', () => {
   validate(source());
   const broken = source(); broken.detections[0].worker_id = 999;

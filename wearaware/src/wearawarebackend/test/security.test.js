@@ -6,14 +6,18 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const WebSocket = require('ws');
 const httpModule = require('node:http');
+const nodemailer = require('nodemailer');
 let mongo, db, server, alerts, base;
 let reusableProfileId;
+let sentResetMail;
+const originalCreateTransport = nodemailer.createTransport;
 const secret = 'isolated-security-suite-secret-not-production';
 const token = (id, role = 'inspector', extra = {}) => jwt.sign({ id, role, ...extra }, secret, { expiresIn: '1h' });
 const call = (path, auth, method = 'GET', body, headers = {}) => fetch(base + path, { method, headers: { ...(auth ? { Authorization: `Bearer ${auth}` } : {}), ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...headers }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
 before(async () => {
   mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
-  Object.assign(process.env, { NODE_ENV: 'test', MONGODB_URI: mongo.getUri(), MONGODB_DB: 'security_test', JWT_SECRET: secret, EMAIL_USER: '', EMAIL_PASS: '', AI_API_KEY: 'isolated-ai-test-key-with-32-characters', TRUST_PROXY: '', CORS_ORIGINS: 'http://localhost:5173', FRONTEND_URL: 'http://localhost:5173' });
+  Object.assign(process.env, { NODE_ENV: 'test', MONGODB_URI: mongo.getUri(), MONGODB_DB: 'security_test', JWT_SECRET: secret, EMAIL_USER: 'test-sender@example.test', EMAIL_PASS: 'test-password', AI_API_KEY: 'isolated-ai-test-key-with-32-characters', TRUST_PROXY: '', CORS_ORIGINS: 'http://localhost:5173', FRONTEND_URL: 'http://localhost:5173' });
+  nodemailer.createTransport = () => ({ sendMail: async mail => { sentResetMail = mail; return { messageId: 'test-message' }; } });
   const database = require('../database'); db = await database.connectDatabase(); await database.ensureIndexes(db);
   await db.collection('roles').insertMany([{ id: 1, name: 'admin' }, { id: 2, name: 'inspector' }, { id: 3, name: 'user' }, { id: 4, name: 'scanner' }]);
   const password_hash = await bcrypt.hash('OriginalPass123', 4);
@@ -40,6 +44,7 @@ after(async () => {
   await new Promise(r => alerts.close(r));
   await new Promise(r => server.close(r));
   await require('../database').closeDatabase(); await mongo.stop();
+  nodemailer.createTransport = originalCreateTransport;
 });
 test('admin worker status actions preserve worker identity and station assignment', async () => {
   const before = await db.collection('workers').findOne({ id: 11 });
@@ -353,8 +358,13 @@ test('recovery is generic, stores only hashes, enforces expiry and consumes a li
   const absent = await call('/api/auth/forgot-password', null, 'POST', { email: 'missing@example.test' });
   assert.deepEqual(await request.json(), await absent.json());
   const row = await db.collection('password_reset_requests').findOne({ email: 'worker@example.test' });
-  const issued = await (await call(`/api/admin/password-requests/${row.id}/reset`, token(1), 'PATCH', {})).json();
-  assert.ok(issued.reset_url); const raw = new URLSearchParams(new URL(issued.reset_url).hash.slice(1)).get('reset');
+  const issuedResponse = await call(`/api/admin/password-requests/${row.id}/reset`, token(1), 'PATCH', {});
+  const issued = await issuedResponse.json();
+  assert.equal(issuedResponse.status, 200);
+  assert.deepEqual({ success: issued.success, emailed: issued.emailed }, { success: true, emailed: true });
+  assert.equal('reset_url' in issued, false);
+  assert.match(sentResetMail.to, /worker@example\.test/);
+  const raw = new URL(sentResetMail.text.match(/https?:\/\/[^\s]+#reset=[a-f0-9]{64}/)[0]).hash.slice(1).split('=')[1];
   const saved = await db.collection('password_reset_requests').findOne({ id: row.id });
   assert.equal(saved.token_hash, require('../password-recovery').digest(raw)); assert.equal(saved.temp_password, undefined);
   const listed = await (await call('/api/admin/password-requests', token(1))).json();
@@ -410,11 +420,17 @@ test('AI uploads require an authorized scanning account and forward confidence a
   const mock = httpModule.createServer((req, res) => { received = { url: req.url, key: req.headers['x-api-key'] }; req.resume(); res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ detections: [{ class_name: 'human', confidence: 0.92, bbox: { x1: 10, y1: 10, x2: 200, y2: 400 } }], total_detections: 1, is_compliant: false })); });
   mock.listen(0, '127.0.0.1'); await once(mock, 'listening'); process.env.AI_API_URL = `http://127.0.0.1:${mock.address().port}`;
   try {
-    const send = async (auth, size = 16) => { const form = new FormData(); form.append('conf', '0.35'); form.append('file', new Blob([new Uint8Array(size)], { type: 'image/jpeg' }), 'frame.jpg'); return fetch(base + '/api/ppe/detect', { method: 'POST', headers: auth ? { Authorization: `Bearer ${auth}` } : {}, body: form }); };
+    const send = async (auth, size = 16, requiredPpe = ['helmet', 'vest']) => { const form = new FormData(); form.append('conf', '0.35'); form.append('required_ppe', JSON.stringify(requiredPpe)); form.append('file', new Blob([new Uint8Array(size)], { type: 'image/jpeg' }), 'frame.jpg'); return fetch(base + '/api/ppe/detect', { method: 'POST', headers: auth ? { Authorization: `Bearer ${auth}` } : {}, body: form }); };
     assert.equal((await send(null)).status, 401); assert.equal((await send(token(1))).status, 403); assert.equal(received, null);
     assert.equal((await send(token(3))).status, 403); assert.equal(received, null);
     const allowed = await send(token(6, 'scanner'));
-    assert.equal(allowed.status, 200); assert.equal(received.url, '/detect?conf=0.35&return_image=false'); assert.equal(received.key, process.env.AI_API_KEY);
+    assert.equal(allowed.status, 200);
+    const forwarded = new URL(received.url, 'http://127.0.0.1');
+    assert.equal(forwarded.pathname, '/detect');
+    assert.equal(forwarded.searchParams.get('conf'), '0.35');
+    assert.equal(forwarded.searchParams.get('return_image'), 'false');
+    assert.equal(forwarded.searchParams.get('required_ppe'), 'helmet,vest');
+    assert.equal(received.key, process.env.AI_API_KEY);
     const observations = await allowed.json(); assert.deepEqual(observations.detected_ppe, []); assert.equal(observations.person_count, 1); assert.equal(observations.person_detections[0].class_name, 'human'); assert.equal('is_compliant' in observations, false);
     assert.equal((await send(token(6, 'scanner'), 2 * 1024 * 1024 + 1)).status, 413);
   } finally { await new Promise(r => mock.close(r)); }
