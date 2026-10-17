@@ -68,6 +68,27 @@ test('administrators manage reusable compliance profiles with duplicate and inac
   assert.equal((await call(`/api/compliance-profiles/${created.id}/status`, auth, 'PATCH', { is_active: true })).status, 200);
 });
 
+test('risk-rule API validates severity, condition fields, references, and admin access', async () => {
+  const admin = token(1, 'admin');
+  const inspector = token(2, 'inspector');
+  const endpoint = '/api/admin/risk-rules';
+  const valid = { name: 'Missing helmet at First', condition_type: 'missing_ppe', ppe_item: 'helmet', checkpoint_id: 1, profile_id: reusableProfileId, severity: 'High', is_active: true };
+  assert.equal((await call(endpoint, inspector, 'POST', valid)).status, 403);
+  assert.equal((await call(endpoint, admin, 'POST', { ...valid, name: 'Invalid severity', severity: 'Extreme' })).status, 400);
+  assert.equal((await call(endpoint, admin, 'POST', { ...valid, name: 'Missing item', ppe_item: null })).status, 400);
+  assert.equal((await call(endpoint, admin, 'POST', { ...valid, name: 'General with item', condition_type: 'violation' })).status, 400);
+  assert.equal((await call(endpoint, admin, 'POST', { ...valid, name: 'Unknown checkpoint', checkpoint_id: 99999 })).status, 400);
+  assert.equal((await call(endpoint, admin, 'POST', { ...valid, name: 'Unknown profile', profile_id: 99999 })).status, 400);
+  const createdResponse = await call(endpoint, admin, 'POST', valid);
+  assert.equal(createdResponse.status, 201);
+  const created = await createdResponse.json();
+  assert.equal(created.severity, 'High');
+  assert.equal((await call(`${endpoint}/${created.id}/status`, inspector, 'PATCH', { is_active: false })).status, 403);
+  const disabled = await call(`${endpoint}/${created.id}/status`, admin, 'PATCH', { is_active: false });
+  assert.equal(disabled.status, 200);
+  assert.equal((await disabled.json()).is_active, false);
+});
+
 test('administrators manage checkpoint requirements and activation through checkpoint APIs', async () => {
   const auth = token(1, 'admin');
   const createdResponse = await call('/api/checkpoints', auth, 'POST', { label: 'Laboratory Entrance', code: 'LAB-01', description: 'Research wing checkpoint', location: 'Lab Wing', checkpoint_type: 'entrance', profile_id: reusableProfileId, required_ppe: ['gloves', 'goggles', 'mask'], inspector_id: 2, is_active: true });

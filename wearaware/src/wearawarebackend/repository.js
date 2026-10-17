@@ -86,10 +86,14 @@ function createRepository(dbProvider = getDatabase) {
     if (table === 'detections' && doc.resolution_status !== undefined && doc.resolution_status !== null && !['PENDING_REVIEW', 'CONFIRMED_VIOLATION', 'FALSE_DETECTION', 'RESOLVED_AFTER_CORRECTION', 'AUTHORIZED_EXCEPTION'].includes(doc.resolution_status)) throw new Error('Invalid resolution status');
     if (table === 'detections' && doc.resolution_decision !== undefined && doc.resolution_decision !== null && !['CONFIRM', 'FALSE_DETECTION', 'RESOLVE_AFTER_CORRECTION', 'AUTHORIZE_EXCEPTION'].includes(doc.resolution_decision)) throw new Error('Invalid resolution decision');
     if (table === 'risk_rules') {
-      if (!['violation', 'missing_ppe'].includes(doc.condition_type)) throw new Error('Invalid risk condition');
-      if (!['Low', 'Medium', 'High', 'Critical'].includes(doc.severity)) throw new Error('Invalid risk severity');
-      if (doc.condition_type === 'missing_ppe' && (!doc.ppe_item || typeof doc.ppe_item !== 'string')) throw new Error('PPE item is required for missing-PPE rules');
-      if (doc.condition_type === 'violation') doc.ppe_item = null;
+      // PUT supplies the complete rule; status updates intentionally supply only
+      // is_active. Validate condition-dependent fields whenever they are present.
+      if (doc.condition_type !== undefined || doc.severity !== undefined || doc.ppe_item !== undefined) {
+        if (!['violation', 'missing_ppe'].includes(doc.condition_type)) throw new Error('Invalid risk condition');
+        if (!['Low', 'Medium', 'High', 'Critical'].includes(doc.severity)) throw new Error('Invalid risk severity');
+        if (doc.condition_type === 'missing_ppe' && (!doc.ppe_item || typeof doc.ppe_item !== 'string')) throw new Error('PPE item is required for missing-PPE rules');
+        if (doc.condition_type === 'violation' && doc.ppe_item != null) throw new Error('General violation rules must not specify a PPE item');
+      }
     }
   }
   const api = {

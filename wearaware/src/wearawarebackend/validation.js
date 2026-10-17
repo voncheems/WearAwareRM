@@ -20,7 +20,10 @@ const checkpointCode = z.string().trim().min(2).max(40).regex(/^[A-Za-z0-9]+(?:-
 const profilePpe = z.array(ppeItem).min(1).max(32).transform(items => [...new Set(items)]);
 const complianceProfile = z.object({ name: text(120), description: optionalText(500), required_ppe: profilePpe, is_active: z.boolean().optional() }).strict();
 const station = z.object({ label: text(120), code: checkpointCode, description: optionalText(500), location: optionalText(200), checkpoint_type: z.enum(['entrance', 'exit', 'internal']), profile_id: optionalId, required_ppe: ppe.optional(), inspector_id: optionalId, is_active: z.boolean().optional() }).strict();
-const riskRule = z.object({ name: text(160), condition_type: z.enum(['violation', 'missing_ppe']), ppe_item: z.preprocess(v => v === '' || v === undefined ? null : v, ppeItem.nullable()), checkpoint_id: optionalId, profile_id: optionalId, severity: z.enum(['Low', 'Medium', 'High', 'Critical']), is_active: z.boolean().optional() }).strict().superRefine((value, ctx) => { if (value.condition_type === 'missing_ppe' && !value.ppe_item) ctx.addIssue({ code: 'custom', path: ['ppe_item'], message: 'PPE item is required for missing-PPE rules.' }); });
+const riskRule = z.object({ name: text(160), condition_type: z.enum(['violation', 'missing_ppe']), ppe_item: z.preprocess(v => v === '' || v === undefined ? null : v, ppeItem.nullable()), checkpoint_id: optionalId, profile_id: optionalId, severity: z.enum(['Low', 'Medium', 'High', 'Critical']), is_active: z.boolean().optional() }).strict().superRefine((value, ctx) => {
+  if (value.condition_type === 'missing_ppe' && !value.ppe_item) ctx.addIssue({ code: 'custom', path: ['ppe_item'], message: 'PPE item is required for missing-PPE rules.' });
+  if (value.condition_type === 'violation' && value.ppe_item !== null) ctx.addIssue({ code: 'custom', path: ['ppe_item'], message: 'General violation rules must not specify a PPE item.' });
+});
 const confidenceEvidence = z.array(z.object({
   ppe: ppeItem,
   average_confidence: z.number().min(0).max(1),

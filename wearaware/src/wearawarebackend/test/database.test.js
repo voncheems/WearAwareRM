@@ -32,7 +32,7 @@ test('default compliance profiles seed once without duplicates', async () => {
   const profiles = await db.collection('compliance_profiles').find({}).toArray();
   assert.equal(profiles.length, 4);
   assert.deepEqual(profiles.map(profile => profile.name).sort(), ['Construction', 'Laboratory', 'Manufacturing', 'Warehouse']);
-  assert.ok(profiles.find(profile => profile.name === 'Laboratory').required_ppe.includes('lab-coat'));
+  assert.deepEqual(profiles.find(profile => profile.name === 'Laboratory').required_ppe, ['helmet', 'vest']);
 });
 test('station, worker, detection and notification joins preserve inspector scope', async () => {
   const station = (await data.insert('devices', { device_id: 'uuid', code: 'GATE-01', label: 'Gate', checkpoint_type: 'entrance', inspector_id: 20 })).rows[0];

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { assessRisk, matchesRule } = require('../risk-assessment');
+const { assessRisk, isValidRuleShape, matchesRule } = require('../risk-assessment');
 
 const base = { result: 'violation', checkpoint_id: 4, profile_id: 2, missing_ppe: ['helmet'], uncertain_ppe: [] };
 
@@ -32,6 +32,12 @@ test('conflicting rules choose highest severity, then most specific rule', () =>
 test('disabled and unmatched rules do not assign severity', () => {
   assert.equal(assessRisk([{ id: 1, condition_type: 'violation', severity: 'Critical', is_active: false }], base).risk_status, 'unmatched');
   assert.equal(assessRisk([{ id: 1, condition_type: 'missing_ppe', ppe_item: 'vest', severity: 'Critical', is_active: true }], base).risk_severity, null);
+});
+
+test('invalid rule shapes cannot influence risk assessments', () => {
+  assert.equal(isValidRuleShape({ condition_type: 'missing_ppe', ppe_item: null, severity: 'High' }), false);
+  assert.equal(isValidRuleShape({ condition_type: 'violation', ppe_item: 'helmet', severity: 'High' }), false);
+  assert.equal(assessRisk([{ id: 9, condition_type: 'violation', ppe_item: 'helmet', severity: 'Critical', is_active: true }], base).risk_status, 'unmatched');
 });
 
 test('uncertain and manual-review scans defer risk evaluation', () => {

@@ -16,7 +16,12 @@ const fields = {
 };
 function validatorFor(name, properties) {
   const required = { roles: ['name'], users: ['email', 'role_id', 'password_hash'], workers: ['employee_id', 'full_name', 'status', 'qr_token', 'created_at', 'updated_at'], compliance_profiles: ['name', 'name_key', 'required_ppe', 'is_active', 'created_at', 'updated_at'], devices: ['device_id', 'code', 'label', 'checkpoint_type', 'required_ppe', 'is_active', 'created_at', 'updated_at'], detections: ['device_id', 'checkpoint_name', 'checkpoint_code', 'alert_type', 'result', 'ai_result', 'original_authorization', 'authorization_status', 'authorization_event', 'authorization_decided_at', 'resolution_status', 'required_ppe', 'detected_ppe', 'missing_ppe', 'uncertain_ppe', 'review_status'], notifications: ['detection_id', 'inspector_id', 'type', 'title', 'message'], password_reset_requests: ['email', 'status'], audit_logs: ['category', 'action', 'occurred_at'], risk_rules: ['name', 'condition_type', 'severity', 'is_active', 'created_by', 'created_at', 'updated_at'] }[name];
-  return { $jsonSchema: { bsonType: 'object', required: ['id', ...required], properties: { id: number, ...properties } } };
+  const schema = { bsonType: 'object', required: ['id', ...required], properties: { id: number, ...properties } };
+  if (name === 'risk_rules') schema.oneOf = [
+    { properties: { condition_type: { enum: ['missing_ppe'] }, ppe_item: { bsonType: 'string', minLength: 1, maxLength: 40 } }, required: ['ppe_item'] },
+    { properties: { condition_type: { enum: ['violation'] }, ppe_item: { bsonType: 'null' } } },
+  ];
+  return { $jsonSchema: schema };
 }
 
 async function ensureCheckpointData(db) {

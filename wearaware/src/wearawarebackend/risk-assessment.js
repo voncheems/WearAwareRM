@@ -16,9 +16,17 @@ function normalizeRule(rule = {}) {
   };
 }
 
+function isValidRuleShape(rule) {
+  const validScope = value => value == null || (Number.isSafeInteger(value) && value > 0);
+  if (!['violation', 'missing_ppe'].includes(rule.condition_type)) return false;
+  if (!validScope(rule.checkpoint_id) || !validScope(rule.profile_id)) return false;
+  if (rule.condition_type === 'missing_ppe') return typeof rule.ppe_item === 'string' && rule.ppe_item.length > 0;
+  return rule.ppe_item == null;
+}
+
 function matchesRule(ruleInput, context = {}) {
   const rule = normalizeRule(ruleInput);
-  if (!rule.is_active || !SEVERITIES.includes(rule.severity)) return false;
+  if (!rule.is_active || !SEVERITIES.includes(rule.severity) || !isValidRuleShape(rule)) return false;
   if (rule.checkpoint_id != null && Number(context.checkpoint_id) !== rule.checkpoint_id) return false;
   if (rule.profile_id != null && Number(context.profile_id) !== rule.profile_id) return false;
   if (rule.condition_type === 'violation') return context.result === 'violation';
@@ -65,4 +73,4 @@ function assessRisk(rules = [], context = {}) {
   };
 }
 
-module.exports = { SEVERITIES, SEVERITY_RANK, normalizeRule, matchesRule, assessRisk };
+module.exports = { SEVERITIES, SEVERITY_RANK, normalizeRule, isValidRuleShape, matchesRule, assessRisk };
