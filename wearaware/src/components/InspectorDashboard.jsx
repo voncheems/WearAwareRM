@@ -84,7 +84,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
   // instead of inheriting the previous section's scroll position.
   useEffect(() => {
     if (activeTab === 'proof') {
-      requestAnimationFrame(() => proofPanelRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' }));
+      requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: 'auto' }));
     } else {
       window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
     }
