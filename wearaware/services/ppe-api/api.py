@@ -39,7 +39,9 @@ app = FastAPI(
 # The browser calls Express; only the trusted backend may call this service.
 @app.middleware("http")
 async def protect_service(request, call_next):
-    if not secrets.compare_digest(request.headers.get("x-api-key", "").encode(), API_KEY.encode()):
+    # Render can probe liveness without receiving the private inference key.
+    # Detailed health and inference endpoints remain protected.
+    if request.url.path != "/healthz" and not secrets.compare_digest(request.headers.get("x-api-key", "").encode(), API_KEY.encode()):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
     if request.method == "POST":
         try:
@@ -370,6 +372,13 @@ def run_detection(frame: np.ndarray, conf: float = 0.40, iou: float = 0.5):
 @app.get("/")
 def root():
     return {"status": "PPE Detection API is running 🦺"}
+
+
+@app.get("/healthz")
+def healthz():
+    if model is None:
+        raise HTTPException(status_code=503, detail="Model unavailable")
+    return {"status": "ok"}
 
 
 @app.get("/health")

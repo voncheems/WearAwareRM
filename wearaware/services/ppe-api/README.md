@@ -16,7 +16,7 @@ On the current development computer, the existing model environment can start th
 
 AI_API_KEY in this folder's ignored .env must match the backend key. The API requires that key in X-API-Key, including health requests. The frontend never receives it: authenticated inspectors upload through Express /api/ppe/detect. Do not use the original unprotected API for production.
 
-Only /detect is exposed for inference; the unused batch endpoint was removed. There is a 2 MB file limit, 4-million-pixel image limit, query-parameter bounds, and one active inference per process. Actual model startup fails if weights are missing. Health returns 503 when no model is loaded.
+Only /detect is exposed for inference; the unused batch endpoint was removed. There is a 2 MB file limit, 4-million-pixel image limit, query-parameter bounds, and one active inference per process. Actual model startup fails if weights are missing. `/health` is an API-key-protected readiness check; `/healthz` is a minimal public liveness check for Render and returns 503 when the model is unavailable.
 
 Tests: `python -m unittest discover -s services/ppe-api -p 'test_*.py'` from the project root. These use a fake predictor; separately run real model checks before production. Dependency ranges are development constraints, not a reproducible production lock. Resolve and pin a clean production environment before deployment.
 

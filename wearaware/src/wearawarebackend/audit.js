@@ -1,7 +1,11 @@
 const { getDatabase } = require('./database');
 
 function clean(value, max = 240) {
-  return typeof value === 'string' ? value.replace(/[\u0000-\u001F\u007F]/g, ' ').trim().slice(0, max) : '';
+  if (typeof value !== 'string') return '';
+  return value.split('').map((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 0x1f || code === 0x7f ? ' ' : character;
+  }).join('').trim().slice(0, max);
 }
 
 // Audit logging must never change the outcome of the action being recorded.

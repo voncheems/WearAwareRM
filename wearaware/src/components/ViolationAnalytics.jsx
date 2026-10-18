@@ -85,7 +85,7 @@ function Panel({ title, subtitle, children, className = '' }) {
 
 export default function ViolationAnalytics({ checkpoints = [], profiles = [] }) {
   const today = useMemo(localDateValue, []);
-  const [filters, setFilters] = useState({ period: '30d', checkpointId: '', profileId: '', ppe: '', granularity: 'daily', startDate: today, endDate: today });
+  const [filters, setFilters] = useState({ period: '30d', checkpointId: '', profileId: '', ppe: '', riskSeverity: '', granularity: 'daily', startDate: today, endDate: today });
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -102,6 +102,7 @@ export default function ViolationAnalytics({ checkpoints = [], profiles = [] }) 
       if (filters.checkpointId) params.set('checkpointId', filters.checkpointId);
       if (filters.profileId) params.set('profileId', filters.profileId);
       if (filters.ppe) params.set('ppe', filters.ppe);
+      if (filters.riskSeverity) params.set('riskSeverity', filters.riskSeverity);
       if (filters.period === 'custom') { params.set('startDate', filters.startDate); params.set('endDate', filters.endDate); }
       try {
         const response = await fetch(`${API}/admin/analytics?${params}`, { headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` }, signal: controller.signal });
@@ -122,6 +123,7 @@ export default function ViolationAnalytics({ checkpoints = [], profiles = [] }) 
 
   const updateFilter = (name, value) => setFilters(current => ({ ...current, [name]: value }));
   const summary = data?.summary || EMPTY_SUMMARY;
+  const risk = data?.risk || { severity_counts: { Low: 0, Medium: 0, High: 0, Critical: 0 }, deferred: 0, unmatched: 0, unresolved_high: 0 };
   const hasData = summary.total > 0;
   const confidence = summary.average_confidence == null ? '—' : `${Math.round(summary.average_confidence * 100)}%`;
   const mostUncertain = data?.uncertain_ppe?.[0];
@@ -137,6 +139,7 @@ export default function ViolationAnalytics({ checkpoints = [], profiles = [] }) 
         <label className="ad-filter-group"><span className="ad-filter-label">Checkpoint</span><select className="ad-filter-select" value={filters.checkpointId} onChange={event => updateFilter('checkpointId', event.target.value)}><option value="">All checkpoints</option>{checkpoints.map(checkpoint => <option key={checkpoint.id} value={checkpoint.id}>{checkpoint.label}</option>)}</select></label>
         <label className="ad-filter-group"><span className="ad-filter-label">Profile</span><select className="ad-filter-select" value={filters.profileId} onChange={event => updateFilter('profileId', event.target.value)}><option value="">All profiles</option>{profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></label>
         <label className="ad-filter-group"><span className="ad-filter-label">PPE required</span><select className="ad-filter-select" value={filters.ppe} onChange={event => updateFilter('ppe', event.target.value)}><option value="">All PPE</option>{PPE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label className="ad-filter-group"><span className="ad-filter-label">Risk severity</span><select className="ad-filter-select" value={filters.riskSeverity} onChange={event => updateFilter('riskSeverity', event.target.value)}><option value="">All severities</option><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Critical">Critical</option></select></label>
         <label className="ad-filter-group"><span className="ad-filter-label">Trend grouping</span><select className="ad-filter-select" value={filters.granularity} onChange={event => updateFilter('granularity', event.target.value)}><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
         {filters.period === 'custom' && <><label className="ad-filter-group"><span className="ad-filter-label">From</span><input className="ad-filter-input" type="date" max={filters.endDate} value={filters.startDate} onChange={event => updateFilter('startDate', event.target.value)} /></label><label className="ad-filter-group"><span className="ad-filter-label">To</span><input className="ad-filter-input" type="date" min={filters.startDate} value={filters.endDate} onChange={event => updateFilter('endDate', event.target.value)} /></label></>}
       </div>
@@ -157,10 +160,33 @@ export default function ViolationAnalytics({ checkpoints = [], profiles = [] }) 
         <AnalyticsStat icon={<TrendingUp size={20} />} label="Authorization Rate" value={summary.authorization_rate == null ? '—' : `${summary.authorization_rate}%`} note="Authorized ÷ decided access" />
       </div>
 
+      <div className="va-stats va-risk-stats" aria-label="Risk prioritization summary">
+        <AnalyticsStat icon={<AlertTriangle size={20} />} label="Low Risk" value={risk.severity_counts.Low.toLocaleString()} note="Persisted confirmed incidents" />
+        <AnalyticsStat icon={<AlertTriangle size={20} />} label="Medium Risk" value={risk.severity_counts.Medium.toLocaleString()} note="Persisted confirmed incidents" />
+        <AnalyticsStat icon={<AlertTriangle size={20} />} label="High Risk" value={risk.severity_counts.High.toLocaleString()} note={`${risk.unresolved_high} high/critical unresolved`} tone="warning" />
+        <AnalyticsStat icon={<AlertTriangle size={20} />} label="Critical Risk" value={risk.severity_counts.Critical.toLocaleString()} note="Persisted confirmed incidents" tone="danger" />
+      </div>
+
       {!hasData ? <div className="admin-surface va-empty va-empty-main">No scan data is available for the selected filters.</div> : <>
         <div className="va-two-column">
           <Panel title="Compliance Trend" subtitle={`${filters.granularity[0].toUpperCase()}${filters.granularity.slice(1)} compliance rate; manual reviews excluded from the rate.`}><ComplianceTrend rows={data?.trends || []} /></Panel>
           <Panel title="Violations Over Time" subtitle="Confirmed non-compliant final sessions only."><ViolationTrend rows={data?.trends || []} /></Panel>
+        </div>
+        <div className="va-two-column">
+          <Panel title="Risk by Compliance Profile" subtitle="Uses the profile snapshot stored on each historical scan.">
+            <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Risk by compliance profile"><table className="ad-table va-table"><thead><tr><th>Profile</th><th>Confirmed</th><th>Low</th><th>Medium</th><th>High</th><th>Critical</th></tr></thead><tbody>{(data?.profiles || []).map(profile => <tr key={profile.profile_id ?? profile.profile_name}><td>{profile.profile_name}</td><td>{profile.confirmed_violations}</td><td>{profile.low}</td><td>{profile.medium}</td><td>{profile.high}</td><td>{profile.critical}</td></tr>)}</tbody></table></div>
+          </Panel>
+          <Panel title="Prioritization Status" subtitle="Manual review, unmatched, and unresolved high-risk cases remain separate.">
+            <div className="va-reliability"><div><span>Deferred risk</span><strong>{risk.deferred}</strong></div><div><span>Unmatched violations</span><strong>{risk.unmatched}</strong></div><div><span>Repeat workers</span><strong>{(data?.repeat_violations || []).length}</strong></div><div><span>Unresolved high/critical</span><strong>{risk.unresolved_high}</strong></div><div className="wide"><span>Resolved incidents with timing</span><strong>{data?.resolution?.resolved_count || 0}</strong></div></div>
+          </Panel>
+        </div>
+        <div className="va-two-column">
+          <Panel title="Repeat Violations" subtitle="Workers with at least the configured repeat-violation threshold in this filtered range.">
+            <div className="va-recent">{(data?.repeat_violations || []).slice(0, 8).map(worker => <div key={worker.worker_id}><span><strong>{worker.worker_name}</strong><small>{worker.worker_employee_id}</small></span><b>{worker.violations} violations{worker.high_or_critical ? ` · ${worker.high_or_critical} high/critical` : ''}</b></div>)}{!(data?.repeat_violations || []).length && <div className="va-empty">No repeat violations in this range.</div>}</div>
+          </Panel>
+          <Panel title="Unresolved High/Critical Incidents" subtitle="Persisted severity and historical rule snapshots are used; rules are not recalculated here.">
+            <div className="va-recent">{(data?.unresolved_high_severity || []).slice(0, 8).map(record => <div key={record.id}><span><strong>{record.worker_name || record.worker_employee_id || 'Worker'}</strong><small>{record.checkpoint_name} · {record.risk_rule_name || 'Stored risk rule'}</small></span><b>{record.risk_severity}</b></div>)}{!(data?.unresolved_high_severity || []).length && <div className="va-empty">No unresolved high or critical incidents.</div>}</div>
+          </Panel>
         </div>
         <div className="va-two-column">
           <Panel title="Violations by Checkpoint" subtitle="Checkpoints ordered by confirmed violation count."><BarList rows={(data?.checkpoints || []).slice(0, 8)} nameKey="checkpoint_name" valueKey="violations" emptyText="No checkpoint violations in this range." /></Panel>
@@ -173,7 +199,7 @@ export default function ViolationAnalytics({ checkpoints = [], profiles = [] }) 
           </Panel>
         </div>
         <Panel title="Checkpoint Performance" subtitle="Historical scan snapshots remain readable if a checkpoint is later renamed.">
-          <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Checkpoint analytics"><table className="ad-table va-table"><thead><tr><th>Checkpoint</th><th>Total</th><th>Compliant</th><th>Violations</th><th>Manual Review</th><th>Authorized</th><th>Denied</th><th>Pending</th><th>Access Rate</th></tr></thead><tbody>{(data?.checkpoints || []).map(checkpoint => <tr key={checkpoint.checkpoint_id ?? checkpoint.checkpoint_name}><td><strong>{checkpoint.checkpoint_name}</strong>{checkpoint.checkpoint_code && <small>{checkpoint.checkpoint_code}</small>}</td><td>{checkpoint.total}</td><td>{checkpoint.compliant}</td><td>{checkpoint.violations}</td><td>{checkpoint.manual_reviews}</td><td>{checkpoint.authorized}</td><td>{checkpoint.denied}</td><td>{checkpoint.pending_authorization}</td><td>{checkpoint.authorization_rate == null ? '—' : `${checkpoint.authorization_rate}%`}</td></tr>)}</tbody></table></div>
+          <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Checkpoint analytics"><table className="ad-table va-table"><thead><tr><th>Checkpoint</th><th>Total</th><th>Compliant</th><th>Violations</th><th>Low</th><th>Medium</th><th>High</th><th>Critical</th><th>Manual Review</th><th>Authorized</th><th>Denied</th><th>Pending</th><th>Access Rate</th></tr></thead><tbody>{(data?.checkpoints || []).map(checkpoint => <tr key={checkpoint.checkpoint_id ?? checkpoint.checkpoint_name}><td><strong>{checkpoint.checkpoint_name}</strong>{checkpoint.checkpoint_code && <small>{checkpoint.checkpoint_code}</small>}</td><td>{checkpoint.total}</td><td>{checkpoint.compliant}</td><td>{checkpoint.violations}</td><td>{checkpoint.low || 0}</td><td>{checkpoint.medium || 0}</td><td>{checkpoint.high || 0}</td><td>{checkpoint.critical || 0}</td><td>{checkpoint.manual_reviews}</td><td>{checkpoint.authorized}</td><td>{checkpoint.denied}</td><td>{checkpoint.pending_authorization}</td><td>{checkpoint.authorization_rate == null ? '—' : `${checkpoint.authorization_rate}%`}</td></tr>)}</tbody></table></div>
         </Panel>
         <div className="va-two-column">
           <Panel title="Manual Review & Reliability" subtitle="Uncertain scans remain separate until an inspector decides them.">

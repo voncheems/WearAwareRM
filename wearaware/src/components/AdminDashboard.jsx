@@ -477,7 +477,6 @@ export default function AdminDashboard({ setCurrentPage }) {
 
   /* ── Compliance profile state ── */
   const [profiles,          setProfiles]          = useState([]);
-  const [profilesLoading,   setProfilesLoading]   = useState(false);
   const [showProfileModal,  setShowProfileModal]  = useState(false);
   const [editingProfile,    setEditingProfile]    = useState(null);
   const [profileForm,       setProfileForm]       = useState({ ...EMPTY_PROFILE });
@@ -600,7 +599,6 @@ export default function AdminDashboard({ setCurrentPage }) {
   };
 
   const fetchProfiles = async () => {
-    setProfilesLoading(true);
     setLoadErrors(prev => ({ ...prev, 'Compliance profiles': '' }));
     try {
       const res = await adminFetch(`${API}/compliance-profiles`, { headers: getAuthHeaders() });
@@ -609,7 +607,6 @@ export default function AdminDashboard({ setCurrentPage }) {
       if (!Array.isArray(data)) throw new Error('The server returned an invalid compliance profile list.');
       setProfiles(data);
     } catch (err) { setLoadErrors(prev => ({ ...prev, 'Compliance profiles': err.message })); }
-    finally { setProfilesLoading(false); }
   };
 
   const fetchRiskRules = async () => {
@@ -851,19 +848,6 @@ export default function AdminDashboard({ setCurrentPage }) {
     } catch (err) { alert(err.message); }
   };
 
-  const openProfileModal = (profile = null) => {
-    setEditingProfile(profile);
-    setProfileForm(profile ? {
-      name: profile.name,
-      description: profile.description || '',
-      required_ppe: supportedPpe(profile.required_ppe),
-      is_active: profile.is_active ?? true,
-    } : { ...EMPTY_PROFILE });
-    setProfileErrors({});
-    setProfileFormMsg({ type: '', text: '' });
-    setShowProfileModal(true);
-  };
-
   const handleSaveProfile = async (event) => {
     event.preventDefault();
     const errors = {};
@@ -887,25 +871,6 @@ export default function AdminDashboard({ setCurrentPage }) {
       await fetchProfiles();
     } catch (error) { setProfileFormMsg({ type: 'error', text: error.message }); }
     finally { setProfileSubmitting(false); }
-  };
-
-  const handleProfileStatus = async (profile) => {
-    try {
-      const response = await adminFetch(`${API}/compliance-profiles/${profile.id}/status`, { method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify({ is_active: !profile.is_active }) });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Could not update profile status.');
-      fetchProfiles();
-    } catch (error) { alert(error.message); }
-  };
-
-  const handleDeleteProfile = async (profile) => {
-    if (!window.confirm(`Delete compliance profile "${profile.name}"? Profiles used by checkpoints or scan history cannot be deleted.`)) return;
-    try {
-      const response = await adminFetch(`${API}/compliance-profiles/${profile.id}`, { method: 'DELETE', headers: getAuthHeaders() });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Could not delete compliance profile.');
-      fetchProfiles();
-    } catch (error) { alert(error.message); }
   };
 
   const validateUser = () => {

@@ -118,9 +118,10 @@ router.get('/detections/:id/photo', requireAuth, requireRole('admin'), validateR
 router.patch('/detections/:id/review', requireAuth, requireRole('admin'), validateRequest, async (req, res) => {
   try {
     const result = await data.reviewDetection(req.params.id, req.user.id, 'admin', req.body.decision, req.body.notes);
+    if (result.conflict) return res.status(409).json({ error: 'This detection already has a different review decision.' });
     if (!result.rows[0]) return res.status(404).json({ error: 'Manual-review record not found.' });
-    await recordAudit({ category: 'action', action: 'Resolved manual PPE review and entry authorization', actor: req.user, target: String(req.params.id), details: `${req.body.decision}: ${result.rows[0].authorization_status}` });
-    res.json({ success: true, detection: result.rows[0] });
+    if (!result.duplicate) await recordAudit({ category: 'action', action: 'Resolved manual PPE review and entry authorization', actor: req.user, target: String(req.params.id), details: `${req.body.decision}: ${result.rows[0].authorization_status}` });
+    res.json({ success: true, duplicate: Boolean(result.duplicate), detection: result.rows[0] });
   } catch (err) {
     if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown )/.test(err.message || '')) return res.status(400).json({ error: 'Invalid review decision.' });
     res.status(500).json({ error: 'Failed to save the manual-review decision.' });

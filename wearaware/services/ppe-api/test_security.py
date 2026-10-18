@@ -41,6 +41,10 @@ def multipart(content):
 class SecurityTests(unittest.IsolatedAsyncioTestCase):
     async def test_key_required_and_health_readiness(self):
         self.assertEqual((await request('/health'))[0], 401)
+        api.model = FakeModel()
+        status, payload = await request('/healthz')
+        self.assertEqual(status, 200)
+        self.assertEqual(payload, {'status': 'ok'})
         api.model = None
         self.assertEqual((await request('/health', headers={'X-API-Key': os.environ['AI_API_KEY']}))[0], 503)
         api.model = FakeModel()

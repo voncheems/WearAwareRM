@@ -1,5 +1,6 @@
 const { getDatabase } = require('./database');
 const { authorizationFromCompliance, authorizationFromInspectorDecision } = require('./entry-authorization');
+const { assessRisk } = require('./risk-assessment');
 
 // Keep the public integer IDs used by the web and Android clients.
 const numericFields = new Set(['id', 'role_id', 'profile_id', 'inspector_id', 'worker_id', 'detection_id', 'reviewed_by', 'authorization_override_by', 'resolution_inspector_id', 'resolution_corrected_by_scan_id', 'risk_rule_id', 'checkpoint_id', 'created_by']);
@@ -29,7 +30,15 @@ function normalize(table, values) {
         && (item.bbox === null || (item.bbox && typeof item.bbox === 'object' && ['x1', 'y1', 'x2', 'y2'].every(field => typeof item.bbox[field] === 'number' && Number.isFinite(item.bbox[field]))))
         && (item.inferred === undefined || typeof item.inferred === 'boolean')
         && (item.violation === undefined || typeof item.violation === 'boolean'));
-      if (!validPpeList && !validConfidenceSummary && !validRuleIds && !validAiObservations) throw new Error(`Invalid ${key}`);
+      const validRiskHistory = key === 'risk_reassessment_history' && value.length <= 32 && value.every(item => item && typeof item === 'object' && !Array.isArray(item)
+        && Object.keys(item).every(field => ['decision', 'reviewed_by', 'reviewed_at', 'notes', 'previous_risk', 'reassessed_risk'].includes(field))
+        && ['compliant', 'non_compliant', 'false_detection', 'unable_to_verify'].includes(item.decision)
+        && Number.isSafeInteger(item.reviewed_by) && item.reviewed_by > 0
+        && item.reviewed_at instanceof Date
+        && (item.notes === null || typeof item.notes === 'string')
+        && item.previous_risk && typeof item.previous_risk === 'object' && !Array.isArray(item.previous_risk)
+        && item.reassessed_risk && typeof item.reassessed_risk === 'object' && !Array.isArray(item.reassessed_risk));
+      if (!validPpeList && !validConfidenceSummary && !validRuleIds && !validAiObservations && !validRiskHistory) throw new Error(`Invalid ${key}`);
     }
     if (['is_active', 'is_read'].includes(key) && value !== null && typeof value !== 'boolean') throw new Error(`Invalid ${key}`);
     // Values from requests must never become MongoDB query operators.
@@ -111,7 +120,7 @@ function createRepository(dbProvider = getDatabase) {
         compliance_profiles: { description: null, is_active: true, created_at: now, updated_at: now },
         devices: { is_active: true, profile_id: null, inspector_id: null, code: null, description: null, location: null, checkpoint_type: 'internal', required_ppe: ['helmet', 'vest'], created_at: now, registered_at: now, updated_at: now },
         workers: { device_id: null, position: null, contact_number: null, status: 'active', qr_token: null, qr_generated_at: null, qr_revoked_at: null, created_at: now, updated_at: now },
-        detections: { worker_id: null, worker_name: null, worker_employee_id: null, profile_id: null, profile_name: null, checkpoint_name: null, checkpoint_code: null, alert_type: null, required_ppe: [], missing_ppe: [], detected_ppe: [], uncertain_ppe: [], ai_observations: [], photo_url: null, confidence_score: null, visibility_score: null, manual_review_reason: null, manual_review_message: null, ai_result: null, review_status: 'not_required', inspector_decision: null, reviewed_by: null, reviewed_at: null, review_notes: null, resolution_status: null, resolution_decision: null, resolution_inspector_id: null, resolution_resolved_at: null, resolution_notes: null, resolution_corrected_by_scan_id: null, risk_status: 'not_applicable', risk_severity: null, risk_rule_id: null, risk_rule_name: null, risk_rule_snapshot: null, matched_rule_ids: [], risk_evaluated_at: now, detected_at: now },
+        detections: { worker_id: null, worker_name: null, worker_employee_id: null, profile_id: null, profile_name: null, checkpoint_name: null, checkpoint_code: null, alert_type: null, required_ppe: [], missing_ppe: [], detected_ppe: [], uncertain_ppe: [], ai_observations: [], photo_url: null, confidence_score: null, visibility_score: null, manual_review_reason: null, manual_review_message: null, ai_result: null, review_status: 'not_required', inspector_decision: null, reviewed_by: null, reviewed_at: null, review_notes: null, risk_reassessment_history: [], resolution_status: null, resolution_decision: null, resolution_inspector_id: null, resolution_resolved_at: null, resolution_notes: null, resolution_corrected_by_scan_id: null, risk_status: 'not_applicable', risk_severity: null, risk_rule_id: null, risk_rule_name: null, risk_rule_snapshot: null, matched_rule_ids: [], risk_evaluated_at: now, detected_at: now },
         risk_rules: { condition_type: 'violation', ppe_item: null, checkpoint_id: null, profile_id: null, is_active: true, created_at: now, updated_at: now },
         notifications: { type: 'NON_COMPLIANT_WORKER', title: 'Non-Compliant Worker Detected', message: 'A worker requires inspector review.', is_read: false, read_at: null, created_at: now },
         password_reset_requests: { status: 'pending', reason: null, created_at: now },
@@ -210,7 +219,7 @@ function createRepository(dbProvider = getDatabase) {
       pipeline.push(...join('devices', 'device_id', 'stationDoc'));
       if (view !== 'legacy') pipeline.push(...join('workers', 'worker_id', 'workerDoc'));
       if (view === 'admin') pipeline.push(...join('users', 'inspector_id', 'inspectorDoc'));
-      const fields = 'id device_id worker_name worker_employee_id profile_id profile_name checkpoint_code alert_type result ai_result original_authorization authorization_status authorization_event authorization_decided_at authorization_override_by authorization_override_at authorization_override_reason resolution_status resolution_decision resolution_inspector_id resolution_resolved_at resolution_notes resolution_corrected_by_scan_id risk_status risk_severity risk_rule_id risk_rule_name risk_rule_snapshot matched_rule_ids risk_evaluated_at required_ppe missing_ppe detected_ppe uncertain_ppe manual_review_reason manual_review_message review_status inspector_decision reviewed_by reviewed_at review_notes scan_session_id session_status session_started_at session_ended_at frame_count confidence_summary visibility_score' + (view === 'inspector' ? '' : ' confidence_score detected_at');
+      const fields = 'id device_id worker_name worker_employee_id profile_id profile_name checkpoint_code alert_type result ai_result original_authorization authorization_status authorization_event authorization_decided_at authorization_override_by authorization_override_at authorization_override_reason resolution_status resolution_decision resolution_inspector_id resolution_resolved_at resolution_notes resolution_corrected_by_scan_id risk_status risk_severity risk_rule_id risk_rule_name risk_rule_snapshot matched_rule_ids risk_evaluated_at risk_reassessment_history required_ppe missing_ppe detected_ppe uncertain_ppe manual_review_reason manual_review_message review_status inspector_decision reviewed_by reviewed_at review_notes scan_session_id session_status session_started_at session_ended_at frame_count confidence_summary visibility_score' + (view === 'inspector' ? '' : ' confidence_score detected_at');
       pipeline.push({ $project: { ...project(fields), _timestamp: '$detected_at', station: { $ifNull: ['$checkpoint_name', { $ifNull: ['$stationDoc.label', null] }] },
         checkpoint: { id: '$device_id', name: { $ifNull: ['$checkpoint_name', { $ifNull: ['$stationDoc.label', null] }] }, code: { $ifNull: ['$checkpoint_code', { $ifNull: ['$stationDoc.code', null] }] } },
         has_photo: { $ne: [{ $ifNull: ['$photo_url', ''] }, ''] },
@@ -266,10 +275,36 @@ function createRepository(dbProvider = getDatabase) {
     async reviewDetection(id, reviewerId, role, decision, notes = null) {
       const filter = normalize('detections', { id, ...(role === 'inspector' ? { inspector_id: reviewerId } : {}) });
       const doc = await collection('detections').findOne(filter);
-      if (!doc || (doc.ai_result || doc.result) !== 'manual_review') return result([]);
+      if (!doc) return result([]);
+      if (doc.review_status === 'reviewed' || doc.inspector_decision) {
+        if (doc.inspector_decision === decision) return { rows: [pick(doc, 'id result ai_result review_status inspector_decision reviewed_by reviewed_at review_notes original_authorization authorization_status authorization_event authorization_decided_at authorization_override_by authorization_override_at authorization_override_reason resolution_status resolution_decision resolution_inspector_id resolution_resolved_at resolution_notes risk_status risk_severity risk_rule_id risk_rule_name risk_rule_snapshot matched_rule_ids risk_evaluated_at risk_reassessment_history')], duplicate: true };
+        return { rows: [], conflict: true };
+      }
+      if ((doc.ai_result || doc.result) !== 'manual_review') return result([]);
       const original = authorizationFromCompliance(doc.ai_result || doc.result);
       const final = authorizationFromInspectorDecision(decision);
       const now = new Date();
+      const previousRisk = {
+        risk_status: doc.risk_status || 'not_applicable', risk_severity: doc.risk_severity || null,
+        risk_rule_id: doc.risk_rule_id || null, risk_rule_name: doc.risk_rule_name || null,
+        risk_rule_snapshot: doc.risk_rule_snapshot || null, matched_rule_ids: Array.isArray(doc.matched_rule_ids) ? doc.matched_rule_ids : [],
+      };
+      let reassessedRisk;
+      if (decision === 'non_compliant' && !(Array.isArray(doc.uncertain_ppe) && doc.uncertain_ppe.length)) {
+        const activeRules = await collection('risk_rules').find({ is_active: true }).project({ _id: 0, id: 1, name: 1, condition_type: 1, ppe_item: 1, checkpoint_id: 1, profile_id: 1, severity: 1, is_active: 1 }).toArray();
+        reassessedRisk = assessRisk(activeRules, { result: 'violation', missing_ppe: Array.isArray(doc.missing_ppe) ? doc.missing_ppe : [], uncertain_ppe: [], checkpoint_id: doc.device_id, profile_id: doc.profile_id || null });
+      } else if (decision === 'non_compliant') {
+        reassessedRisk = assessRisk([], { result: 'manual_review', missing_ppe: [], uncertain_ppe: doc.uncertain_ppe });
+      } else if (decision === 'unable_to_verify') {
+        reassessedRisk = assessRisk([], { result: 'manual_review', missing_ppe: [], uncertain_ppe: doc.uncertain_ppe || ['review'] });
+      } else {
+        reassessedRisk = assessRisk([], { result: 'compliant', missing_ppe: [], uncertain_ppe: [] });
+      }
+      const history = [...(Array.isArray(doc.risk_reassessment_history) ? doc.risk_reassessment_history : []), {
+        decision, reviewed_by: reviewerId, reviewed_at: now, notes: notes || null,
+        previous_risk: previousRisk,
+        reassessed_risk: reassessedRisk,
+      }].slice(-32);
       return api.update('detections', filter, {
         review_status: 'reviewed', inspector_decision: decision, reviewed_by: reviewerId,
         reviewed_at: now, review_notes: notes || null,
@@ -281,7 +316,10 @@ function createRepository(dbProvider = getDatabase) {
         resolution_status: decision === 'non_compliant' || decision === 'unable_to_verify' ? 'CONFIRMED_VIOLATION' : decision === 'false_detection' ? 'FALSE_DETECTION' : null,
         resolution_decision: decision === 'non_compliant' || decision === 'unable_to_verify' ? 'CONFIRM' : decision === 'false_detection' ? 'FALSE_DETECTION' : null,
         resolution_inspector_id: reviewerId, resolution_resolved_at: now, resolution_notes: notes || null,
-      }, 'id result ai_result review_status inspector_decision reviewed_by reviewed_at review_notes original_authorization authorization_status authorization_event authorization_decided_at authorization_override_by authorization_override_at authorization_override_reason resolution_status resolution_decision resolution_inspector_id resolution_resolved_at resolution_notes');
+        risk_status: reassessedRisk.risk_status, risk_severity: reassessedRisk.risk_severity, risk_rule_id: reassessedRisk.risk_rule_id,
+        risk_rule_name: reassessedRisk.risk_rule_name, risk_rule_snapshot: reassessedRisk.risk_rule_snapshot,
+        matched_rule_ids: reassessedRisk.matched_rule_ids, risk_evaluated_at: now, risk_reassessment_history: history,
+      }, 'id result ai_result review_status inspector_decision reviewed_by reviewed_at review_notes original_authorization authorization_status authorization_event authorization_decided_at authorization_override_by authorization_override_at authorization_override_reason resolution_status resolution_decision resolution_inspector_id resolution_resolved_at resolution_notes risk_status risk_severity risk_rule_id risk_rule_name risk_rule_snapshot matched_rule_ids risk_evaluated_at risk_reassessment_history');
     },
     async resolveDetection(id, reviewerId, role, status, reason, correctedByScanId = null) {
       const filter = normalize('detections', { id, ...(role === 'inspector' ? { inspector_id: reviewerId } : {}), resolution_status: 'PENDING_REVIEW' });

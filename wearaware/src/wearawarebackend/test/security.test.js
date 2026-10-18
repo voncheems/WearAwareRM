@@ -94,6 +94,80 @@ test('risk-rule API validates severity, condition fields, references, and admin 
   assert.equal((await disabled.json()).is_active, false);
 });
 
+test('inspector review reassesses risk, preserves history, and is idempotent', async () => {
+  const admin = token(1, 'admin');
+  const inspector = token(2, 'inspector');
+  const ruleResponse = await call('/api/admin/risk-rules', admin, 'POST', {
+    name: 'Review-only helmet risk', condition_type: 'missing_ppe', ppe_item: 'helmet', checkpoint_id: 1,
+    profile_id: reusableProfileId, severity: 'High', is_active: true,
+  });
+  assert.equal(ruleResponse.status, 201);
+  const rule = await ruleResponse.json();
+  const baseDetection = (id, overrides = {}) => ({
+    id, device_id: 1, inspector_id: 2, worker_id: 11, profile_id: reusableProfileId,
+    checkpoint_name: 'First', checkpoint_code: 'FIRST-01', alert_type: 'manual_review',
+    result: 'manual_review', ai_result: 'manual_review', original_authorization: 'pending_inspection',
+    authorization_status: 'pending_inspection', authorization_event: 'ACCESS_PENDING', authorization_decided_at: new Date(),
+    required_ppe: ['helmet'], detected_ppe: [], missing_ppe: ['helmet'], uncertain_ppe: [],
+    review_status: 'pending', inspector_decision: null, reviewed_by: null, reviewed_at: null, review_notes: null,
+    resolution_status: 'PENDING_REVIEW', resolution_decision: null, resolution_inspector_id: null,
+    resolution_resolved_at: null, resolution_notes: null, risk_status: 'deferred', risk_severity: null,
+    risk_rule_id: null, risk_rule_name: null, risk_rule_snapshot: null, matched_rule_ids: [],
+    risk_evaluated_at: new Date(), risk_reassessment_history: [], detected_at: new Date(), ...overrides,
+  });
+  await db.collection('detections').insertMany([
+    baseDetection(9101),
+    baseDetection(9102, { missing_ppe: ['vest'], required_ppe: ['vest'] }),
+    baseDetection(9103),
+    baseDetection(9104, { missing_ppe: [], uncertain_ppe: ['helmet'] }),
+    baseDetection(9105, { missing_ppe: [], required_ppe: ['helmet'] }),
+  ]);
+
+  const review = async (id, decision, notes) => call(`/api/inspector/detections/${id}/review`, inspector, 'PATCH', { decision, notes });
+  const confirmed = await review(9101, 'non_compliant', 'Confirmed missing helmet.');
+  assert.equal(confirmed.status, 200);
+  const confirmedBody = await confirmed.json();
+  assert.equal(confirmedBody.detection.risk_status, 'matched');
+  assert.equal(confirmedBody.detection.risk_severity, 'High');
+  assert.equal(confirmedBody.detection.risk_reassessment_history.length, 1);
+  assert.equal(confirmedBody.detection.risk_reassessment_history[0].previous_risk.risk_status, 'deferred');
+  assert.equal(confirmedBody.detection.risk_reassessment_history[0].reassessed_risk.risk_severity, 'High');
+  assert.equal(confirmedBody.detection.reviewed_by, 2);
+  assert.ok(confirmedBody.detection.reviewed_at);
+  const repeated = await review(9101, 'non_compliant', 'Submitted again.');
+  assert.equal(repeated.status, 200);
+  assert.equal((await repeated.json()).duplicate, true);
+  assert.equal((await db.collection('detections').findOne({ id: 9101 })).risk_reassessment_history.length, 1);
+  assert.equal((await review(9101, 'compliant')).status, 409);
+
+  const unmatched = await review(9102, 'non_compliant');
+  assert.equal(unmatched.status, 200);
+  const unmatchedRecord = await db.collection('detections').findOne({ id: 9102 });
+  assert.equal(unmatchedRecord.risk_status, 'unmatched');
+  assert.equal(unmatchedRecord.risk_severity, null);
+
+  const falseDetection = await review(9103, 'false_detection');
+  assert.equal(falseDetection.status, 200);
+  const falseRecord = await db.collection('detections').findOne({ id: 9103 });
+  assert.equal(falseRecord.resolution_status, 'FALSE_DETECTION');
+  assert.equal(falseRecord.risk_status, 'not_applicable');
+  assert.equal(falseRecord.risk_severity, null);
+
+  const uncertain = await review(9104, 'non_compliant');
+  assert.equal(uncertain.status, 200);
+  const uncertainRecord = await db.collection('detections').findOne({ id: 9104 });
+  assert.equal(uncertainRecord.risk_status, 'deferred');
+  assert.equal(uncertainRecord.risk_severity, null);
+
+  const compliant = await review(9105, 'compliant');
+  assert.equal(compliant.status, 200);
+  const compliantRecord = await db.collection('detections').findOne({ id: 9105 });
+  assert.equal(compliantRecord.authorization_status, 'authorized');
+  assert.equal(compliantRecord.risk_status, 'not_applicable');
+  assert.equal(compliantRecord.risk_severity, null);
+  assert.equal((await call(`/api/admin/risk-rules/${rule.id}/status`, admin, 'PATCH', { is_active: false })).status, 200);
+});
+
 test('administrators manage checkpoint requirements and activation through checkpoint APIs', async () => {
   const auth = token(1, 'admin');
   const createdResponse = await call('/api/checkpoints', auth, 'POST', { label: 'Laboratory Entrance', code: 'LAB-01', description: 'Research wing checkpoint', location: 'Lab Wing', checkpoint_type: 'entrance', profile_id: reusableProfileId, required_ppe: ['gloves', 'goggles', 'mask'], inspector_id: 2, is_active: true });
@@ -297,6 +371,44 @@ test('violation analytics aggregate final sessions, preserve snapshots and enfor
   assert.equal(gloves.recent_violations.length, 1);
   assert.equal((await call('/api/admin/analytics?period=custom&startDate=bad&endDate=2026-06-01', token(1, 'admin'))).status, 400);
   assert.equal((await call('/api/admin/analytics?period=all&unexpected=true', token(1, 'admin'))).status, 400);
+});
+
+test('risk analytics prioritizes persisted severity, repeat workers, and unresolved incidents', async () => {
+  const at = day => new Date(`2026-07-${String(day).padStart(2, '0')}T08:00:00.000Z`);
+  const riskDetection = (id, workerId, deviceId, profileId, severity, day, resolutionStatus = 'PENDING_REVIEW') => ({
+    id, worker_id: workerId, device_id: deviceId, profile_id: profileId, inspector_id: deviceId === 1 ? 2 : 3,
+    worker_name: workerId === 11 ? 'First' : 'Other', worker_employee_id: workerId === 11 ? 'W11' : 'W12',
+    checkpoint_name: deviceId === 1 ? 'First' : 'Other', checkpoint_code: deviceId === 1 ? 'FIRST-01' : 'OTHER-01',
+    result: 'violation', ai_result: 'violation', alert_type: 'non_compliant', session_status: 'completed',
+    detected_at: at(day), required_ppe: ['helmet'], detected_ppe: [], missing_ppe: ['helmet'], uncertain_ppe: [],
+    review_status: 'not_required', resolution_status: resolutionStatus, risk_status: 'matched', risk_severity: severity,
+    risk_rule_id: severity === 'High' ? 901 : severity === 'Medium' ? 902 : 903, risk_rule_name: `${severity} rule`,
+    risk_rule_snapshot: { severity }, matched_rule_ids: [], authorization_status: 'denied',
+    resolution_resolved_at: resolutionStatus === 'CONFIRMED_VIOLATION' ? new Date(at(day).getTime() + 3600000) : null,
+  });
+  await db.collection('detections').insertMany([
+    riskDetection(8101, 11, 1, reusableProfileId, 'Low', 1),
+    riskDetection(8102, 11, 1, reusableProfileId, 'High', 2),
+    riskDetection(8103, 11, 1, reusableProfileId, 'Low', 3),
+    riskDetection(8104, 12, 2, null, 'Medium', 2, 'CONFIRMED_VIOLATION'),
+    riskDetection(8105, 11, 1, reusableProfileId, 'Critical', 4, 'FALSE_DETECTION'),
+  ]);
+  const endpoint = '/api/admin/analytics?period=custom&startDate=2026-07-01&endDate=2026-07-05&granularity=daily';
+  assert.equal((await call(endpoint, token(2, 'inspector'))).status, 403);
+  assert.equal((await call(`${endpoint}&riskSeverity=Extreme`, token(1, 'admin'))).status, 400);
+  const response = await call(endpoint, token(1, 'admin'));
+  assert.equal(response.status, 200);
+  const analytics = await response.json();
+  assert.deepEqual(analytics.risk.severity_counts, { Low: 2, Medium: 1, High: 1, Critical: 0 });
+  assert.equal(analytics.risk.unresolved_high, 1);
+  assert.equal(analytics.summary.risk_deferred, 0);
+  assert.equal(analytics.repeat_violations.length, 1);
+  assert.equal(analytics.repeat_violations[0].worker_id, 11);
+  assert.equal(analytics.profiles.find(profile => profile.profile_id === reusableProfileId).confirmed_violations, 3);
+  assert.equal(analytics.resolution.resolved_count, 1);
+  assert.equal((await (await call(`${endpoint}&riskSeverity=High`, token(1, 'admin'))).json()).summary.total, 1);
+  assert.equal((await (await call(`${endpoint}&checkpointId=2`, token(1, 'admin'))).json()).summary.total, 1);
+  assert.equal((await (await call('/api/admin/analytics?period=custom&startDate=2026-07-01&endDate=2026-07-01', token(1, 'admin'))).json()).summary.total, 1);
 });
 test('repeat-violation tracking uses final inspector outcomes and remains separate from the current scan verdict', async () => {
   const now = Date.now();
