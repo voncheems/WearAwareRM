@@ -274,7 +274,9 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
           photo_url: aggregate.alert_type === ALERT_TYPES.COMPLIANT ? null : session.bestSnapshot,
           scan_session_id: session.id, session_started_at: session.startedAt.toISOString(), session_ended_at: session.endedAt.toISOString(),
           frame_count: aggregate.frame_count, confidence_summary: aggregate.confidence_summary,
-          ai_observations: session.frames.flatMap(frame => Array.isArray(frame.detections) ? frame.detections : []).slice(0, 256),
+          ai_observations: session.frames.flatMap(frame => Array.isArray(frame.detections) ? frame.detections : [])
+            .slice(0, 256)
+            .map(({ class_name, confidence, bbox, inferred, violation }) => ({ class_name, confidence, bbox, inferred, violation })),
           visibility_score: aggregate.visibility_score, multiple_people_detected: aggregate.multiple_people_detected,
           manual_review_required: aggregate.manual_review_required,
         }),
