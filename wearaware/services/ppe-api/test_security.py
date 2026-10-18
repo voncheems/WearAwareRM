@@ -27,7 +27,7 @@ class DetectionModel:
     def __init__(self, boxes):
         self.boxes = boxes
 
-    def predict(self, frame, conf, iou, agnostic_nms, verbose):
+    def predict(self, frame, conf, iou, imgsz, agnostic_nms, verbose):
         return [SimpleNamespace(boxes=self.boxes)]
 
 async def request(path, body=b'', headers=None, method='GET'):
@@ -85,6 +85,16 @@ class SecurityTests(unittest.IsolatedAsyncioTestCase):
         finally:
             api.model = original
 
+    def test_large_frames_are_resized_and_boxes_map_to_source_coordinates(self):
+        original = api.model
+        api.model = DetectionModel([FakeBox(1, 0.7, [100, 50, 200, 150])])
+        try:
+            annotated, detections, _, _ = api.run_detection(np.zeros((1080, 1920, 3), dtype=np.uint8), conf=0.35, return_image=False)
+            self.assertIsNone(annotated)
+            self.assertEqual(detections[0]['bbox'], {'x1': 300, 'y1': 150, 'x2': 600, 'y2': 450})
+        finally:
+            api.model = original
+
     async def test_detect_response_preserves_human_observation_contract(self):
         api.model = FakeModel()
         out = io.BytesIO(); Image.new('RGB', (16, 16)).save(out, format='PNG')
@@ -95,7 +105,7 @@ class SecurityTests(unittest.IsolatedAsyncioTestCase):
             'violation': False, 'inferred': False,
         }
         original = api.run_detection
-        api.run_detection = lambda frame, conf, iou: (frame, [human], [], [])
+        api.run_detection = lambda frame, conf, iou, return_image: (frame, [human], [], [])
         try:
             status, payload = await request('/detect', body, headers, 'POST')
             self.assertEqual(status, 200)
@@ -127,7 +137,7 @@ class SecurityTests(unittest.IsolatedAsyncioTestCase):
         out = io.BytesIO(); Image.new('RGB', (16, 16)).save(out, format='PNG')
         body, headers = multipart(out.getvalue())
         captured = []
-        def detect(frame, conf, iou):
+        def detect(frame, conf, iou, return_image):
             captured.append(conf)
             return frame, [], [], []
         original = api.run_detection

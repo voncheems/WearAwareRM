@@ -7,6 +7,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 import cv2
 import numpy as np
+import torch
 from ultralytics import YOLO
 from PIL import Image
 import io
@@ -24,6 +25,7 @@ if len(API_KEY) < 32:
     raise RuntimeError("Configure AI_API_KEY with at least 32 characters.")
 MAX_UPLOAD = 2 * 1024 * 1024
 MAX_PIXELS = 4_000_000
+MAX_INFERENCE_DIM = 640
 Image.MAX_IMAGE_PIXELS = MAX_PIXELS
 inference_gate = asyncio.Semaphore(1)
 
@@ -101,6 +103,8 @@ model = None
 @app.on_event("startup")
 def load_model():
     global model
+    if model is not None:
+        return
     if not os.path.exists(WEIGHTS_PATH):
         raise RuntimeError("Model weights are unavailable.")
     model = YOLO(WEIGHTS_PATH)
@@ -118,6 +122,28 @@ def frame_to_base64(frame: np.ndarray) -> str:
     """Convert OpenCV frame to base64 string for sending to React."""
     _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
     return base64.b64encode(buffer).decode('utf-8')
+
+
+def prepare_inference_frame(frame: np.ndarray):
+    """Bound inference memory while retaining coordinates in the source space."""
+    height, width = frame.shape[:2]
+    longest = max(height, width)
+    if longest <= MAX_INFERENCE_DIM:
+        return frame, 1.0, 1.0
+    scale = MAX_INFERENCE_DIM / longest
+    resized = cv2.resize(frame, (max(1, round(width * scale)), max(1, round(height * scale))), interpolation=cv2.INTER_AREA)
+    return resized, 1.0 / scale, 1.0 / scale
+
+
+def source_box(box, scale_x, scale_y, width, height):
+    """Map an inference-space box back to the uploaded image coordinates."""
+    x1, y1, x2, y2 = box
+    return {
+        "x1": max(0, min(width, round(x1 * scale_x))),
+        "y1": max(0, min(height, round(y1 * scale_y))),
+        "x2": max(0, min(width, round(x2 * scale_x))),
+        "y2": max(0, min(height, round(y2 * scale_y))),
+    }
 
 
 def boxes_overlap_horizontally(b1, b2, tolerance=0.4):
@@ -189,13 +215,16 @@ def infer_no_helmet(helmet_boxes, vest_boxes, frame_shape):
     return inferred
 
 
-def run_detection(frame: np.ndarray, conf: float = 0.40, iou: float = 0.5):
+def run_detection(frame: np.ndarray, conf: float = 0.40, iou: float = 0.5, return_image: bool = True):
     """Run YOLO detection and return annotated frame + structured results."""
 
     # Use the passed conf as the model-level floor (minimum 0.10 to avoid junk)
     # MIN_CONF_PER_CLASS then applies stricter per-class filtering on top
     model_conf = max(conf, 0.10)
-    results = model.predict(frame, conf=model_conf, iou=min(iou, 0.35), agnostic_nms=False, verbose=False)[0]
+    source_height, source_width = frame.shape[:2]
+    inference_frame, scale_x, scale_y = prepare_inference_frame(frame)
+    with torch.inference_mode():
+        results = model.predict(inference_frame, conf=model_conf, iou=min(iou, 0.35), imgsz=640, agnostic_nms=False, verbose=False)[0]
 
     detections   = []
     violations   = []
@@ -204,7 +233,7 @@ def run_detection(frame: np.ndarray, conf: float = 0.40, iou: float = 0.5):
     vest_boxes   = []   # collect for vest inference
     human_boxes  = []   # lets checkpoint mode flag a person with no recognised PPE at all
 
-    annotated = frame.copy()
+    annotated = frame.copy() if return_image else None
 
     for box in (results.boxes or []):
         cls_id     = int(box.cls[0])
@@ -223,7 +252,7 @@ def run_detection(frame: np.ndarray, conf: float = 0.40, iou: float = 0.5):
                 "class_id"  : cls_id,
                 "class_name": name,
                 "confidence": round(conf_score, 4),
-                "bbox"      : {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+                "bbox"      : source_box((x1, y1, x2, y2), scale_x, scale_y, source_width, source_height),
                 "violation" : False,
                 "inferred"  : False
             })
@@ -238,18 +267,22 @@ def run_detection(frame: np.ndarray, conf: float = 0.40, iou: float = 0.5):
         color = (60, 80, 248) if viol else (63, 185, 80)   # BGR: red vs green
 
         # Draw solid box
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+        display_box = source_box((x1, y1, x2, y2), scale_x, scale_y, source_width, source_height)
+        dx1, dy1, dx2, dy2 = display_box.values()
+        if annotated is not None:
+            cv2.rectangle(annotated, (dx1, dy1), (dx2, dy2), color, 2)
         label = f"{name}  {conf_score:.2f}"
-        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
-        cv2.rectangle(annotated, (x1, max(0, y1 - th - 8)), (x1 + tw + 6, y1), color, -1)
-        cv2.putText(annotated, label, (x1 + 3, y1 - 3),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 1)
+        if annotated is not None:
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
+            cv2.rectangle(annotated, (dx1, max(0, dy1 - th - 8)), (dx1 + tw + 6, dy1), color, -1)
+            cv2.putText(annotated, label, (dx1 + 3, dy1 - 3),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 1)
 
         detections.append({
             "class_id"  : cls_id,
             "class_name": name,
             "confidence": round(conf_score, 4),
-            "bbox"      : {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+            "bbox"      : display_box,
             "violation" : viol,
             "inferred"  : False
         })
@@ -265,24 +298,31 @@ def run_detection(frame: np.ndarray, conf: float = 0.40, iou: float = 0.5):
         elif name == 'vest':
             vest_boxes.append([x1, y1, x2, y2])
 
+    inference_shape = inference_frame.shape
+    del results, inference_frame
+
     # ── Infer no-vest violations ──────────────────────────────────────────
     if helmet_boxes:
-        for (nx1, ny1, nx2, ny2) in infer_no_vest(helmet_boxes, vest_boxes, frame.shape):
+        for (nx1, ny1, nx2, ny2) in infer_no_vest(helmet_boxes, vest_boxes, inference_shape):
 
             # Draw dashed red box for inferred no-vest
             color, dash = (0, 0, 220), 12
-            for x in range(nx1, nx2, dash * 2):
-                cv2.line(annotated, (x, ny1), (min(x + dash, nx2), ny1), color, 2)
-                cv2.line(annotated, (x, ny2), (min(x + dash, nx2), ny2), color, 2)
-            for y in range(ny1, ny2, dash * 2):
-                cv2.line(annotated, (nx1, y), (nx1, min(y + dash, ny2)), color, 2)
-                cv2.line(annotated, (nx2, y), (nx2, min(y + dash, ny2)), color, 2)
+            inferred_box = source_box((nx1, ny1, nx2, ny2), scale_x, scale_y, source_width, source_height)
+            ix1, iy1, ix2, iy2 = inferred_box.values()
+            if annotated is not None:
+                for x in range(ix1, ix2, dash * 2):
+                    cv2.line(annotated, (x, iy1), (min(x + dash, ix2), iy1), color, 2)
+                    cv2.line(annotated, (x, iy2), (min(x + dash, ix2), iy2), color, 2)
+                for y in range(iy1, iy2, dash * 2):
+                    cv2.line(annotated, (ix1, y), (ix1, min(y + dash, iy2)), color, 2)
+                    cv2.line(annotated, (ix2, y), (ix2, min(y + dash, iy2)), color, 2)
 
             label = "no-vest (inferred)"
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 1)
-            cv2.rectangle(annotated, (nx1, max(0, ny1 - th - 8)), (nx1 + tw + 6, ny1), color, -1)
-            cv2.putText(annotated, label, (nx1 + 3, ny1 - 3),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1)
+            if annotated is not None:
+                (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 1)
+                cv2.rectangle(annotated, (ix1, max(0, iy1 - th - 8)), (ix1 + tw + 6, iy1), color, -1)
+                cv2.putText(annotated, label, (ix1 + 3, iy1 - 3),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1)
 
             violations.append('no-vest')
             detections.append({
@@ -298,22 +338,26 @@ def run_detection(frame: np.ndarray, conf: float = 0.40, iou: float = 0.5):
     # Only infer if NO helmet/no-helmet was detected anywhere in the frame
     # Safe for checkpoint mode (one person at a time)
     if vest_boxes and not helmet_boxes:
-        for (nx1, ny1, nx2, ny2) in infer_no_helmet(helmet_boxes, vest_boxes, frame.shape):
+        for (nx1, ny1, nx2, ny2) in infer_no_helmet(helmet_boxes, vest_boxes, inference_shape):
 
             # Draw dashed red box for inferred no-helmet
             color, dash = (0, 0, 220), 12
-            for x in range(nx1, nx2, dash * 2):
-                cv2.line(annotated, (x, ny1), (min(x + dash, nx2), ny1), color, 2)
-                cv2.line(annotated, (x, ny2), (min(x + dash, nx2), ny2), color, 2)
-            for y in range(ny1, ny2, dash * 2):
-                cv2.line(annotated, (nx1, y), (nx1, min(y + dash, ny2)), color, 2)
-                cv2.line(annotated, (nx2, y), (nx2, min(y + dash, ny2)), color, 2)
+            inferred_box = source_box((nx1, ny1, nx2, ny2), scale_x, scale_y, source_width, source_height)
+            ix1, iy1, ix2, iy2 = inferred_box.values()
+            if annotated is not None:
+                for x in range(ix1, ix2, dash * 2):
+                    cv2.line(annotated, (x, iy1), (min(x + dash, ix2), iy1), color, 2)
+                    cv2.line(annotated, (x, iy2), (min(x + dash, ix2), iy2), color, 2)
+                for y in range(iy1, iy2, dash * 2):
+                    cv2.line(annotated, (ix1, y), (ix1, min(y + dash, iy2)), color, 2)
+                    cv2.line(annotated, (ix2, y), (ix2, min(y + dash, iy2)), color, 2)
 
             label = "no-helmet (inferred)"
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 1)
-            cv2.rectangle(annotated, (nx1, max(0, ny1 - th - 8)), (nx1 + tw + 6, ny1), color, -1)
-            cv2.putText(annotated, label, (nx1 + 3, ny1 - 3),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1)
+            if annotated is not None:
+                (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 1)
+                cv2.rectangle(annotated, (ix1, max(0, iy1 - th - 8)), (ix1 + tw + 6, iy1), color, -1)
+                cv2.putText(annotated, label, (ix1 + 3, iy1 - 3),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1)
 
             violations.append('no-helmet')
             detections.append({
@@ -340,35 +384,39 @@ def run_detection(frame: np.ndarray, conf: float = 0.40, iou: float = 0.5):
             torso = [hx1, head[3], hx2, hy2]
             for label, (nx1, ny1, nx2, ny2) in (("no-helmet", head), ("no-vest", torso)):
                 color, dash = (0, 0, 220), 12
-                for x in range(nx1, nx2, dash * 2):
-                    cv2.line(annotated, (x, ny1), (min(x + dash, nx2), ny1), color, 2)
-                    cv2.line(annotated, (x, ny2), (min(x + dash, nx2), ny2), color, 2)
-                for y in range(ny1, ny2, dash * 2):
-                    cv2.line(annotated, (nx1, y), (nx1, min(y + dash, ny2)), color, 2)
-                    cv2.line(annotated, (nx2, y), (nx2, min(y + dash, ny2)), color, 2)
-                cv2.putText(annotated, f"{label} (inferred)", (nx1 + 3, max(16, ny1 - 4)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.50, color, 2)
+                inferred_box = source_box((nx1, ny1, nx2, ny2), scale_x, scale_y, source_width, source_height)
+                ix1, iy1, ix2, iy2 = inferred_box.values()
+                if annotated is not None:
+                    for x in range(ix1, ix2, dash * 2):
+                        cv2.line(annotated, (x, iy1), (min(x + dash, ix2), iy1), color, 2)
+                        cv2.line(annotated, (x, iy2), (min(x + dash, ix2), iy2), color, 2)
+                    for y in range(iy1, iy2, dash * 2):
+                        cv2.line(annotated, (ix1, y), (ix1, min(y + dash, iy2)), color, 2)
+                        cv2.line(annotated, (ix2, y), (ix2, min(y + dash, iy2)), color, 2)
+                    cv2.putText(annotated, f"{label} (inferred)", (ix1 + 3, max(16, iy1 - 4)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.50, color, 2)
                 violations.append(label)
                 detections.append({
                     "class_id"  : -1,
                     "class_name": label,
                     "confidence": 0.0,
-                    "bbox"      : {"x1": nx1, "y1": ny1, "x2": nx2, "y2": ny2},
+                    "bbox"      : inferred_box,
                     "violation" : True,
                     "inferred"  : True
                 })
 
     # ── Status banner on frame ────────────────────────────────────────────
-    h, w = annotated.shape[:2]
-    if violations:
+    if annotated is not None:
+        h, w = annotated.shape[:2]
+    if annotated is not None and violations:
         cv2.rectangle(annotated, (0, 0), (w, 38), (40, 30, 180), -1)
         cv2.putText(annotated, f"  VIOLATION  |  {', '.join(set(violations))}",
                     (8, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
-    elif compliant:
+    elif annotated is not None and compliant:
         cv2.rectangle(annotated, (0, 0), (w, 38), (30, 130, 50), -1)
         cv2.putText(annotated, "  ALL PPE COMPLIANT",
                     (8, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
-    else:
+    elif annotated is not None:
         cv2.rectangle(annotated, (0, 0), (w, 38), (60, 80, 100), -1)
         cv2.putText(annotated, "  NO PPE DETECTED",
                     (8, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
@@ -443,6 +491,7 @@ async def detect(
         raise HTTPException(status_code=400, detail="Invalid or oversized image")
     np_arr   = np.frombuffer(contents, np.uint8)
     frame    = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    del contents, np_arr
 
     if frame is None:
         raise HTTPException(status_code=400, detail="Could not decode image.")
@@ -453,9 +502,10 @@ async def detect(
     except asyncio.TimeoutError:
         raise HTTPException(status_code=503, detail="Detection service busy")
     try:
-        annotated, detections, violations, compliant = await run_in_threadpool(run_detection, frame, conf, iou)
+        annotated, detections, violations, compliant = await run_in_threadpool(run_detection, frame, conf, iou, return_image)
     finally:
         inference_gate.release()
+    del frame
     inference_ms = round((time.time() - t0) * 1000, 2)
 
     response = {
@@ -472,5 +522,6 @@ async def detect(
 
     if return_image:
         response["annotated_image"] = frame_to_base64(annotated)
+    del annotated, detections, violations, compliant
 
     return JSONResponse(content=response)
