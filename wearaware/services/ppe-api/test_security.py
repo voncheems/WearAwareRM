@@ -7,11 +7,28 @@ import asyncio
 import io
 import json
 import unittest
+from types import SimpleNamespace
+import numpy as np
 from PIL import Image
 import api
 
 class FakeModel:
     names = {0: 'helmet'}
+
+class FakeBox:
+    def __init__(self, class_id, confidence, bbox):
+        self.cls = np.array([class_id])
+        self.conf = np.array([confidence])
+        self.xyxy = np.array([bbox])
+
+class DetectionModel:
+    names = {0: 'helmet', 1: 'human', 2: 'no-helmet', 3: 'vest'}
+
+    def __init__(self, boxes):
+        self.boxes = boxes
+
+    def predict(self, frame, conf, iou, agnostic_nms, verbose):
+        return [SimpleNamespace(boxes=self.boxes)]
 
 async def request(path, body=b'', headers=None, method='GET'):
     sent = []
@@ -39,6 +56,54 @@ def multipart(content):
     return body, {'X-API-Key': os.environ['AI_API_KEY'], 'Content-Type': 'multipart/form-data; boundary=boundary', 'Content-Length': str(len(body))}
 
 class SecurityTests(unittest.IsolatedAsyncioTestCase):
+    def test_human_observation_is_returned_without_becoming_ppe(self):
+        original = api.model
+        api.model = DetectionModel([FakeBox(1, 0.6666, [2, 3, 14, 15])])
+        try:
+            _, detections, violations, compliant = api.run_detection(np.zeros((32, 32, 3), dtype=np.uint8), conf=0.35)
+            self.assertEqual(len(detections), 1)
+            self.assertEqual(detections[0]['class_name'], 'human')
+            self.assertEqual(detections[0]['confidence'], 0.6666)
+            self.assertEqual(detections[0]['bbox'], {'x1': 2, 'y1': 3, 'x2': 14, 'y2': 15})
+            self.assertFalse(detections[0]['violation'])
+            self.assertFalse(detections[0]['inferred'])
+            self.assertEqual(violations, [])
+            self.assertEqual(compliant, [])
+        finally:
+            api.model = original
+
+    def test_ppe_observation_is_preserved_without_a_person(self):
+        original = api.model
+        api.model = DetectionModel([FakeBox(0, 0.8, [4, 5, 18, 20])])
+        try:
+            _, detections, violations, compliant = api.run_detection(np.zeros((32, 32, 3), dtype=np.uint8), conf=0.35)
+            self.assertEqual([item['class_name'] for item in detections], ['helmet', 'no-vest'])
+            self.assertEqual(detections[0]['confidence'], 0.8)
+            self.assertTrue(detections[1]['inferred'])
+            self.assertEqual(violations, ['no-vest'])
+            self.assertEqual(compliant, ['helmet'])
+        finally:
+            api.model = original
+
+    async def test_detect_response_preserves_human_observation_contract(self):
+        api.model = FakeModel()
+        out = io.BytesIO(); Image.new('RGB', (16, 16)).save(out, format='PNG')
+        body, headers = multipart(out.getvalue())
+        human = {
+            'class_id': 1, 'class_name': 'human', 'confidence': 0.6666,
+            'bbox': {'x1': 2, 'y1': 3, 'x2': 14, 'y2': 15},
+            'violation': False, 'inferred': False,
+        }
+        original = api.run_detection
+        api.run_detection = lambda frame, conf, iou: (frame, [human], [], [])
+        try:
+            status, payload = await request('/detect', body, headers, 'POST')
+            self.assertEqual(status, 200)
+            self.assertEqual(payload['detections'], [human])
+            self.assertEqual(payload['total_detections'], 1)
+        finally:
+            api.run_detection = original
+
     async def test_key_required_and_health_readiness(self):
         self.assertEqual((await request('/health'))[0], 401)
         api.model = FakeModel()

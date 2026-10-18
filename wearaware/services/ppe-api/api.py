@@ -216,6 +216,17 @@ def run_detection(frame: np.ndarray, conf: float = 0.40, iou: float = 0.5):
         # model recognises a person while recognising neither helmet nor vest.
         if name in NON_PPE:
             human_boxes.append([x1, y1, x2, y2])
+            # Keep the detector's person observation in the API contract. The
+            # Node backend filters this observation into person_detections and
+            # person_count, while the frontend excludes it from the PPE overlay.
+            detections.append({
+                "class_id"  : cls_id,
+                "class_name": name,
+                "confidence": round(conf_score, 4),
+                "bbox"      : {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+                "violation" : False,
+                "inferred"  : False
+            })
             continue
 
         # Per-class confidence filter
