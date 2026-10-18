@@ -33,8 +33,25 @@ function evaluateCheckpoint(requiredPpe = [], detectedPpe = []) {
   return { required, detected, missing, isCompliant: missing.length === 0 };
 }
 
-function DetectionOverlay({ detections, frameWidth = 640, frameHeight = 480 }) {
-  const boxes = (Array.isArray(detections) ? detections : []).flatMap((detection, index) => {
+function visualDetections(detections, personDetections) {
+  const source = Array.isArray(detections) ? detections : [];
+  const people = (Array.isArray(personDetections) ? personDetections : source)
+    .filter(detection => ['human', 'person'].includes(String(detection?.class_name || '').toLowerCase()));
+  const ppe = source.filter(detection => !['human', 'person'].includes(String(detection?.class_name || '').toLowerCase()));
+  const names = new Set(ppe.map(detection => normalizePpeName(detection?.class_name)).filter(Boolean));
+  const person = people.find(detection => [detection?.bbox?.x1, detection?.bbox?.y1, detection?.bbox?.x2, detection?.bbox?.y2].every(value => Number.isFinite(Number(value))));
+  const values = [person?.bbox?.x1, person?.bbox?.y1, person?.bbox?.x2, person?.bbox?.y2].map(Number);
+  if (!values.every(Number.isFinite)) return ppe;
+  const [x1, y1, x2, y2] = values;
+  const headBottom = y1 + Math.max(40, (y2 - y1) * 0.30);
+  const inferred = [];
+  if (!names.has('helmet') && !names.has('no-helmet')) inferred.push({ class_name: 'no-helmet', confidence: 0, inferred: true, violation: true, bbox: { x1, y1, x2, y2: headBottom } });
+  if (!names.has('vest') && !names.has('no-vest')) inferred.push({ class_name: 'no-vest', confidence: 0, inferred: true, violation: true, bbox: { x1, y1: headBottom, x2, y2 } });
+  return [...ppe, ...inferred];
+}
+
+function DetectionOverlay({ detections, personDetections, frameWidth = 640, frameHeight = 480 }) {
+  const boxes = visualDetections(detections, personDetections).flatMap((detection, index) => {
     // Person detections remain available to the session logic, but the visual
     // overlay should show only PPE boxes.
     const detectionName = String(detection?.class_name || '').toLowerCase();
@@ -458,7 +475,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
     <div className="ppe-detect-grid">
       <div>
         <div className={`ppe-camera-shell ${resultVisible ? manualReview ? 'review' : verdict?.pass ? 'pass' : 'fail' : ''}`}>
-          <div className="ppe-video-stage"><video ref={videoRef} autoPlay muted playsInline />{phase === PHASE.PPE && <DetectionOverlay detections={camResult?.detections} frameWidth={camResult?.frame_width} frameHeight={camResult?.frame_height} />}{phase === PHASE.QR && <div className="ppe-qr-mask"><div className="ppe-qr-target" /></div>}</div>
+          <div className="ppe-video-stage"><video ref={videoRef} autoPlay muted playsInline />{phase === PHASE.PPE && <DetectionOverlay detections={camResult?.detections} personDetections={camResult?.person_detections} frameWidth={camResult?.frame_width} frameHeight={camResult?.frame_height} />}{phase === PHASE.QR && <div className="ppe-qr-mask"><div className="ppe-qr-target" /></div>}</div>
           {scanning && phase === PHASE.PPE && <div className="ppe-scanning-pulse" />}
         </div>
         <div className={`ppe-session-status state-${sessionState}`} role="status" aria-live="polite"><strong>{phase === PHASE.QR ? identifying ? 'VERIFYING EMPLOYEE' : 'SCAN EMPLOYEE QR' : statusTitle}</strong><span>{phase === PHASE.QR ? identifying ? 'Checking the secure QR token with WearAware.' : 'Hold the employee QR card steady in front of the camera.' : statusDetail}</span></div>
