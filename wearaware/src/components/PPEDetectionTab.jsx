@@ -104,6 +104,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
   const busyRef = useRef(false);
   const ppeLoopRef = useRef(null);
   const qrLoopRef = useRef(null);
+  const lastPersonObservationRef = useRef(0);
   const phaseRef = useRef(phase);
   const workerRef = useRef(worker);
   const checkpointRef = useRef(checkpoint);
@@ -184,6 +185,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
     clearTimers();
     sessionRef.current = null;
     identificationLockRef.current = false;
+    lastPersonObservationRef.current = 0;
     busyRef.current = false;
     setSaving(false); setScanning(false); setVerdict(null); setCamResult(null); setFrameCount(0); setScanProgress(0);
     setTimeLeft(Math.ceil(SCAN_SESSION_CONFIG.scanDurationMs / 1000)); setResetCountdown(0); setQrError(''); setManualEmployeeId(''); setIdentifying(false);
@@ -370,7 +372,9 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
         && Number(detection?.confidence) >= SCAN_SESSION_CONFIG.detectionConfidence
         && Number(detection?.confidence) < SCAN_SESSION_CONFIG.minimumConfidence)
         .map(detection => normalizePpeName(detection?.class_name)).filter(item => item && requiredSet.has(item)))];
-      setCamResult({ ...observation, compliant: evaluation.detected, uncertain, violations: evaluation.missing.filter(item => !uncertain.includes(item)), is_checkpoint_compliant: evaluation.isCompliant && !uncertain.length });
+      if (personCount === 1) lastPersonObservationRef.current = Date.now();
+      const holdLastOverlay = personCount === 0 && Date.now() - lastPersonObservationRef.current < 1800;
+      setCamResult(previous => holdLastOverlay && previous ? previous : { ...observation, compliant: evaluation.detected, uncertain, violations: evaluation.missing.filter(item => !uncertain.includes(item)), is_checkpoint_compliant: evaluation.isCompliant && !uncertain.length });
       const state = sessionStateRef.current;
       if ([SCAN_SESSION_STATE.IDLE, SCAN_SESSION_STATE.MULTIPLE_PEOPLE].includes(state)) {
         if (personCount > 1) { transition(SCAN_SESSION_STATE.MULTIPLE_PEOPLE); return; }
