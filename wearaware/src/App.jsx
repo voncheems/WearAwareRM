@@ -3,7 +3,6 @@ import { API } from './config/api';
 import React, { useState, useEffect } from 'react';
 import UserDashboard from './components/UserDashboard';
 import LandingPage from './components/LandingPage';
-import AboutUs from './components/AboutUs';
 import './PageTransitions.css';
 import LoginPage from './components/LoginPage';
 import OurProjects from './components/OurProjects';
@@ -100,7 +99,6 @@ function App() {
       <div className={`page-container ${isTransitioning ? 'page-exit' : 'page-enter'}`}>
         {currentPage === 'landing'    && <LandingPage        setCurrentPage={handlePageChange} />}
         {currentPage === 'login'      && <LoginPage          setCurrentPage={handlePageChange} />}
-        {currentPage === 'about'      && <AboutUs            setCurrentPage={handlePageChange} />}
         {currentPage === 'projects'   && <OurProjects        setCurrentPage={handlePageChange} />}
         {currentPage === 'expertise'  && <ExpertisePage      setCurrentPage={handlePageChange} />}
         {currentPage === 'contact'    && <ContactPage        setCurrentPage={handlePageChange} />}

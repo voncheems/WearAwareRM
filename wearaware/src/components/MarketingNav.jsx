@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, Menu, X } from 'lucide-react';
 
-const links = [['about', 'About us'], ['projects', 'Our projects'], ['expertise', 'Expertise'], ['contact', 'Get in touch']];
+const links = [['projects', 'Our projects'], ['expertise', 'Expertise'], ['contact', 'Get in touch']];
 
 export default function MarketingNav({ currentPage, setCurrentPage }) {
   const [open, setOpen] = useState(false);

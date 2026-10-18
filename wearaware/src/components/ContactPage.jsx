@@ -222,8 +222,8 @@ function ContactPage({ setCurrentPage }) {
               <p style={{ color: 'rgba(255,255,255,0.75)', fontSize: '0.95rem', lineHeight: 1.7, marginBottom: '1.5rem' }}>
                 WearAware is a capstone project by Group 4 - BSIT 2-07, built to demonstrate AI-assisted PPE compliance monitoring for workplace safety.
               </p>
-              <a href="#" className="btn btn-primary" onClick={(e) => handleNav(e, 'about')}>
-                Meet the Team
+              <a href="#" className="btn btn-primary" onClick={(e) => handleNav(e, 'projects')}>
+                Explore Our Projects
               </a>
             </div>
           </div>
