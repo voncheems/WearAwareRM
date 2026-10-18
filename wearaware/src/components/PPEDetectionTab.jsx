@@ -394,7 +394,8 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
       }
     };
     const detect = async () => {
-      if (stopped || busyRef.current || !videoRef.current || !runningRef.current || phaseRef.current !== PHASE.PPE) return;
+      const activeStates = [SCAN_SESSION_STATE.IDLE, SCAN_SESSION_STATE.PERSON_DETECTED, SCAN_SESSION_STATE.SCANNING, SCAN_SESSION_STATE.MULTIPLE_PEOPLE, SCAN_SESSION_STATE.WAITING_FOR_EXIT];
+      if (stopped || busyRef.current || !videoRef.current || !runningRef.current || phaseRef.current !== PHASE.PPE || !activeStates.includes(sessionStateRef.current)) return;
       busyRef.current = true; setScanning(true);
       const canvas = document.createElement('canvas'); canvas.width = 640; canvas.height = 480;
       canvas.getContext('2d').drawImage(videoRef.current, 0, 0, 640, 480);
