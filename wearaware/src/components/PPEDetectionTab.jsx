@@ -370,6 +370,18 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
         }
         session.absentSince = null;
         addFrame(session, observation, canvas);
+        if (session.frames.length >= SCAN_SESSION_CONFIG.minimumFrames) {
+          const earlyResult = aggregateSessionFrames(
+            session.frames,
+            checkpointRef.current?.required_ppe,
+            SCAN_SESSION_CONFIG,
+            { multiplePeopleDetected: session.multiplePeopleDetected },
+          );
+          if (!earlyResult.manual_review_required && ['compliant', 'violation'].includes(earlyResult.result)) {
+            clearTimers();
+            finishScan(session);
+          }
+        }
         return;
       }
       if (state === SCAN_SESSION_STATE.WAITING_FOR_EXIT) {
