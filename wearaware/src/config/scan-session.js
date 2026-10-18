@@ -61,11 +61,13 @@ function isPersonSufficientlyVisible(frame, required, config) {
   const values = [box?.x1, box?.y1, box?.x2, box?.y2].map(Number);
   if (!values.every(Number.isFinite)) return false;
   const [x1, y1, x2, y2] = values;
-  const areaRatio = Math.max(0, x2 - x1) * Math.max(0, y2 - y1) / (640 * 480);
+  const frameWidth = Number(frame?.frame_width) || 640;
+  const frameHeight = Number(frame?.frame_height) || 480;
+  const areaRatio = Math.max(0, x2 - x1) * Math.max(0, y2 - y1) / (frameWidth * frameHeight);
   const margin = config.frameEdgeMarginPixels;
-  const sideClipped = x1 <= margin || x2 >= 640 - margin;
+  const sideClipped = x1 <= margin || x2 >= frameWidth - margin;
   const topClipped = required.includes('helmet') && y1 <= margin;
-  const bottomClipped = required.includes('boots') && y2 >= 480 - margin;
+  const bottomClipped = required.includes('boots') && y2 >= frameHeight - margin;
   return areaRatio >= config.minimumPersonAreaRatio && !sideClipped && !topClipped && !bottomClipped;
 }
 

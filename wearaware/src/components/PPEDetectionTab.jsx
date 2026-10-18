@@ -33,7 +33,7 @@ function evaluateCheckpoint(requiredPpe = [], detectedPpe = []) {
   return { required, detected, missing, isCompliant: missing.length === 0 };
 }
 
-function DetectionOverlay({ detections }) {
+function DetectionOverlay({ detections, frameWidth = 640, frameHeight = 480 }) {
   const boxes = (Array.isArray(detections) ? detections : []).flatMap((detection, index) => {
     // Person detections remain available to the session logic, but the visual
     // overlay should show only PPE boxes.
@@ -43,10 +43,10 @@ function DetectionOverlay({ detections }) {
     const values = [box?.x1, box?.y1, box?.x2, box?.y2].map(Number);
     if (!values.every(Number.isFinite)) return [];
     const [x1, y1, x2, y2] = values;
-    const left = Math.max(0, Math.min(100, x1 / 640 * 100));
-    const top = Math.max(0, Math.min(100, y1 / 480 * 100));
-    const right = Math.max(left, Math.min(100, x2 / 640 * 100));
-    const bottom = Math.max(top, Math.min(100, y2 / 480 * 100));
+    const left = Math.max(0, Math.min(100, x1 / frameWidth * 100));
+    const top = Math.max(0, Math.min(100, y1 / frameHeight * 100));
+    const right = Math.max(left, Math.min(100, x2 / frameWidth * 100));
+    const bottom = Math.max(top, Math.min(100, y2 / frameHeight * 100));
     if (right - left < 0.5 || bottom - top < 0.5) return [];
     return [{ detection, index, left, top, width: right - left, height: bottom - top }];
   });
@@ -344,7 +344,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
     };
     const processObservation = (data, canvas) => {
       const personCount = Number.isInteger(data.person_count) ? data.person_count : (data.detections || []).filter(detection => ['human', 'person'].includes(String(detection.class_name).toLowerCase())).length;
-      const observation = { ...data, person_count: personCount };
+      const observation = { ...data, person_count: personCount, frame_width: canvas.width, frame_height: canvas.height };
       const evaluation = evaluateCheckpoint(checkpointRef.current?.required_ppe, data.detected_ppe);
       const requiredSet = new Set(evaluation.required);
       const uncertain = [...new Set((data.detections || []).filter(detection => detection?.inferred !== true
@@ -397,8 +397,10 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
       const activeStates = [SCAN_SESSION_STATE.IDLE, SCAN_SESSION_STATE.PERSON_DETECTED, SCAN_SESSION_STATE.SCANNING, SCAN_SESSION_STATE.MULTIPLE_PEOPLE, SCAN_SESSION_STATE.WAITING_FOR_EXIT];
       if (stopped || busyRef.current || !videoRef.current || !runningRef.current || phaseRef.current !== PHASE.PPE || !activeStates.includes(sessionStateRef.current)) return;
       busyRef.current = true; setScanning(true);
-      const canvas = document.createElement('canvas'); canvas.width = 640; canvas.height = 480;
-      canvas.getContext('2d').drawImage(videoRef.current, 0, 0, 640, 480);
+      const canvas = document.createElement('canvas');
+      canvas.width = 640;
+      canvas.height = Math.max(1, Math.round(canvas.width * ((videoRef.current.videoHeight || 480) / (videoRef.current.videoWidth || 640))));
+      canvas.getContext('2d').drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
       try {
         const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.82));
         if (!blob || stopped || effectCycle !== cycleRef.current) return;
@@ -454,7 +456,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
     <div className="ppe-detect-grid">
       <div>
         <div className={`ppe-camera-shell ${resultVisible ? manualReview ? 'review' : verdict?.pass ? 'pass' : 'fail' : ''}`}>
-          <div className="ppe-video-stage"><video ref={videoRef} autoPlay muted playsInline />{phase === PHASE.PPE && <DetectionOverlay detections={camResult?.detections} />}{phase === PHASE.QR && <div className="ppe-qr-mask"><div className="ppe-qr-target" /></div>}</div>
+          <div className="ppe-video-stage"><video ref={videoRef} autoPlay muted playsInline />{phase === PHASE.PPE && <DetectionOverlay detections={camResult?.detections} frameWidth={camResult?.frame_width} frameHeight={camResult?.frame_height} />}{phase === PHASE.QR && <div className="ppe-qr-mask"><div className="ppe-qr-target" /></div>}</div>
           {scanning && phase === PHASE.PPE && <div className="ppe-scanning-pulse" />}
         </div>
         <div className={`ppe-session-status state-${sessionState}`} role="status" aria-live="polite"><strong>{phase === PHASE.QR ? identifying ? 'VERIFYING EMPLOYEE' : 'SCAN EMPLOYEE QR' : statusTitle}</strong><span>{phase === PHASE.QR ? identifying ? 'Checking the secure QR token with WearAware.' : 'Hold the employee QR card steady in front of the camera.' : statusDetail}</span></div>
