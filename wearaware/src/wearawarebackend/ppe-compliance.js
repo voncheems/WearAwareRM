@@ -42,7 +42,14 @@ function normalizeAiObservations(values = []) {
 // Retain weak observations so session aggregation can distinguish uncertainty
 // from a PPE item that was never observed.
 function filterAiObservations(detections = []) {
-  const candidates = (Array.isArray(detections) ? detections : []).filter(detection => {
+  const source = Array.isArray(detections) ? detections : [];
+  const hasPersonAnchor = source.some(detection => {
+    const name = normalizePpeName(detection?.class_name);
+    const confidence = Number(detection?.confidence);
+    return ['human', 'person'].includes(name) && detection?.inferred !== true
+      && Number.isFinite(confidence) && confidence >= PERSON_MIN_CONFIDENCE;
+  });
+  const candidates = source.filter(detection => {
     const name = normalizePpeName(detection?.class_name);
     if (!name || name === 'human' || name === 'person') return false;
     if (detection.inferred === true) return true;
@@ -55,8 +62,12 @@ function filterAiObservations(detections = []) {
   return candidates.filter(detection => {
     if (detection.inferred !== true) return true;
     const name = normalizePpeName(detection.class_name);
-    if (name === 'no-vest') return hasHeadAnchor;
-    if (name === 'no-helmet') return hasVestAnchor;
+    // The detector can infer both missing PPE boxes from a confident person
+    // box when neither item is visible. Keep those boxes for the camera
+    // overlay and compliance evidence, while still filtering out the person
+    // box itself from PPE observations.
+    if (name === 'no-vest') return hasHeadAnchor || hasPersonAnchor;
+    if (name === 'no-helmet') return hasVestAnchor || hasPersonAnchor;
     return false;
   });
 }
@@ -67,10 +78,12 @@ function filterAiDetections(detections = []) {
     && Number(detection.confidence) >= confidenceConfig.minimumDetectionConfidence);
   const hasHeadAnchor = confirmed.some(detection => ['helmet', 'no-helmet'].includes(normalizePpeName(detection.class_name)));
   const hasVestAnchor = confirmed.some(detection => normalizePpeName(detection.class_name) === 'vest');
+  const hasPersonAnchor = filterPersonDetections(detections).length > 0;
   return [...confirmed, ...observations.filter(detection => {
     if (detection.inferred !== true) return false;
     const name = normalizePpeName(detection.class_name);
-    return (name === 'no-vest' && hasHeadAnchor) || (name === 'no-helmet' && hasVestAnchor);
+    return (name === 'no-vest' && (hasHeadAnchor || hasPersonAnchor))
+      || (name === 'no-helmet' && (hasVestAnchor || hasPersonAnchor));
   })];
 }
 

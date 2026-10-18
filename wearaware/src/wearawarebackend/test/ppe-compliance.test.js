@@ -59,6 +59,16 @@ test('low-confidence forehead helmet matches and their inferred violations are r
   assert.deepEqual(actualHelmet.map(item => item.class_name), ['helmet', 'no-vest']);
 });
 
+test('confident person-only detections retain inferred missing helmet and vest boxes', () => {
+  const detections = [
+    { class_name: 'human', confidence: 0.6666, bbox: { x1: 202, y1: 151, x2: 465, y2: 360 } },
+    { class_name: 'no-helmet', confidence: 0, inferred: true, bbox: { x1: 202, y1: 151, x2: 465, y2: 214 } },
+    { class_name: 'no-vest', confidence: 0, inferred: true, bbox: { x1: 202, y1: 214, x2: 465, y2: 360 } },
+  ];
+  assert.deepEqual(filterAiObservations(detections).map(item => item.class_name), ['no-helmet', 'no-vest']);
+  assert.deepEqual(filterAiDetections(detections).map(item => item.class_name), ['no-helmet', 'no-vest']);
+});
+
 test('person observations are exposed separately and require stable confidence', () => {
   const people = filterPersonDetections([
     { class_name: 'human', confidence: 0.91 },
