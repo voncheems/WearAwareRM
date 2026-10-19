@@ -547,6 +547,108 @@ test('AI uploads require an authorized scanning account and forward confidence a
     assert.equal((await send(token(6, 'scanner'), 2 * 1024 * 1024 + 1)).status, 413);
   } finally { await new Promise(r => mock.close(r)); }
 });
+test('AI failures and malformed responses remain service errors without creating incidents', async () => {
+  const originalFetch = global.fetch;
+  const previousUrl = process.env.AI_API_URL;
+  process.env.AI_API_URL = 'https://ai.example.test';
+  let upstream;
+  const beforeCount = await db.collection('detections').countDocuments();
+  global.fetch = (url, options) => String(url).startsWith('https://ai.example.test/') ? upstream() : originalFetch(url, options);
+  const send = () => {
+    const form = new FormData();
+    form.append('file', new Blob([new Uint8Array(16)], { type: 'image/jpeg' }), 'frame.jpg');
+    return originalFetch(base + '/api/ppe/detect', { method: 'POST', headers: { Authorization: `Bearer ${token(6, 'scanner')}` }, body: form });
+  };
+  try {
+    for (const status of [401, 503]) {
+      upstream = async () => new Response('private upstream details', { status });
+      const response = await send();
+      assert.equal(response.status, 503);
+      assert.equal((await response.json()).error, 'Detection service is unavailable. Please retry the scan.');
+    }
+    for (const body of ['not json', 'null', '{}',
+      JSON.stringify({ detections: [null], total_detections: 1 }),
+      JSON.stringify({ detections: [], total_detections: -1 }),
+      JSON.stringify({ detections: [{ class_name: 'human', confidence: 1.1 }], total_detections: 1 }),
+      JSON.stringify({ detections: [{ class_name: 'human', confidence: 0.9, bbox: { x1: 10, y1: 10, x2: 5, y2: 20 } }], total_detections: 1 }),
+    ]) {
+      upstream = async () => new Response(body, { status: 200 });
+      const response = await send();
+      assert.equal(response.status, 502);
+      assert.equal((await response.json()).error, 'Invalid detection service response.');
+    }
+    for (const name of ['TimeoutError', 'TypeError']) {
+      upstream = async () => { const error = new Error('private diagnostic'); error.name = name; throw error; };
+      assert.equal((await send()).status, 503);
+    }
+    upstream = async () => Response.json({ detections: [], total_detections: 0 });
+    const empty = await (await send()).json();
+    assert.equal(empty.person_count, 0);
+    assert.deepEqual(empty.detected_ppe, []);
+    assert.equal('result' in empty, false);
+    for (const [detections, count] of [
+      [[{ class_name: 'helmet', confidence: 0.9 }], 0],
+      [[{ class_name: 'human', confidence: 0.49 }, { class_name: 'vest', confidence: 0.9 }], 0],
+      [[{ class_name: 'human', confidence: 0.9 }, { class_name: 'human', confidence: 0.8 }], 2],
+    ]) {
+      // Ignore any untrusted upstream person_count; derive it from validated evidence.
+      upstream = async () => Response.json({ detections, total_detections: detections.length, person_count: 99 });
+      const response = await (await send()).json();
+      assert.equal(response.person_count, count);
+      assert.equal(response.person_detections.length, count);
+    }
+    assert.equal(await db.collection('detections').countDocuments(), beforeCount);
+  } finally {
+    global.fetch = originalFetch;
+    if (previousUrl === undefined) delete process.env.AI_API_URL;
+    else process.env.AI_API_URL = previousUrl;
+  }
+});
+
+test('finalized scans persist compliance, risk and review independently and concurrent retries stay unique', async () => {
+  const scanner = token(6, 'scanner');
+  const ruleResponse = await call('/api/admin/risk-rules', token(1, 'admin'), 'POST', {
+    name: 'Phase 2 integration missing vest', condition_type: 'missing_ppe', ppe_item: 'vest',
+    checkpoint_id: 1, profile_id: null, severity: 'Critical', is_active: true,
+  });
+  assert.equal(ruleResponse.status, 201);
+  const rule = await ruleResponse.json();
+  for (const result of ['compliant', 'violation', 'manual_review']) {
+    const sessionId = require('node:crypto').randomUUID();
+    const payload = {
+      worker_id: 11, checkpoint_id: 1, scan_session_id: sessionId,
+      frame_count: 4, confidence_score: 0.9, visibility_score: 1,
+      confidence_summary: [
+        { ppe: 'helmet', average_confidence: 0.9, positive_frames: 4, weak_frames: 0, observed_frames: 4 },
+        { ppe: 'vest', average_confidence: result === 'compliant' ? 0.9 : result === 'manual_review' ? 0.4 : 0,
+          positive_frames: result === 'compliant' ? 4 : 0, weak_frames: result === 'manual_review' ? 4 : 0,
+          observed_frames: result === 'violation' ? 0 : 4 },
+      ],
+    };
+    const responses = await Promise.all(Array.from({ length: 3 }, () => call('/api/detections', scanner, 'POST', payload)));
+    for (const response of responses) assert.ok([200, 201].includes(response.status), JSON.stringify(await response.clone().json()));
+    const records = await db.collection('detections').find({ scan_session_id: sessionId }).toArray();
+    assert.equal(records.length, 1);
+    const record = records[0];
+    assert.equal(record.result, result);
+    assert.equal(record.ai_result, result);
+    assert.equal(record.authorization_status, result === 'compliant' ? 'authorized' : result === 'violation' ? 'denied' : 'pending_inspection');
+    assert.equal(record.review_status, result === 'manual_review' ? 'pending' : 'not_required');
+    assert.equal(record.risk_status, result === 'compliant' ? 'not_applicable' : result === 'violation' ? 'matched' : 'deferred');
+    if (result === 'violation') {
+      assert.equal(record.risk_severity, 'Critical');
+      assert.equal(record.risk_rule_snapshot.id, rule.id);
+      assert.equal(record.risk_rule_snapshot.severity, 'Critical');
+    }
+    if (result === 'manual_review') {
+      assert.deepEqual(record.missing_ppe, []);
+      assert.deepEqual(record.uncertain_ppe, ['vest']);
+      assert.equal(record.risk_severity, null);
+    }
+    assert.equal(await db.collection('notifications').countDocuments({ detection_id: record.id }), result === 'compliant' ? 0 : 1);
+  }
+});
+
 test('legacy plaintext cleanup revokes access and strict database validation rejects unsafe records', async () => {
   await db.collection('password_reset_requests').insertOne({ id: 99, email: 'legacy@example.test', status: 'resolved', temp_password: 'exposed-value' });
   const { cleanLegacyPasswords, applyDatabaseSecurity, ensureCheckpointData } = require('../database-security');

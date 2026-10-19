@@ -4,6 +4,7 @@ import jsQRDecoder from 'jsqr';
 import { API } from '../config/api';
 import { aggregateSessionFrames, frameEvidenceScore, normalizePpeName, SCAN_SESSION_CONFIG, SCAN_SESSION_STATE, sessionStatusCopy } from '../config/scan-session';
 import { ALERT_TYPES, emitLocalAlert } from '../utils/local-alerts';
+import { getPersonCount, scanAlertType, summarizeScans } from '../utils/scanner-contract';
 
 const DETECTION_TIMEOUT_MS = 35000;
 const WORKER_LOOKUP_TIMEOUT_MS = 30000;
@@ -16,14 +17,6 @@ const AUTHORIZATION_COPY = Object.freeze({
   denied: { title: 'ENTRY DENIED', detail: 'Required PPE must be corrected before entry.', icon: '✕' },
   pending_inspection: { title: 'ENTRY NOT YET CLEARED', detail: 'Manual inspection is required before entry.', icon: '!' },
 });
-
-function normalizeAlertType(alertType, result) {
-  const value = String(alertType || '').trim().toLowerCase();
-  if (Object.values(ALERT_TYPES).includes(value)) return value;
-  if (result === 'compliant') return ALERT_TYPES.COMPLIANT;
-  if (result === 'violation' || result === 'non_compliant') return ALERT_TYPES.NON_COMPLIANT;
-  return ALERT_TYPES.MANUAL_REVIEW;
-}
 
 function diagnosticLog(event, details = {}) {
   if (!PPE_DIAGNOSTICS_ENABLED) return;
@@ -53,18 +46,6 @@ function evaluateCheckpoint(requiredPpe = [], detectedPpe = []) {
   const present = new Set(detected);
   const missing = required.filter(item => !present.has(item));
   return { required, detected, missing, isCompliant: missing.length === 0 };
-}
-
-// AI deployments have returned person information in either person_count,
-// person_detections, or the general detections array over time. Keep the
-// session trigger compatible with all three response shapes so a visible
-// person cannot leave the scanner stuck in READY FOR SCANNING.
-function getPersonCount(data = {}) {
-  const explicitCount = Number(data.person_count);
-  if (Number.isFinite(explicitCount) && explicitCount > 0) return Math.floor(explicitCount);
-  if (Array.isArray(data.person_detections) && data.person_detections.length > 0) return data.person_detections.length;
-  return (Array.isArray(data.detections) ? data.detections : [])
-    .filter(detection => ['human', 'person'].includes(String(detection?.class_name || '').toLowerCase())).length;
 }
 
 function visualDetections(detections, personDetections) {
@@ -349,12 +330,12 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
       // alert_type alias. Normalize both fields so manual-review records are
       // counted in the scanner summary exactly like they are in the inspector
       // dashboard.
-      const alertType = normalizeAlertType(saved.alert_type || aggregate.alert_type, saved.result || aggregate.result);
-      const pass = saved.result === 'compliant';
+      const alertType = scanAlertType(saved.result || aggregate.result, saved.alert_type || aggregate.alert_type);
+      const pass = alertType === ALERT_TYPES.COMPLIANT;
       if (!AUTHORIZATION_COPY[saved.authorization_status]) throw new Error('The backend did not return a valid entry authorization decision. Please perform a manual inspection.');
       const finalVerdict = { pass, alertType, authorizationStatus: saved.authorization_status, authorizationEvent: saved.authorization_event, missing: saved.missing_ppe || aggregate.missing_ppe, uncertain: saved.uncertain_ppe || aggregate.uncertain_ppe, reason: saved.manual_review_message || aggregate.manual_review_message, detected: saved.detected_ppe || aggregate.detected_ppe, required: saved.required_ppe || aggregate.required_ppe, confidence: aggregate.confidence_score, frameCount: aggregate.frame_count, repeatViolation: saved.repeat_violation || null };
       setVerdict(finalVerdict);
-      setSessionLog(previous => [{ id: session.id, time: new Date().toLocaleTimeString(), workerName: workerRef.current?.full_name || 'Unknown', employeeId: workerRef.current?.employee_id || '—', pass, result: saved.result || aggregate.result, alertType, authorizationStatus: finalVerdict.authorizationStatus, missing: finalVerdict.missing }, ...previous].slice(0, 50));
+      setSessionLog(previous => [{ id: session.id, time: new Date().toLocaleTimeString(), workerName: workerRef.current?.full_name || 'Unknown', employeeId: workerRef.current?.employee_id || '—', pass, result: saved.result || aggregate.result, alertType, authorizationStatus: finalVerdict.authorizationStatus, missing: finalVerdict.missing }, ...previous.filter(entry => entry.id !== session.id)].slice(0, 50));
       if (!session.alertEmitted) {
         session.alertEmitted = true;
         await emitLocalAlert({ alertType, authorizationStatus: finalVerdict.authorizationStatus, authorizationEvent: finalVerdict.authorizationEvent, detectionId: saved.detection_id, scanSessionId: session.id, checkpoint: saved.checkpoint || checkpointRef.current, worker: { id: workerRef.current?.id, employeeId: workerRef.current?.employee_id, name: workerRef.current?.full_name }, missingPpe: finalVerdict.missing, uncertainPpe: finalVerdict.uncertain, detectedPpe: finalVerdict.detected, reason: finalVerdict.reason, occurredAt: session.endedAt.toISOString() }, soundEnabled);
@@ -412,7 +393,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
       schedule(beginCooldown, SCAN_SESSION_CONFIG.incompleteMessageMs);
     };
     const processObservation = (data, canvas, frameSequence) => {
-      const personCount = getPersonCount(data);
+      const personCount = getPersonCount(data, SCAN_SESSION_CONFIG.personConfidence);
       const observation = { ...data, person_count: personCount, frame_width: canvas.width, frame_height: canvas.height };
       const evaluation = evaluateCheckpoint(checkpointRef.current?.required_ppe, data.detected_ppe);
       const requiredSet = new Set(evaluation.required);
@@ -521,12 +502,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
     return () => { stopped = true; requestControllerRef.current?.abort(); window.clearInterval(ppeLoopRef.current); busyRef.current = false; };
   }, [beginCooldown, cameraReady, clearTimers, finishScan, phase, scanCycle, schedule, transition, worker]);
 
-  const totalScans = sessionLog.length;
-  const totalPassed = sessionLog.filter(entry => entry.pass || entry.result === 'compliant' || entry.alertType === ALERT_TYPES.COMPLIANT).length;
-  const totalFailed = sessionLog.filter(entry => entry.alertType === ALERT_TYPES.NON_COMPLIANT || entry.result === 'violation' || entry.result === 'non_compliant').length;
-  const totalReview = sessionLog.filter(entry => entry.alertType === ALERT_TYPES.MANUAL_REVIEW || entry.result === 'manual_review').length;
-  const decidedScans = totalPassed + totalFailed;
-  const complianceRate = decidedScans ? Math.round(totalPassed / decidedScans * 100) : 100;
+  const { totalScans, totalPassed, totalFailed, totalReview, complianceRate } = summarizeScans(sessionLog);
   const manualReview = verdict?.alertType === ALERT_TYPES.MANUAL_REVIEW;
   const authorizationCopy = AUTHORIZATION_COPY[verdict?.authorizationStatus] || null;
   const resultVisible = [SCAN_SESSION_STATE.PROCESSING, SCAN_SESSION_STATE.RESULT, SCAN_SESSION_STATE.WAITING_FOR_EXIT, SCAN_SESSION_STATE.RESETTING, SCAN_SESSION_STATE.INCOMPLETE].includes(sessionState);

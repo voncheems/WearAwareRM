@@ -329,7 +329,7 @@ def run_detection(frame: np.ndarray, conf: float = 0.40, iou: float = 0.5, retur
                 "class_id"  : -1,
                 "class_name": "no-vest",
                 "confidence": 0.0,
-                "bbox"      : {"x1": nx1, "y1": ny1, "x2": nx2, "y2": ny2},
+                "bbox"      : inferred_box,
                 "violation" : True,
                 "inferred"  : True
             })
@@ -364,7 +364,7 @@ def run_detection(frame: np.ndarray, conf: float = 0.40, iou: float = 0.5, retur
                 "class_id"  : -1,
                 "class_name": "no-helmet",
                 "confidence": 0.0,
-                "bbox"      : {"x1": nx1, "y1": ny1, "x2": nx2, "y2": ny2},
+                "bbox"      : inferred_box,
                 "violation" : True,
                 "inferred"  : True
             })
@@ -510,6 +510,12 @@ async def detect(
 
     response = {
         "detections"       : detections,
+        # Keep the person portion of the response explicit at the AI boundary.
+        # These values are derived only from model observations; no PPE box is
+        # treated as a person. Express still performs its own validation and
+        # filtering before evaluating checkpoint compliance.
+        "person_detections": [item for item in detections if item.get("class_name", "").lower() in ("human", "person")],
+        "person_count"     : sum(1 for item in detections if item.get("class_name", "").lower() in ("human", "person")),
         "violations"       : list(set(violations)),
         "compliant"        : list(set(compliant)),
         "is_compliant"     : len(violations) == 0,

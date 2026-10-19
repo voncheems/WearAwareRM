@@ -5,6 +5,22 @@ const { limiter } = require('../security');
 const { confidenceConfig, detectedPpeFromAi, filterAiDetections, filterAiObservations, filterPersonDetections } = require('../ppe-compliance');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 2, fieldSize: 1200, parts: 3 },
   fileFilter(req, file, cb) { cb(null, ['image/jpeg', 'image/png'].includes(file.mimetype)); } });
+
+function validAiResponse(result) {
+  if (!result || !Array.isArray(result.detections) || !Number.isInteger(result.total_detections)
+    || result.total_detections !== result.detections.length) return false;
+  if (['requested_ppe', 'unsupported_ppe'].some(key => result[key] !== undefined
+    && (!Array.isArray(result[key]) || result[key].some(item => typeof item !== 'string')))) return false;
+  return result.detections.every(item => {
+    if (!item || typeof item.class_name !== 'string' || !item.class_name.trim()
+      || !Number.isFinite(item.confidence) || item.confidence < 0 || item.confidence > 1) return false;
+    if (item.inferred !== undefined && typeof item.inferred !== 'boolean') return false;
+    if (item.bbox === undefined) return true; // Legacy upstreams may omit boxes.
+    const box = item.bbox;
+    return box && [box.x1, box.y1, box.x2, box.y2].every(Number.isFinite)
+      && box.x1 >= 0 && box.y1 >= 0 && box.x2 > box.x1 && box.y2 > box.y1;
+  });
+}
 router.post('/detect', requireAuth, requireRole('scanner'), limiter(60, 60 * 1000, { keyGenerator: req => String(req.user.id) }), upload.single('file'), async (req, res, next) => {
   if (!req.file) return res.status(400).json({ error: 'Upload one JPEG or PNG image (maximum 2 MB).' });
   const conf = Number(req.body.conf ?? confidenceConfig.observationConfidence);
@@ -29,8 +45,8 @@ router.post('/detect', requireAuth, requireRole('scanner'), limiter(60, 60 * 100
     form.append('file', new Blob([req.file.buffer], { type: req.file.mimetype }), 'ppe-image');
     const response = await fetch(url, { method: 'POST', headers: { 'X-API-Key': process.env.AI_API_KEY }, body: form, signal: AbortSignal.timeout(25000), redirect: 'error' });
     if (!response.ok) return res.status(503).json({ error: 'Detection service is unavailable. Please retry the scan.' });
-    const result = await response.json();
-    if (!Array.isArray(result.detections) || !Number.isInteger(result.total_detections)) return res.status(502).json({ error: 'Invalid detection service response.' });
+    const result = await response.json().catch(() => null);
+    if (!validAiResponse(result)) return res.status(502).json({ error: 'Invalid detection service response.' });
     const ppeObservations = filterAiObservations(result.detections);
     const ppeDetections = filterAiDetections(result.detections);
     const personDetections = filterPersonDetections(result.detections);

@@ -15,6 +15,7 @@ export const SCAN_SESSION_STATE = Object.freeze({
 export const SCAN_SESSION_CONFIG = Object.freeze({
   inferenceIntervalMs: 1000,
   detectionConfidence: confidenceConfig.observationConfidence,
+  personConfidence: confidenceConfig.personConfidence,
   minimumConfidence: confidenceConfig.minimumDetectionConfidence,
   manualReviewConfidence: confidenceConfig.manualReviewConfidence,
   personDetectedDelayMs: 300,

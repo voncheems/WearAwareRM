@@ -110,6 +110,8 @@ class SecurityTests(unittest.IsolatedAsyncioTestCase):
             status, payload = await request('/detect', body, headers, 'POST')
             self.assertEqual(status, 200)
             self.assertEqual(payload['detections'], [human])
+            self.assertEqual(payload['person_detections'], [human])
+            self.assertEqual(payload['person_count'], 1)
             self.assertEqual(payload['total_detections'], 1)
         finally:
             api.run_detection = original
@@ -124,6 +126,42 @@ class SecurityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await request('/health', headers={'X-API-Key': os.environ['AI_API_KEY']}))[0], 503)
         api.model = FakeModel()
         self.assertEqual((await request('/health', headers={'X-API-Key': os.environ['AI_API_KEY']}))[0], 200)
+
+    def test_resized_inferred_boxes_use_uploaded_image_coordinates(self):
+        original = api.model
+        try:
+            for class_id, expected in [(0, 'no-vest'), (3, 'no-helmet')]:
+                api.model = DetectionModel([FakeBox(class_id, 0.9, [100, 100, 200, 200])])
+                _, large, _, _ = api.run_detection(np.zeros((960, 1280, 3), dtype=np.uint8), return_image=False)
+                _, small, _, _ = api.run_detection(np.zeros((480, 640, 3), dtype=np.uint8), return_image=False)
+                large_box = next(item['bbox'] for item in large if item['class_name'] == expected)
+                small_box = next(item['bbox'] for item in small if item['class_name'] == expected)
+                self.assertEqual(large_box, {key: value * 2 for key, value in small_box.items()})
+        finally:
+            api.model = original
+
+    async def test_person_count_is_raw_model_evidence_and_ppe_is_not_a_person(self):
+        original = api.run_detection
+        original_model = api.model
+        api.model = FakeModel()
+        out = io.BytesIO(); Image.new('RGB', (16, 16)).save(out, format='PNG')
+        body, headers = multipart(out.getvalue())
+        try:
+            for detections, expected_count in [
+                ([], 0),
+                ([{'class_name': 'helmet', 'confidence': 0.9}], 0),
+                ([{'class_name': 'human', 'confidence': 0.49}], 1),
+                ([{'class_name': 'human', 'confidence': 0.9}, {'class_name': 'human', 'confidence': 0.8}], 2),
+            ]:
+                api.run_detection = lambda *args: (None, detections, [], [])
+                status, payload = await request('/detect?return_image=false', body, headers, 'POST')
+                self.assertEqual(status, 200)
+                self.assertEqual(payload['person_count'], expected_count)
+                self.assertEqual(len(payload['person_detections']), expected_count)
+                self.assertEqual(payload['total_detections'], len(detections))
+        finally:
+            api.run_detection = original
+            api.model = original_model
 
     async def test_upload_limits_and_invalid_images(self):
         api.model = FakeModel()
