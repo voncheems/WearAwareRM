@@ -10,11 +10,32 @@ const WORKER_LOOKUP_TIMEOUT_MS = 30000;
 const SAVE_DETECTION_TIMEOUT_MS = 30000;
 const EMPLOYEE_ID_PATTERN = /^[A-Z0-9]+(?:-[A-Z0-9]+)*$/;
 const PHASE = { QR: 'qr', PPE: 'ppe' };
+const PPE_DIAGNOSTICS_ENABLED = import.meta.env.VITE_PPE_DIAGNOSTICS === 'true';
 const AUTHORIZATION_COPY = Object.freeze({
   authorized: { title: 'ENTRY AUTHORIZED', detail: 'This employee may proceed through the checkpoint.', icon: '✓' },
   denied: { title: 'ENTRY DENIED', detail: 'Required PPE must be corrected before entry.', icon: '✕' },
   pending_inspection: { title: 'ENTRY NOT YET CLEARED', detail: 'Manual inspection is required before entry.', icon: '!' },
 });
+
+function normalizeAlertType(alertType, result) {
+  const value = String(alertType || '').trim().toLowerCase();
+  if (Object.values(ALERT_TYPES).includes(value)) return value;
+  if (result === 'compliant') return ALERT_TYPES.COMPLIANT;
+  if (result === 'violation' || result === 'non_compliant') return ALERT_TYPES.NON_COMPLIANT;
+  return ALERT_TYPES.MANUAL_REVIEW;
+}
+
+function diagnosticLog(event, details = {}) {
+  if (!PPE_DIAGNOSTICS_ENABLED) return;
+  console.info('[WearAware PPE diagnostics]', { event, ...details });
+}
+
+function errorCategory(error) {
+  if (error?.name === 'TimeoutError') return 'TIMEOUT';
+  if (error?.name === 'AbortError') return 'ABORTED';
+  if (error?.name === 'TypeError') return 'NETWORK_OR_FETCH_ERROR';
+  return 'REQUEST_ERROR';
+}
 
 function getDeviceUUID() {
   let id = localStorage.getItem('ppe_device_uuid');
@@ -32,6 +53,18 @@ function evaluateCheckpoint(requiredPpe = [], detectedPpe = []) {
   const present = new Set(detected);
   const missing = required.filter(item => !present.has(item));
   return { required, detected, missing, isCompliant: missing.length === 0 };
+}
+
+// AI deployments have returned person information in either person_count,
+// person_detections, or the general detections array over time. Keep the
+// session trigger compatible with all three response shapes so a visible
+// person cannot leave the scanner stuck in READY FOR SCANNING.
+function getPersonCount(data = {}) {
+  const explicitCount = Number(data.person_count);
+  if (Number.isFinite(explicitCount) && explicitCount > 0) return Math.floor(explicitCount);
+  if (Array.isArray(data.person_detections) && data.person_detections.length > 0) return data.person_detections.length;
+  return (Array.isArray(data.detections) ? data.detections : [])
+    .filter(detection => ['human', 'person'].includes(String(detection?.class_name || '').toLowerCase())).length;
 }
 
 function visualDetections(detections, personDetections) {
@@ -119,6 +152,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
   const cycleRef = useRef(0);
   const onScanCompleteRef = useRef(onScanComplete);
   const mountedRef = useRef(false);
+  const diagnosticFrameRef = useRef(0);
 
   useEffect(() => { onScanCompleteRef.current = onScanComplete; }, [onScanComplete]);
   useEffect(() => { phaseRef.current = phase; }, [phase]);
@@ -187,6 +221,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
     sessionRef.current = null;
     identificationLockRef.current = false;
     lastPersonObservationRef.current = 0;
+    diagnosticFrameRef.current = 0;
     busyRef.current = false;
     setSaving(false); setScanning(false); setVerdict(null); setCamResult(null); setFrameCount(0); setScanProgress(0);
     setTimeLeft(Math.ceil(SCAN_SESSION_CONFIG.scanDurationMs / 1000)); setResetCountdown(0); setQrError(''); setManualEmployeeId(''); setIdentifying(false);
@@ -279,6 +314,12 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
     transition(SCAN_SESSION_STATE.PROCESSING);
     setScanning(false);
     const aggregate = aggregateSessionFrames(session.frames, checkpointRef.current?.required_ppe, SCAN_SESSION_CONFIG, { multiplePeopleDetected: session.multiplePeopleDetected });
+    diagnosticLog('session_finalized', {
+      frame_count: aggregate.frame_count,
+      manual_review_reason: aggregate.manual_review_reason || null,
+      uncertain_ppe: aggregate.uncertain_ppe || [],
+      result: aggregate.result,
+    });
     setSaving(true);
     setVerdict({ pass: aggregate.result === 'compliant', alertType: aggregate.alert_type, authorizationStatus: null, missing: aggregate.missing_ppe, uncertain: aggregate.uncertain_ppe, reason: aggregate.manual_review_message, detected: aggregate.detected_ppe, required: aggregate.required_ppe, confidence: aggregate.confidence_score, frameCount: aggregate.frame_count });
     try {
@@ -304,12 +345,16 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
       const saved = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(saved.error || 'The scan could not be saved.');
       if (!mountedRef.current || sessionRef.current?.id !== session.id) return;
-      const alertType = saved.alert_type || aggregate.alert_type;
+      // Older production backends may return the result field without the
+      // alert_type alias. Normalize both fields so manual-review records are
+      // counted in the scanner summary exactly like they are in the inspector
+      // dashboard.
+      const alertType = normalizeAlertType(saved.alert_type || aggregate.alert_type, saved.result || aggregate.result);
       const pass = saved.result === 'compliant';
       if (!AUTHORIZATION_COPY[saved.authorization_status]) throw new Error('The backend did not return a valid entry authorization decision. Please perform a manual inspection.');
       const finalVerdict = { pass, alertType, authorizationStatus: saved.authorization_status, authorizationEvent: saved.authorization_event, missing: saved.missing_ppe || aggregate.missing_ppe, uncertain: saved.uncertain_ppe || aggregate.uncertain_ppe, reason: saved.manual_review_message || aggregate.manual_review_message, detected: saved.detected_ppe || aggregate.detected_ppe, required: saved.required_ppe || aggregate.required_ppe, confidence: aggregate.confidence_score, frameCount: aggregate.frame_count, repeatViolation: saved.repeat_violation || null };
       setVerdict(finalVerdict);
-      setSessionLog(previous => [{ id: session.id, time: new Date().toLocaleTimeString(), workerName: workerRef.current?.full_name || 'Unknown', employeeId: workerRef.current?.employee_id || '—', pass, alertType, authorizationStatus: finalVerdict.authorizationStatus, missing: finalVerdict.missing }, ...previous].slice(0, 50));
+      setSessionLog(previous => [{ id: session.id, time: new Date().toLocaleTimeString(), workerName: workerRef.current?.full_name || 'Unknown', employeeId: workerRef.current?.employee_id || '—', pass, result: saved.result || aggregate.result, alertType, authorizationStatus: finalVerdict.authorizationStatus, missing: finalVerdict.missing }, ...previous].slice(0, 50));
       if (!session.alertEmitted) {
         session.alertEmitted = true;
         await emitLocalAlert({ alertType, authorizationStatus: finalVerdict.authorizationStatus, authorizationEvent: finalVerdict.authorizationEvent, detectionId: saved.detection_id, scanSessionId: session.id, checkpoint: saved.checkpoint || checkpointRef.current, worker: { id: workerRef.current?.id, employeeId: workerRef.current?.employee_id, name: workerRef.current?.full_name }, missingPpe: finalVerdict.missing, uncertainPpe: finalVerdict.uncertain, detectedPpe: finalVerdict.detected, reason: finalVerdict.reason, occurredAt: session.endedAt.toISOString() }, soundEnabled);
@@ -317,6 +362,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
       Promise.resolve(onScanCompleteRef.current?.()).catch(() => {});
     } catch (error) {
       if (error.name === 'AbortError' || !mountedRef.current || sessionRef.current?.id !== session.id) return;
+      diagnosticLog('scan_record_save_failed', { category: errorCategory(error) });
       setQrError(error.name === 'TimeoutError' ? 'The completed session could not be saved before the connection timed out.' : error.message);
       setVerdict({ pass: false, authorizationStatus: null, missing: [], detected: [], noDetection: true, alertType: ALERT_TYPES.MANUAL_REVIEW, frameCount: aggregate.frame_count });
     } finally {
@@ -359,13 +405,14 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
     const cancelIncomplete = () => {
       const session = sessionRef.current;
       if (!session || session.finishing) return;
+      diagnosticLog('session_cancelled', { reason: 'PERSON_LEFT_FRAME', frame_count: session.frames.length });
       clearTimers(); sessionRef.current = null; setScanning(false); setCamResult(null);
       setVerdict({ incomplete: true, pass: false, missing: [], detected: [], frameCount: session.frames.length });
       transition(SCAN_SESSION_STATE.INCOMPLETE);
       schedule(beginCooldown, SCAN_SESSION_CONFIG.incompleteMessageMs);
     };
-    const processObservation = (data, canvas) => {
-      const personCount = Number.isInteger(data.person_count) ? data.person_count : (data.detections || []).filter(detection => ['human', 'person'].includes(String(detection.class_name).toLowerCase())).length;
+    const processObservation = (data, canvas, frameSequence) => {
+      const personCount = getPersonCount(data);
       const observation = { ...data, person_count: personCount, frame_width: canvas.width, frame_height: canvas.height };
       const evaluation = evaluateCheckpoint(checkpointRef.current?.required_ppe, data.detected_ppe);
       const requiredSet = new Set(evaluation.required);
@@ -378,21 +425,30 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
       setCamResult(previous => holdLastOverlay && previous ? previous : { ...observation, compliant: evaluation.detected, uncertain, violations: evaluation.missing.filter(item => !uncertain.includes(item)), is_checkpoint_compliant: evaluation.isCompliant && !uncertain.length });
       const state = sessionStateRef.current;
       if ([SCAN_SESSION_STATE.IDLE, SCAN_SESSION_STATE.MULTIPLE_PEOPLE].includes(state)) {
-        if (personCount > 1) { transition(SCAN_SESSION_STATE.MULTIPLE_PEOPLE); return; }
-        if (personCount === 0) { if (state === SCAN_SESSION_STATE.MULTIPLE_PEOPLE) transition(SCAN_SESSION_STATE.IDLE); return; }
+        if (personCount > 1) {
+          diagnosticLog('frame_evaluated', { frame_sequence: frameSequence, person_count: personCount, classes: (data.detections || []).map(detection => ({ class_name: detection?.class_name || null, confidence: Number.isFinite(Number(detection?.confidence)) ? Number(detection.confidence) : null })), inference_time_ms: data.inference_time_ms ?? null, accepted: false, rejection_reason: 'MULTIPLE_PEOPLE' });
+          transition(SCAN_SESSION_STATE.MULTIPLE_PEOPLE); return;
+        }
+        if (personCount === 0) {
+          diagnosticLog('frame_evaluated', { frame_sequence: frameSequence, person_count: 0, classes: (data.detections || []).map(detection => ({ class_name: detection?.class_name || null, confidence: Number.isFinite(Number(detection?.confidence)) ? Number(detection.confidence) : null })), inference_time_ms: data.inference_time_ms ?? null, accepted: false, rejection_reason: 'NO_PERSON_DETECTED' });
+          if (state === SCAN_SESSION_STATE.MULTIPLE_PEOPLE) transition(SCAN_SESSION_STATE.IDLE); return;
+        }
+        diagnosticLog('frame_evaluated', { frame_sequence: frameSequence, person_count: 1, classes: (data.detections || []).map(detection => ({ class_name: detection?.class_name || null, confidence: Number.isFinite(Number(detection?.confidence)) ? Number(detection.confidence) : null })), inference_time_ms: data.inference_time_ms ?? null, accepted: true, rejection_reason: null });
         startSession(observation, canvas);
         return;
       }
       if ([SCAN_SESSION_STATE.PERSON_DETECTED, SCAN_SESSION_STATE.SCANNING].includes(state)) {
         const session = sessionRef.current;
         if (!session || session.finishing) return;
-        if (personCount > 1) { clearTimers(); session.multiplePeopleDetected = true; transition(SCAN_SESSION_STATE.MULTIPLE_PEOPLE); finishScan(session); return; }
+        if (personCount > 1) { diagnosticLog('frame_evaluated', { frame_sequence: frameSequence, person_count: personCount, classes: (data.detections || []).map(detection => ({ class_name: detection?.class_name || null, confidence: Number.isFinite(Number(detection?.confidence)) ? Number(detection.confidence) : null })), inference_time_ms: data.inference_time_ms ?? null, accepted: false, rejection_reason: 'MULTIPLE_PEOPLE' }); clearTimers(); session.multiplePeopleDetected = true; transition(SCAN_SESSION_STATE.MULTIPLE_PEOPLE); finishScan(session); return; }
         if (personCount === 0) {
+          diagnosticLog('frame_evaluated', { frame_sequence: frameSequence, person_count: 0, classes: (data.detections || []).map(detection => ({ class_name: detection?.class_name || null, confidence: Number.isFinite(Number(detection?.confidence)) ? Number(detection.confidence) : null })), inference_time_ms: data.inference_time_ms ?? null, accepted: false, rejection_reason: 'NO_PERSON_DETECTED' });
           if (!session.absentSince) session.absentSince = Date.now();
           if (Date.now() - session.absentSince >= SCAN_SESSION_CONFIG.personExitDelayMs) cancelIncomplete();
           return;
         }
         session.absentSince = null;
+        diagnosticLog('frame_evaluated', { frame_sequence: frameSequence, person_count: 1, classes: (data.detections || []).map(detection => ({ class_name: detection?.class_name || null, confidence: Number.isFinite(Number(detection?.confidence)) ? Number(detection.confidence) : null })), inference_time_ms: data.inference_time_ms ?? null, accepted: true, rejection_reason: null });
         addFrame(session, observation, canvas);
         if (session.frames.length >= SCAN_SESSION_CONFIG.minimumFrames) {
           const earlyResult = aggregateSessionFrames(
@@ -411,6 +467,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
       if (state === SCAN_SESSION_STATE.WAITING_FOR_EXIT) {
         const session = sessionRef.current;
         if (!session) return;
+        diagnosticLog('frame_evaluated', { frame_sequence: frameSequence, person_count: personCount, classes: (data.detections || []).map(detection => ({ class_name: detection?.class_name || null, confidence: Number.isFinite(Number(detection?.confidence)) ? Number(detection.confidence) : null })), inference_time_ms: data.inference_time_ms ?? null, accepted: false, rejection_reason: 'SESSION_WAITING_FOR_EXIT' });
         if (personCount === 0) {
           if (!session.absentSince) session.absentSince = Date.now();
           if (Date.now() - session.absentSince >= SCAN_SESSION_CONFIG.personExitDelayMs) beginCooldown();
@@ -421,6 +478,8 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
       const activeStates = [SCAN_SESSION_STATE.IDLE, SCAN_SESSION_STATE.PERSON_DETECTED, SCAN_SESSION_STATE.SCANNING, SCAN_SESSION_STATE.MULTIPLE_PEOPLE, SCAN_SESSION_STATE.WAITING_FOR_EXIT];
       if (stopped || busyRef.current || !videoRef.current || !runningRef.current || phaseRef.current !== PHASE.PPE || !activeStates.includes(sessionStateRef.current)) return;
       busyRef.current = true; setScanning(true);
+      const frameSequence = diagnosticFrameRef.current + 1;
+      diagnosticFrameRef.current = frameSequence;
       const canvas = document.createElement('canvas');
       canvas.width = 640;
       canvas.height = Math.max(1, Math.round(canvas.width * ((videoRef.current.videoHeight || 480) / (videoRef.current.videoWidth || 640))));
@@ -432,7 +491,12 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
         const controller = new AbortController(); requestControllerRef.current = controller;
         const response = await fetch(`${API}/ppe/detect`, { method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }, body: form, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(DETECTION_TIMEOUT_MS)]) });
         const body = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(body.error || 'Detection service unavailable. Please retry.');
+        if (!response.ok) {
+          diagnosticLog('detection_request_failed', { frame_sequence: frameSequence, http_status: response.status, category: `HTTP_${response.status}` });
+          const requestError = new Error(body.error || 'Detection service unavailable. Please retry.');
+          requestError.diagnosticLogged = true;
+          throw requestError;
+        }
         if (!stopped && effectCycle === cycleRef.current && phaseRef.current === PHASE.PPE) {
           // Keep rendering the model response even when the selected checkpoint
           // contains PPE classes this model does not know. The overlay is useful
@@ -443,9 +507,10 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
           } else {
             setQrError('');
           }
-          processObservation(body, canvas);
+          processObservation(body, canvas, frameSequence);
         }
       } catch (error) {
+        if (!error.diagnosticLogged && (error.name !== 'AbortError' || PPE_DIAGNOSTICS_ENABLED)) diagnosticLog('detection_request_failed', { frame_sequence: frameSequence, category: errorCategory(error) });
         if (!stopped && effectCycle === cycleRef.current && error.name !== 'AbortError') setQrError(error.name === 'TimeoutError' ? 'The PPE scan took too long. The current session is still protected from duplicates.' : error.message);
       } finally {
         if (!stopped && effectCycle === cycleRef.current) { busyRef.current = false; setScanning(false); }
@@ -457,9 +522,9 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
   }, [beginCooldown, cameraReady, clearTimers, finishScan, phase, scanCycle, schedule, transition, worker]);
 
   const totalScans = sessionLog.length;
-  const totalPassed = sessionLog.filter(entry => entry.pass).length;
-  const totalFailed = sessionLog.filter(entry => entry.alertType === ALERT_TYPES.NON_COMPLIANT).length;
-  const totalReview = sessionLog.filter(entry => entry.alertType === ALERT_TYPES.MANUAL_REVIEW).length;
+  const totalPassed = sessionLog.filter(entry => entry.pass || entry.result === 'compliant' || entry.alertType === ALERT_TYPES.COMPLIANT).length;
+  const totalFailed = sessionLog.filter(entry => entry.alertType === ALERT_TYPES.NON_COMPLIANT || entry.result === 'violation' || entry.result === 'non_compliant').length;
+  const totalReview = sessionLog.filter(entry => entry.alertType === ALERT_TYPES.MANUAL_REVIEW || entry.result === 'manual_review').length;
   const decidedScans = totalPassed + totalFailed;
   const complianceRate = decidedScans ? Math.round(totalPassed / decidedScans * 100) : 100;
   const manualReview = verdict?.alertType === ALERT_TYPES.MANUAL_REVIEW;

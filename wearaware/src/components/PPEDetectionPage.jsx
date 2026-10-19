@@ -132,10 +132,14 @@ export default function PPEDetectionPage({ setCurrentPage }) {
 
   return <main className="ppe-page">
     <header className="ppe-page-header">
-      <button className="ppe-page-brand" onClick={leave} aria-label={isScanner ? 'Sign out' : 'Return to dashboard'}>
-        <img src="/favicon.svg" width="30" height="34" alt="" /> WearAware<span>.</span>
-      </button>
-      <button className="ppe-page-back" onClick={leave}>{isScanner ? <LogOut size={17} /> : <ArrowLeft size={17} />}{isScanner ? 'Sign out' : 'Back to dashboard'}</button>
+      <div className="ppe-page-heading">
+        <div className="ppe-page-mark"><ScanLine size={20} /></div>
+        <div><strong>Checkpoint Scanner</strong><span>{checkpoint?.label || 'WearAware safety station'}</span></div>
+      </div>
+      <div className="ppe-page-header-actions">
+        <span className="ppe-page-role">{isScanner ? 'SCANNER' : 'INSPECTOR'}</span>
+        <button className="ppe-page-back" onClick={leave}>{isScanner ? <LogOut size={17} /> : <ArrowLeft size={17} />}{isScanner ? 'Sign out' : 'Back to dashboard'}</button>
+      </div>
     </header>
     <section className="ppe-page-content">
       <div className="ppe-page-intro">

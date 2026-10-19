@@ -1,7 +1,13 @@
 .ppe-page { min-height: 100vh; color: #1d2b1a; background: radial-gradient(circle at top right, #e8f1de 0, transparent 32%), #f5f7f2; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif; }
-.ppe-page-header { min-height: 72px; padding: 0 5vw; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #dde5d6; background: rgba(255,255,255,.82); backdrop-filter: blur(16px); }
-.ppe-page-brand { display: flex; align-items: center; gap: .55rem; border: 0; background: transparent; font-weight: 800; font-size: 1.15rem; color: #253021; cursor: pointer; }
-.ppe-page-brand span { color: #789167; }
+.ppe-page-header { min-height: 76px; margin: 14px 18px 0; padding: 0 1.35rem; display: flex; align-items: center; justify-content: space-between; border: 1px solid #dce5d7; border-radius: 18px; background: rgba(255,255,255,.9); box-shadow: 0 10px 28px rgba(54,75,45,.06); backdrop-filter: blur(16px); }
+.ppe-page-heading, .ppe-page-header-actions { display: flex; align-items: center; }
+.ppe-page-heading { gap: .75rem; }
+.ppe-page-heading > div:last-child { display: flex; flex-direction: column; gap: 3px; }
+.ppe-page-heading strong { color: #253021; font-size: 1.05rem; letter-spacing: -.02em; }
+.ppe-page-heading span { color: #75816e; font-size: .72rem; }
+.ppe-page-mark { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 12px; background: #e7f0df; color: #4d6a40; }
+.ppe-page-header-actions { gap: .75rem; }
+.ppe-page-role { padding: .45rem .7rem; border: 1px solid #d4e1cd; border-radius: 999px; background: #edf3e9; color: #58704d; font-size: .62rem; font-weight: 850; letter-spacing: .15em; }
 .ppe-page-back { display: inline-flex; align-items: center; gap: .45rem; border: 1px solid #cfd9c6; border-radius: 999px; padding: .55rem .9rem; background: #fff; color: #34422e; font: inherit; font-size: .85rem; font-weight: 700; cursor: pointer; }
 .ppe-page-back:hover { border-color: #789167; color: #526847; }
 .ppe-page-content { width: min(1180px, 90vw); margin: 0 auto; padding: 3.5rem 0 4rem; }
@@ -150,8 +156,103 @@
 .ppe-recent-log h3 i { width: 8px; height: 8px; border-radius: 50%; background: #527345; }
 .ppe-recent-log td strong, .ppe-recent-log td small { display: block; }
 .ppe-recent-log td small { color: #9aa394; font-size: .7rem; }
-@media (max-width: 640px) { .ppe-page-header { padding: 0 1rem; } .ppe-page-back { font-size: 0; padding: .6rem; } .ppe-page-back svg { margin: 0; } .ppe-page-content { width: min(92vw, 1180px); padding-top: 2.25rem; } .ppe-page-selector { grid-template-columns: auto 1fr; } .ppe-page-selector select, .ppe-page-selector span { grid-column: 1 / -1; } }
+@media (max-width: 640px) { .ppe-page-header { margin: 10px 10px 0; padding: 0 .8rem; } .ppe-page-heading strong { font-size: .92rem; } .ppe-page-heading span { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ppe-page-role { display: none; } .ppe-page-back { font-size: 0; padding: .6rem; } .ppe-page-back svg { margin: 0; } .ppe-page-content { width: min(92vw, 1180px); padding-top: 2.25rem; } .ppe-page-selector { grid-template-columns: auto 1fr; } .ppe-page-selector select, .ppe-page-selector span { grid-column: 1 / -1; } }
 @media (max-width: 640px) { .ppe-checkpoint-card { grid-template-columns: 1fr; } }
 @media (max-width: 480px) { .ppe-manual-id > div { grid-template-columns: 1fr; } }
 @media (max-width: 900px) { .ppe-assigned-checkpoint { grid-template-columns: auto 1fr; } .ppe-assigned-status, .ppe-local-controls { grid-column: 1 / -1; } .ppe-local-controls { justify-content: stretch; flex-wrap: wrap; } .ppe-local-controls button { flex: 1; } }
 @media (max-width: 720px) { .ppe-setup-card { grid-template-columns: 1fr; } .ppe-setup-card > * { grid-column: 1; } }
+
+/* Shared WearAware editorial language: keep the scanner functional while
+   matching the landing page's warm paper canvas, rounded cards and quiet green
+   controls. */
+.ppe-page {
+  --ppe-ink: #202420;
+  --ppe-muted: #697069;
+  --ppe-green: #32684c;
+  --ppe-deep-green: #293125;
+  --ppe-paper: #f8f9f6;
+  color: var(--ppe-ink);
+  background:
+    radial-gradient(circle at 90% 0%, rgba(216, 232, 211, .7), transparent 30%),
+    radial-gradient(circle at 5% 35%, rgba(240, 235, 215, .45), transparent 27%),
+    var(--ppe-paper);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
+}
+
+.ppe-page-header {
+  width: min(1280px, calc(100% - 64px));
+  min-height: 68px;
+  margin: 16px auto 0;
+  padding: 0 22px;
+  border-color: rgba(69, 92, 67, .16);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, .82);
+  box-shadow: 0 16px 40px rgba(48, 68, 47, .08);
+}
+.ppe-page-mark { border-radius: 14px; background: #e5efe3; color: var(--ppe-green); }
+.ppe-page-heading strong { color: var(--ppe-ink); letter-spacing: -.035em; }
+.ppe-page-heading span { color: var(--ppe-muted); }
+.ppe-page-role { border-color: #d8e5d5; background: #edf4ea; color: #597255; }
+.ppe-page-back { border-color: #d3dfce; border-radius: 14px; background: #fff; color: #41523e; }
+.ppe-page-back:hover { border-color: #7e9b78; color: var(--ppe-green); }
+
+.ppe-page-content { width: min(1180px, calc(100% - 48px)); padding: 4.5rem 0 6rem; }
+.ppe-page-intro { max-width: 760px; margin-bottom: 2.5rem; }
+.ppe-page-kicker { color: var(--ppe-green); letter-spacing: .16em; }
+.ppe-page-intro h1 { color: var(--ppe-ink); font-size: clamp(2.5rem, 5.2vw, 4.65rem); letter-spacing: -.075em; line-height: .96; }
+.ppe-page-intro p { color: var(--ppe-muted); }
+.ppe-page-selector, .ppe-page-status, .ppe-worker-card, .ppe-progress-card, .ppe-live-result {
+  border-color: #e1e7dc;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, .84);
+  box-shadow: 0 12px 32px rgba(55, 75, 53, .05);
+}
+.ppe-page-selector select, .ppe-setup-card select, .ppe-local-controls select {
+  border-color: #d7e1d2;
+  border-radius: 12px;
+  background: #fbfcfa;
+}
+.ppe-page-assignment { background: #e8f1e5; color: #365a40; }
+
+.ppe-setup-card, .ppe-disabled-card {
+  border-color: #e1e7dc;
+  border-radius: 24px;
+  box-shadow: 0 20px 55px rgba(55, 75, 53, .09);
+}
+.ppe-setup-card { background: rgba(255, 255, 255, .88); }
+.ppe-setup-icon, .ppe-assigned-mark { background: #e6efe2; color: var(--ppe-green); }
+.ppe-setup-actions button, .ppe-disabled-card button, .ppe-assigned-checkpoint button {
+  border-radius: 13px;
+  background: var(--ppe-deep-green);
+}
+.ppe-setup-actions button:hover, .ppe-disabled-card button:hover, .ppe-assigned-checkpoint button:hover { background: #40573b; }
+.ppe-setup-actions button.secondary, .ppe-assigned-checkpoint button { border-color: #d4dfcf; background: #fff; color: #4a6045; }
+.ppe-assigned-checkpoint { border-color: #e0e8dc; border-radius: 20px; background: rgba(255,255,255,.86); box-shadow: 0 14px 36px rgba(55,75,53,.06); }
+.ppe-checkpoint-card { border-color: #dce6d6; border-radius: 18px; background: #f2f7ef; }
+.ppe-checkpoint-items b { background: #e2eddd; color: #486844; }
+
+.ppe-session-steps { color: #899487; }
+.ppe-session-steps span { background: #edf2e9; }
+.ppe-session-steps span.active { background: var(--ppe-deep-green); box-shadow: 0 8px 18px rgba(41,49,37,.18); }
+.ppe-camera-shell { border-color: #789077; border-radius: 20px; box-shadow: 0 18px 45px rgba(36, 55, 39, .12); }
+.ppe-box-overlay, .ppe-video-stage, .ppe-video-stage video { border-radius: 16px; }
+.ppe-qr-target { border-color: #a7cf9e; border-radius: 16px; }
+.ppe-session-status { border-color: #e0e8dc; border-radius: 14px; }
+.ppe-session-status.state-scanning, .ppe-session-status.state-person_detected { border-color: #b8d8b5; background: #f0f7ed; }
+.ppe-session-status.state-processing, .ppe-session-status.state-waiting_for_exit { border-color: #e8d7af; background: #fff9ec; }
+
+.ppe-qr-panel { border-color: #d7e5d2; border-radius: 22px; background: linear-gradient(135deg, #eff6eb, #e5efe1); color: #315d3e; box-shadow: 0 16px 38px rgba(55,75,53,.06); }
+.ppe-qr-panel p { color: #5e7860; }
+.ppe-inline-status { border-color: #bdd9b9; background: #e4f2e1; color: #3c7949; }
+.ppe-manual-id-divider { color: #71836e; }
+.ppe-manual-id-divider::before, .ppe-manual-id-divider::after { background: #d0dfcb; }
+.ppe-manual-id label { color: #52704f; }
+.ppe-manual-id input { border-color: #cbdcc6; border-radius: 12px; color: #304a31; }
+.ppe-manual-id button { border-radius: 12px; background: var(--ppe-deep-green); }
+.ppe-error-box { border-radius: 14px; }
+
+@media (max-width: 640px) {
+  .ppe-page-header { width: calc(100% - 20px); margin-top: 10px; border-radius: 18px; }
+  .ppe-page-content { width: calc(100% - 28px); padding-top: 3rem; }
+  .ppe-page-intro h1 { font-size: clamp(2.4rem, 13vw, 3.5rem); }
+}
