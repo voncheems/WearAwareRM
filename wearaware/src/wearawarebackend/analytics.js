@@ -190,6 +190,24 @@ function analyticsPipeline(filters) {
         { $sort: { risk_severity: -1, detected_at: -1 } }, { $limit: 100 },
         { $project: { _id: 0, id: 1, worker_id: 1, worker_name: 1, worker_employee_id: 1, checkpoint_id: '$device_id', checkpoint_name: 1, profile_name: 1, risk_severity: 1, risk_rule_name: 1, missing_ppe: 1, detected_at: 1, resolution_status: 1 } },
       ],
+      attention_incidents: [
+        { $match: { $or: [
+          { _final_outcome: 'violation', _resolution_status: 'PENDING_REVIEW' },
+          { result: 'manual_review', review_status: { $ne: 'reviewed' }, _resolution_status: 'PENDING_REVIEW' },
+        ] } },
+        // Ranking is presentation only. Uncertain scans never inherit a severity.
+        { $set: { _attention_rank: { $cond: [{ $eq: ['$result', 'manual_review'] }, 0,
+          { $switch: { branches: [
+            { case: { $eq: ['$risk_severity', 'Critical'] }, then: 4 },
+            { case: { $eq: ['$risk_severity', 'High'] }, then: 3 },
+            { case: { $eq: ['$risk_severity', 'Medium'] }, then: 2 },
+            { case: { $eq: ['$risk_severity', 'Low'] }, then: 1 },
+          ], default: 0 } } ] } } },
+        { $sort: { _attention_rank: -1, detected_at: 1, id: 1 } }, { $limit: 50 },
+        { $project: { _id: 0, id: 1, worker_name: 1, worker_employee_id: 1, checkpoint_name: 1,
+          result: 1, risk_status: 1, risk_severity: 1, missing_ppe: 1, uncertain_ppe: 1,
+          review_status: 1, detected_at: 1, resolution_status: '$_resolution_status' } },
+      ],
       resolution_metrics: [
         { $match: { _final_outcome: { $in: ['violation', 'compliant'] }, resolution_status: { $ne: 'PENDING_REVIEW' }, detected_at: { $type: 'date' }, resolution_resolved_at: { $type: 'date' } } },
         { $set: { resolution_time_ms: { $subtract: ['$resolution_resolved_at', '$detected_at'] } } },
@@ -286,6 +304,7 @@ async function getViolationAnalytics(query, now = new Date()) {
     trends,
     repeat_violations: result.repeat_violations || [],
     unresolved_high_severity: result.unresolved_high_severity || [],
+    attention_incidents: result.attention_incidents || [],
     resolution: result.resolution_metrics?.[0] || { resolved_count: 0, average_ms: null, fastest_ms: null, slowest_ms: null },
     time_of_day: bucketOrder.map(bucket => ({ bucket, violations: timeByBucket.get(bucket) || 0 })),
     recent_violations: result.recent_violations || [],

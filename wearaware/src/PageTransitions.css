@@ -1,6 +1,6 @@
 .page-container {
   animation-duration: 0.4s;
-  animation-fill-mode: both;
+  animation-fill-mode: backwards;
   animation-timing-function: ease-in-out;
 }
 
@@ -19,7 +19,7 @@
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: none;
   }
 }
 

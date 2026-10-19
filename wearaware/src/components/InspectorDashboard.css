@@ -440,3 +440,60 @@
 .ins-risk-high { background: #ffedd5; color: #c2410c; }
 .ins-risk-critical { background: #fee2e2; color: #b91c1c; }
 .ins-risk-unmatched { background: #f1f5f9; color: #64748b; }
+
+/* Portaled proof viewer: sizing is relative to the screen, never the dashboard. */
+.ins-proof-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, .85);
+  overscroll-behavior: contain;
+}
+.ins-proof-dialog {
+  box-sizing: border-box;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 100%;
+  max-height: calc(100dvh - 32px);
+  padding-top: 48px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+.ins-proof-dialog > img {
+  display: block;
+  min-height: 0;
+  max-width: 100%;
+  max-height: calc(100dvh - 150px);
+  object-fit: contain;
+  border: 3px solid #fca5a5;
+  border-radius: 12px;
+  box-sizing: border-box;
+}
+.ins-proof-dialog > p {
+  margin: 0;
+  color: #fca5a5;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.ins-proof-close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 2px solid white;
+  border-radius: 50%;
+  color: white;
+  background: #b91c1c;
+  cursor: pointer;
+}
+.ins-proof-close:focus-visible { outline: 3px solid white; outline-offset: 3px; }

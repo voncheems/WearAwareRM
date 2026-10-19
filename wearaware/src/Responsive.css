@@ -1,0 +1,156 @@
+/* Cross-page responsive rules load after the page themes. Keep wide records
+   scrollable inside their own regions rather than clipping the whole page. */
+:is(.ad-page, .ins-page, .ppe-page, .login-page, .marketing-page),
+:is(.ad-main, .ins-main, .ppe-dashboard-main, .ad-content, .ins-content) { min-width: 0; max-width: 100%; }
+:is(.ad-table-scroll, .ins-table-scroll, .va-svg-wrap, .va-column-chart, .ppe-recent-log) {
+  min-width: 0;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+:is(.ad-content, .ins-content, .va-dashboard, .ech-page, .ppe-page-content) > * { min-width: 0; }
+.mfa-settings { min-width: 0; overflow-wrap: anywhere; }
+.mfa-recovery-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; margin-top: 7px; }
+.mfa-recovery-grid code { overflow-wrap: anywhere; }
+.ins-worker-roster { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); gap: .85rem; padding: .5rem 0; }
+
+@media (max-width: 900px) {
+  .ad-page .ad-panel-header, .ins-page .ins-panel-header { flex-wrap: wrap; gap: 14px; }
+  :is(.ad-page .ad-panel-actions, .ins-page .ins-panel-actions) { display: flex; flex-wrap: wrap; gap: 8px; }
+  .marketing-page .cp-form-wrapper { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+}
+
+@media (max-width: 768px) {
+  :is(.ad-page, .ins-page, .ppe-page, .login-page) {
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+  }
+  :is(.ad-page .wa-admin-sidebar, .ins-page .ins-sidebar, .ppe-dashboard-sidebar) { min-width: 0; max-width: 100%; }
+  .ad-page .ad-nav, .ins-page .ins-nav {
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: #b9c9ab transparent;
+    scroll-padding-inline: 8px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .ad-page .ad-nav-item, .ins-page .ins-nav-item { min-height: 44px; }
+  .ad-page .ad-topbar, .ins-page .ins-topbar, .ppe-page .ppe-page-header {
+    flex-wrap: wrap;
+    padding: 16px;
+    gap: 12px;
+  }
+  :is(.ad-topbar, .ins-topbar, .ppe-page-header) > div:first-child { min-width: 0; flex: 1 1 160px; }
+  .ad-page .ad-topbar { position: static; }
+  .ad-page .ad-topbar-title, .ins-page .ins-topbar-title, .ppe-page .ppe-page-heading strong { font-size: 18px; overflow-wrap: anywhere; }
+  .ad-page .ad-topbar-sub, .ins-page .ins-topbar-sub { overflow-wrap: anywhere; line-height: 1.6; }
+  :is(.ad-topbar-right, .ins-topbar-actions, .user-header-actions, .ppe-page-header-actions) { flex-shrink: 0; max-width: 100%; gap: 8px; }
+  .ad-page .ad-sidebar-footer, .ins-page .ins-sidebar-footer, .ppe-dashboard-sidebar-footer { flex-wrap: wrap; }
+  .ad-page .ad-user-info, .ins-page .ins-user-info, .ppe-dashboard-account { min-width: 0; flex: 1 1 130px; }
+  .ad-page .ad-user-info > div:last-child, .ins-page .ins-user-info > div:last-child { min-width: 0; }
+  .ad-page .ad-welcome, .ins-page .ins-welcome { padding: 26px 22px; }
+  :is(.ad-welcome-actions, .ins-welcome-actions) { flex-wrap: wrap; }
+  .ad-page .admin-surface, .ins-page .ins-panel { padding: 18px; }
+  :is(.ad-filters, .ins-filters) { gap: 12px; }
+  .ad-page .ad-filter-group, .ins-page .ins-filter-group { min-width: 0; width: 100%; flex: 1 1 100%; }
+  :is(.ad-page, .ins-page, .ppe-page, .login-page, .marketing-page, .fp-overlay) input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  :is(.ad-page, .ins-page, .ppe-page, .login-page, .marketing-page, .fp-overlay) textarea {
+    min-width: 0;
+    max-width: 100%;
+    font-size: 16px;
+  }
+  :is(.ad-page, .ins-page, .ppe-page, .login-page, .marketing-page, .fp-overlay) :is(button, select, summary) { touch-action: manipulation; }
+  .ad-page :is(.ad-btn, .ad-refresh-btn, .ad-filter-reset, .ad-logout, .ad-topbar-logout),
+  .ins-page :is(.ins-btn, .ins-filter-reset, .ins-logout, .ins-notification-button),
+  .ppe-page :is(.ppe-dashboard-nav-item, .ppe-dashboard-leave, .ppe-page-back, .ppe-local-controls button, .ppe-manual-id button, .ppe-manual-reset),
+  .login-page :is(.login-show-pass, .login-forgot, .login-back-link, .login-btn),
+  .marketing-page :is(.wa-button, .wa-menu-toggle) { min-height: 44px; }
+  :is(.ad-page .ad-table, .ins-page .ins-table, .ppe-page .ppe-log-table) :is(button, select) { min-height: 40px; }
+  :is(.ad-table-scroll, .ins-table-scroll) { overflow-x: auto; scrollbar-width: thin; }
+  .ad-page .ad-table-scroll::after, .ins-page .ins-table-scroll::after {
+    content: "Swipe horizontally to see all columns";
+    display: block;
+    position: sticky;
+    left: 0;
+    width: fit-content;
+    max-width: 100%;
+    padding: 10px 4px;
+    color: #74816a;
+    font-size: 11px;
+  }
+  :is(.ad-modal-overlay, .fp-overlay) { padding: 12px; overflow-y: auto; overscroll-behavior: contain; }
+  :is(.ad-page, .ins-page) .ad-modal, .fp-modal {
+    width: 100%;
+    min-width: 0;
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 22px;
+    margin-block: auto;
+  }
+  :is(.ad-modal-footer, .fp-footer) { display: flex; flex-wrap: wrap; gap: 10px; }
+  :is(.ad-modal-footer, .fp-footer) > button { flex: 1 1 130px; min-height: 44px; }
+  .ins-page .ins-proof-grid { grid-template-columns: minmax(0, 1fr); }
+  .ins-page .ins-notification-panel { position: fixed; top: 12px; right: 12px; width: calc(100vw - 24px); max-height: calc(100dvh - 24px); z-index: 1100; }
+  .ins-page .ins-notification-header-actions { display: flex; align-items: center; gap: 8px; }
+  .ins-page .ins-notification-header-actions button { min-height: 44px; min-width: 44px; }
+  .mfa-settings .mfa-heading { flex-wrap: wrap; align-items: flex-start; }
+  .mfa-settings .mfa-heading > div { flex: 1 1 200px; }
+  .mfa-settings form > label { flex: 1 1 180px; min-width: 0; }
+  .mfa-settings form input { width: 100%; }
+  .va-dashboard .va-primary-filters { grid-template-columns: minmax(0, 1fr); }
+  .va-dashboard .va-recent > div:not(.va-empty) { align-items: flex-start; flex-wrap: wrap; }
+  .va-dashboard .va-recent b { text-align: left; }
+  .va-dashboard .va-svg-wrap svg { min-width: 320px; }
+  .va-dashboard .va-bar-meta span, .va-dashboard .va-ranking span { min-width: 0; overflow-wrap: anywhere; }
+  .va-dashboard .va-error { align-items: flex-start; flex-wrap: wrap; }
+  .user-page .user-qr-card { padding: 28px 18px; }
+  .user-page .user-pagination { gap: 14px; }
+  .ppe-page .ppe-page-intro h1 { font-size: 24px; }
+  .ppe-page .ppe-assigned-checkpoint small { white-space: normal; overflow-wrap: anywhere; }
+  .ppe-page .ppe-local-controls { width: 100%; justify-content: flex-start; gap: 10px; }
+  .ppe-page .ppe-local-controls label { flex-wrap: wrap; }
+  .ppe-page .ppe-checkpoint-card { grid-template-columns: minmax(0, 1fr); }
+  .ppe-page .ppe-camera-shell { min-height: 0; }
+  .ppe-page .ppe-verdict-card h2 { font-size: 20px; line-height: 1.3; overflow-wrap: anywhere; }
+  .ppe-page .ppe-authorization { align-items: flex-start; padding: 14px; }
+}
+
+@media (max-width: 700px) {
+  .login-page .login-hero-content { display: flex; flex-direction: column; }
+  .login-page .login-card { order: -1; width: 100%; padding: 26px 22px; }
+  .login-page .login-branding { padding: 26px; }
+  .login-page .login-branding-title { font-size: 34px; }
+  .login-page .login-header { gap: 10px; flex-wrap: wrap; }
+  .login-page .login-hero { align-items: flex-start; }
+  .login-page .login-footer { flex-wrap: wrap; }
+  .marketing-page .cp-form-row { grid-template-columns: minmax(0, 1fr); }
+  .marketing-page .cp-form-left { padding: 24px 18px; }
+  .marketing-page :is(.cp-form-wrapper, .cp-info-grid, .projects-grid, .team-grid, .wa-product-intro) > * { min-width: 0; }
+  .marketing-page :is(.wa-hero-copy h1, .hero-title, .projects-hero-title) { font-size: clamp(32px, 8.5vw, 46px); overflow-wrap: anywhere; }
+  .marketing-page :is(.wa-hero-copy > p, .hero-description, .projects-hero-desc) { font-size: 15px; }
+  .marketing-page .wa-actions { gap: 10px; }
+  .marketing-page .wa-floating-note { margin-right: 0; padding: 14px; font-size: 12px; }
+  .marketing-page .wa-nav-links { max-height: calc(100dvh - 110px); overflow-y: auto; }
+  .marketing-page .wa-footer { flex-wrap: wrap; }
+}
+
+@media (max-width: 480px) {
+  .ad-page, .ins-page, .ppe-page { padding-inline: 10px; }
+  .ad-page .ad-stats, .ins-page .ins-stats, .ins-page .ins-stats-three { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .ad-page .ad-stat-card, .ins-page .ins-stat-card { padding: 16px 12px; }
+  .ad-page .ad-stat-number, .ins-page .ins-stat-number { font-size: 27px; }
+  .ad-page .ad-welcome-mark, .ins-page .ins-welcome-mark { display: none; }
+  .ad-page .ad-badge, .ins-page .ins-badge { display: none; }
+  .ad-page .ad-welcome h1, .ins-page .ins-welcome h1, .user-page .ins-welcome h2 { font-size: 30px; }
+  .ad-page .ad-welcome-actions > button, .ins-page .ins-welcome-actions > button { width: 100%; }
+  .va-dashboard :is(.va-primary-stats, .va-risk-stats) { grid-template-columns: minmax(0, 1fr); }
+  .ppe-page .ppe-stat-row { display: flex; overflow-x: auto; gap: 10px; padding-block: 2px 10px; scrollbar-width: thin; }
+  .ppe-page .ppe-mini-stat { flex: 0 0 136px; padding: 16px; }
+  .ppe-page .ppe-session-steps { gap: 5px; font-size: 10px; }
+  .ppe-page .ppe-session-steps span { padding: 8px; }
+  .ppe-page .ppe-manual-id > div { grid-template-columns: minmax(0, 1fr); }
+  .ppe-page .ppe-manual-id button { width: 100%; }
+  .ppe-page .ppe-qr-target { width: min(190px, 65vw); height: min(190px, 65vw); }
+  .mfa-recovery-grid { grid-template-columns: minmax(0, 1fr); }
+}

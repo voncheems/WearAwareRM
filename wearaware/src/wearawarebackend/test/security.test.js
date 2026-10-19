@@ -358,11 +358,14 @@ test('violation analytics aggregate final sessions, preserve snapshots and enfor
   assert.equal(analytics.time_of_day.find(row => row.bucket === '09:00–12:00').violations, 1);
   assert.equal(analytics.time_of_day.find(row => row.bucket === '18:00–21:00').violations, 1);
   assert.equal(analytics.recent_violations.length, 2);
+  assert.deepEqual(analytics.attention_incidents.map(record => record.id), [8002, 8003, 8004]);
+  assert.equal(analytics.attention_incidents.find(record => record.id === 8003).result, 'manual_review');
   assert.deepEqual(analytics.uncertain_ppe, [{ count: 1, ppe: 'goggles' }]);
   assert.equal((await call(path.replace('granularity=daily', 'granularity=weekly'), token(1, 'admin'))).status, 200);
 
   const checkpoint = await (await call(`${path}&checkpointId=1`, token(1, 'admin'))).json();
   assert.equal(checkpoint.summary.total, 2);
+  assert.deepEqual(checkpoint.attention_incidents.map(record => record.id), [8002]);
   const helmet = await (await call(`${path}&ppe=helmet`, token(1, 'admin'))).json();
   assert.deepEqual({ total: helmet.summary.total, violations: helmet.summary.violations, rate: helmet.summary.compliance_rate }, { total: 2, violations: 1, rate: 50 });
   assert.deepEqual(helmet.missing_ppe, [{ count: 1, ppe: 'helmet' }]);
@@ -401,6 +404,7 @@ test('risk analytics prioritizes persisted severity, repeat workers, and unresol
   const analytics = await response.json();
   assert.deepEqual(analytics.risk.severity_counts, { Low: 2, Medium: 1, High: 1, Critical: 0 });
   assert.equal(analytics.risk.unresolved_high, 1);
+  assert.deepEqual(analytics.attention_incidents.map(record => record.id), [8102, 8101, 8103]);
   assert.equal(analytics.summary.risk_deferred, 0);
   assert.equal(analytics.repeat_violations.length, 1);
   assert.equal(analytics.repeat_violations[0].worker_id, 11);
@@ -410,6 +414,38 @@ test('risk analytics prioritizes persisted severity, repeat workers, and unresol
   assert.equal((await (await call(`${endpoint}&checkpointId=2`, token(1, 'admin'))).json()).summary.total, 1);
   assert.equal((await (await call('/api/admin/analytics?period=custom&startDate=2026-07-01&endDate=2026-07-01', token(1, 'admin'))).json()).summary.total, 1);
 });
+test('analytics attention queue ranks persisted risk and excludes reviewed or false incidents', async () => {
+  const base = { device_id: 1, profile_id: reusableProfileId, checkpoint_name: 'First',
+    result: 'violation', session_status: 'completed', detected_at: new Date('2026-08-01T01:00:00Z'),
+    resolution_status: 'PENDING_REVIEW', review_status: 'not_required', required_ppe: ['helmet'],
+    missing_ppe: ['helmet'], uncertain_ppe: [], risk_status: 'matched' };
+  await db.collection('detections').insertMany([
+    { ...base, id: 8301, risk_severity: 'Low' },
+    { ...base, id: 8302, risk_severity: 'High' },
+    { ...base, id: 8303, risk_severity: 'Critical' },
+    { ...base, id: 8304, risk_severity: 'Medium' },
+    { ...base, id: 8305, result: 'manual_review', review_status: 'pending', risk_status: 'deferred', risk_severity: null, missing_ppe: [], uncertain_ppe: ['helmet'] },
+    { ...base, id: 8306, risk_severity: 'Critical', resolution_status: 'FALSE_DETECTION' },
+    { ...base, id: 8307, risk_severity: 'High', resolution_status: 'CONFIRMED_VIOLATION' },
+    { ...base, id: 8308, result: 'manual_review', review_status: 'reviewed', inspector_decision: 'compliant', risk_severity: null },
+  ]);
+  const path = '/api/admin/analytics?period=custom&startDate=2026-08-01&endDate=2026-08-01';
+  assert.equal((await call(path, token(6, 'scanner'))).status, 403);
+  const analytics = await (await call(path, token(1, 'admin'))).json();
+  assert.deepEqual(analytics.attention_incidents.map(record => record.id), [8303, 8302, 8304, 8301, 8305]);
+  const manual = analytics.attention_incidents.find(record => record.id === 8305);
+  assert.equal(manual.risk_status, 'deferred');
+  assert.equal(manual.risk_severity, null);
+  assert.deepEqual(manual.missing_ppe, []);
+  assert.deepEqual(manual.uncertain_ppe, ['helmet']);
+  assert.equal('photo_url' in manual, false);
+  const filtered = await (await call(`${path}&riskSeverity=Critical`, token(1, 'admin'))).json();
+  assert.deepEqual(filtered.attention_incidents.map(record => record.id), [8303]);
+  const original = await db.collection('detections').findOne({ id: 8303 });
+  assert.equal(original.risk_severity, 'Critical');
+  assert.equal('_attention_rank' in original, false);
+});
+
 test('repeat-violation tracking uses final inspector outcomes and remains separate from the current scan verdict', async () => {
   const now = Date.now();
   const ago = days => new Date(now - days * 86400000);

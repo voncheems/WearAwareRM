@@ -1,3 +1,5 @@
+import { createPortal } from 'react-dom';
+import useMobileSidebar from '../hooks/useMobileSidebar';
 import { escapeHtml, printDocument, safePhoto } from '../utils/print';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import './InspectorDashboard.css';
@@ -32,6 +34,7 @@ function resolutionLabel(value) {
 
 export default function InspectorDashboard({ setCurrentPage }) {
   const [activeTab, setActiveTab] = useState('violations');
+  const mobileSidebar = useMobileSidebar();
   const [filterStation,   setFilterStation]   = useState('All Stations');
   const [filterProfile,   setFilterProfile]   = useState('All Profiles');
   const [filterDate,      setFilterDate]      = useState('');
@@ -262,6 +265,28 @@ export default function InspectorDashboard({ setCurrentPage }) {
   const [reportPeriod, setReportPeriod] = useState('all');
   const [reportFrom,   setReportFrom]   = useState('');
   const [reportTo,     setReportTo]     = useState('');
+
+  const photoDialogRef = useRef(null);
+  useEffect(() => {
+    if (!photoModal) return undefined;
+    const previousFocus = document.activeElement;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    photoDialogRef.current?.focus({ preventScroll: true });
+    const onKeyDown = event => {
+      if (event.key === 'Escape') setPhotoModal(null);
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        photoDialogRef.current?.querySelector('button')?.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', onKeyDown);
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+    };
+  }, [photoModal]);
 
   // Load proof images as soon as the tab opens so the first viewport contains
   // actual evidence instead of a list of click-to-load placeholders.
@@ -674,7 +699,9 @@ export default function InspectorDashboard({ setCurrentPage }) {
   return (
     <div className="ins-page">
 
-      <aside className="ins-sidebar">
+      {mobileSidebar.backdrop}
+      <aside {...mobileSidebar.props} className="ins-sidebar" aria-label="Inspector navigation">
+        {mobileSidebar.closeButton}
         <button className="ins-logo" onClick={() => setActiveTab('violations')} aria-label="WearAware inspector overview">
           <span className="ins-logo-icon"><WearAwareLogo size={30} /></span> WearAware<span className="ins-brand-dot">.</span>
         </button>
@@ -700,7 +727,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
 
       <main className="ins-main">
         <div className="ins-topbar">
-          <div>
+          <div className="dashboard-title-group">{mobileSidebar.toggle}<div>
             <div className="ins-topbar-title">
               {activeTab === 'violations' && 'Violation History'}
               {activeTab === 'proof'      && 'Proof Photos'}
@@ -709,11 +736,11 @@ export default function InspectorDashboard({ setCurrentPage }) {
               {activeTab === 'profile'    && 'My Profile'}
             </div>
             <div className="ins-topbar-sub">Welcome back, {displayName}</div>
-          </div>
+          </div></div>
           <div className="ins-topbar-actions">
             <button type="button" className="ins-notification-button" aria-label={`${unreadNotifications.length} unread notifications`} aria-expanded={notificationOpen} onClick={() => { setNotificationOpen(open => !open); if (!notificationOpen) fetchNotifications(); }}><Bell size={19} />{unreadNotifications.length > 0 && <span className="ins-notification-count">{unreadNotifications.length > 99 ? '99+' : unreadNotifications.length}</span>}</button>
             <span className="ins-badge">INSPECTOR</span>
-            {notificationOpen && <div className="ins-notification-panel" role="dialog" aria-label="Inspector notifications"><div className="ins-notification-header"><strong>Notifications</strong><button type="button" onClick={fetchNotifications}>Refresh</button></div>{notificationError && <div className="ins-notification-error">{notificationError}</div>}{notifications.length === 0 ? <div className="ins-notification-empty">No notifications yet.</div> : <div className="ins-notification-list">{notifications.map(notification => <button type="button" key={notification.id} className={`ins-notification-item ${notification.is_read ? 'read' : 'unread'}`} onClick={() => { markNotificationRead(notification); if (notification.detection_id) { setActiveTab('violations'); window.setTimeout(() => document.querySelector(`[data-detection-id="${notification.detection_id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80); } }}><span className="ins-notification-dot" /><span><strong>{notification.title || 'Inspector notification'}{notification.risk_severity && <em className={`ins-risk-badge ins-risk-${String(notification.risk_severity).toLowerCase()}`}>{notification.risk_severity} risk</em>}</strong><small>{notification.message || 'Open the violation history to review this incident.'}</small><small>{notification.station || 'Checkpoint'} · {notification.worker_name || notification.worker_employee_id || 'Worker'} · {notification.created_at ? new Date(notification.created_at).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }) : 'Just now'}</small><small className="ins-notification-link">View incident →</small></span></button>)}</div>}</div>}
+            {notificationOpen && <div className="ins-notification-panel" role="dialog" aria-label="Inspector notifications"><div className="ins-notification-header"><strong>Notifications</strong><div className="ins-notification-header-actions"><button type="button" onClick={fetchNotifications}>Refresh</button><button type="button" aria-label="Close notifications" onClick={() => setNotificationOpen(false)}><X size={16} /></button></div></div>{notificationError && <div className="ins-notification-error">{notificationError}</div>}{notifications.length === 0 ? <div className="ins-notification-empty">No notifications yet.</div> : <div className="ins-notification-list">{notifications.map(notification => <button type="button" key={notification.id} className={`ins-notification-item ${notification.is_read ? 'read' : 'unread'}`} onClick={() => { markNotificationRead(notification); if (notification.detection_id) { setActiveTab('violations'); window.setTimeout(() => document.querySelector(`[data-detection-id="${notification.detection_id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80); } }}><span className="ins-notification-dot" /><span><strong>{notification.title || 'Inspector notification'}{notification.risk_severity && <em className={`ins-risk-badge ins-risk-${String(notification.risk_severity).toLowerCase()}`}>{notification.risk_severity} risk</em>}</strong><small>{notification.message || 'Open the violation history to review this incident.'}</small><small>{notification.station || 'Checkpoint'} · {notification.worker_name || notification.worker_employee_id || 'Worker'} · {notification.created_at ? new Date(notification.created_at).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }) : 'Just now'}</small><small className="ins-notification-link">View incident →</small></span></button>)}</div>}</div>}
           </div>
         </div>
 
@@ -871,7 +898,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
                                     ✓ Override
                                   </button>
                                 )}
-                                {d.result === 'manual_review' && d.review_status === 'pending' && <select aria-label={`Resolve manual review ${d.id}`} defaultValue="" onChange={event => handleManualReview(d.id, event.target.value)} style={{ fontSize: '0.7rem', padding: '3px 6px', maxWidth: 210, borderRadius: 5, border: '1px solid #d6a646', color: '#8a5107', background: '#fffaf0' }}><option value="" disabled>Resolve entry…</option><option value="compliant">Allow Entry — PPE Confirmed</option><option value="non_compliant">Deny Entry — PPE Missing</option><option value="false_detection">Allow Entry — False Detection</option><option value="unable_to_verify">Deny Entry — Unable to Verify</option></select>}
+                                {d.result === 'manual_review' && d.review_status === 'pending' && <select aria-label={`Resolve manual review ${d.id}`} defaultValue="" onChange={event => handleManualReview(d.id, event.target.value)} className="dashboard-select-review"><option value="" disabled>Resolve entry…</option><option value="compliant">Allow Entry — PPE Confirmed</option><option value="non_compliant">Deny Entry — PPE Missing</option><option value="false_detection">Allow Entry — False Detection</option><option value="unable_to_verify">Deny Entry — Unable to Verify</option></select>}
                                 {d.result === 'manual_review' && d.review_status === 'reviewed' && <small style={{ color: '#8a5107' }}>Decision: {String(d.inspector_decision || '').replaceAll('_', ' ')}</small>}
                               </div>
                             </td>
@@ -950,7 +977,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
                       ) : !stationWorkers[expandedStation] || stationWorkers[expandedStation].length === 0 ? (
                         <div style={{ padding: '2rem 0', color: '#aaa', textAlign: 'center', fontSize: '0.9rem' }}>No workers assigned to this station yet</div>
                       ) : (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '0.85rem', padding: '0.5rem 0' }}>
+                        <div className="ins-worker-roster">
                           {stationWorkers[expandedStation].map(w => (
                             <div key={w.id} style={{ background: '#f9fafb', border: '1px solid #eee', borderRadius: '10px', padding: '1rem', display: 'flex', gap: '0.85rem', alignItems: 'flex-start' }}>
                               <div style={{ width: '42px', height: '42px', borderRadius: '50%', background: w.status === 'active' ? 'linear-gradient(135deg, #667eea, #764ba2)' : w.status === 'on_leave' ? 'linear-gradient(135deg, #f6ad55, #ed8936)' : '#cbd5e0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: '0.82rem', flexShrink: 0 }}>
@@ -1329,31 +1356,18 @@ export default function InspectorDashboard({ setCurrentPage }) {
         </div>
       )}
 
-      {/* ── Photo proof modal ── */}
-      {photoModal && (
-        <div
-          onClick={() => setPhotoModal(null)}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, cursor: 'pointer' }}>
-          <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
-            <img src={photoModal} alt="Violation proof" style={{ maxWidth: '80vw', maxHeight: '80vh', borderRadius: 12, border: '3px solid #fca5a5' }} />
-            <div style={{ textAlign: 'center', color: '#fca5a5', fontWeight: 700, marginTop: '0.75rem', fontSize: '0.85rem' }}>
-              Violation Proof Photo &mdash; click outside to close
-            </div>
-            <button
-              onClick={() => setPhotoModal(null)}
-              style={{
-                position: 'absolute', top: -14, right: -14,
-                width: 32, height: 32, borderRadius: '50%',
-                border: '2px solid #fff', background: '#ef4444',
-                color: '#fff', fontWeight: 900, cursor: 'pointer',
-                fontSize: '1.1rem', lineHeight: 1,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
-              }}>
-              &times;
-            </button>
+      {/* Render outside dashboard transforms so the viewer always fills the viewport. */}
+      {photoModal && createPortal(
+        <div className="ins-proof-viewer" onClick={() => setPhotoModal(null)}>
+          <div className="ins-proof-dialog" ref={photoDialogRef} role="dialog"
+            aria-modal="true" aria-label="Violation proof photo" tabIndex={-1}
+            onClick={event => event.stopPropagation()}>
+            <button type="button" className="ins-proof-close" aria-label="Close proof photo"
+              onClick={() => setPhotoModal(null)}><X size={22} /></button>
+            <img src={photoModal} alt="Violation proof" />
+            <p>Violation Proof Photo — click outside or press Escape to close</p>
           </div>
-        </div>
+        </div>, document.body
       )}
 
     </div>

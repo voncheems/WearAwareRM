@@ -162,97 +162,180 @@
 @media (max-width: 900px) { .ppe-assigned-checkpoint { grid-template-columns: auto 1fr; } .ppe-assigned-status, .ppe-local-controls { grid-column: 1 / -1; } .ppe-local-controls { justify-content: stretch; flex-wrap: wrap; } .ppe-local-controls button { flex: 1; } }
 @media (max-width: 720px) { .ppe-setup-card { grid-template-columns: 1fr; } .ppe-setup-card > * { grid-column: 1; } }
 
-/* Shared WearAware editorial language: keep the scanner functional while
-   matching the landing page's warm paper canvas, rounded cards and quiet green
-   controls. */
+/* Scanner dashboard theme, aligned with AdminTheme and InspectorTheme.
+   Scope all overrides to this page so shared scanner consumers retain their UI. */
 .ppe-page {
-  --ppe-ink: #202420;
-  --ppe-muted: #697069;
-  --ppe-green: #32684c;
-  --ppe-deep-green: #293125;
-  --ppe-paper: #f8f9f6;
+  --ppe-ink: #253021;
+  --ppe-muted: #727c6a;
+  --ppe-border: #e1e7da;
+  --ppe-accent: #526f43;
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 16px;
   color: var(--ppe-ink);
-  background:
-    radial-gradient(circle at 90% 0%, rgba(216, 232, 211, .7), transparent 30%),
-    radial-gradient(circle at 5% 35%, rgba(240, 235, 215, .45), transparent 27%),
-    var(--ppe-paper);
+  color-scheme: light;
+  background: #f8f9f6;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
+.ppe-page :is(button, input, select) { font-family: inherit; }
+.ppe-page :is(button, a, input, select):focus-visible { outline: 3px solid #789167; outline-offset: 4px; }
+.ppe-dashboard-sidebar { position: sticky; top: 16px; display: flex; flex-direction: column; flex: 0 0 232px; width: 232px; height: calc(100dvh - 32px); overflow-y: auto; padding: 26px 16px 18px; border: 1px solid var(--ppe-border); border-radius: 24px; background: #edf1e7; }
+.ppe-dashboard-brand { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; padding: 0 8px 24px; border-bottom: 1px solid #dbe3d2; font-size: 19px; font-weight: 600; letter-spacing: -.6px; }
+.ppe-dashboard-brand span { font-size: 11px; font-weight: 500; letter-spacing: 0; color: var(--ppe-muted); }
+.ppe-dashboard-nav { display: flex; flex: 1; flex-direction: column; gap: 7px; }
+.ppe-dashboard-nav-label { margin: 10px 8px 14px; color: #77866b; font-size: 9px; letter-spacing: 1.7px; }
+.ppe-dashboard-nav-item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 13px 12px; border: 0; border-radius: 12px; background: transparent; color: #65725b; text-decoration: none; text-align: left; font: inherit; font-size: 12px; cursor: pointer; transition: background .2s, color .2s; }
+.ppe-dashboard-nav-item:hover { background: #e0e8d7; color: #304527; }
+.ppe-dashboard-nav-item.active { background: #2f4028; color: #fff; box-shadow: 0 5px 14px #2f402814; }
+.ppe-dashboard-nav-item svg { flex-shrink: 0; }
+.ppe-dashboard-sidebar-footer { margin-top: 30px; padding-top: 18px; border-top: 1px solid #dbe3d2; }
+.ppe-dashboard-account { display: flex; align-items: center; gap: 10px; margin-bottom: 15px; }
+.ppe-dashboard-avatar { display: grid; place-items: center; flex: 0 0 38px; height: 38px; border-radius: 50%; background: #dbe5d1; color: #425a34; font-size: 14px; font-weight: 550; }
+.ppe-dashboard-account strong { display: block; color: #34482a; font-size: 12px; font-weight: 550; overflow-wrap: anywhere; }
+.ppe-dashboard-account small { display: block; margin-top: 3px; color: #74816a; font-size: 10px; }
+.ppe-dashboard-leave { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 10px; border: 1px solid #d2ddc6; border-radius: 10px; background: transparent; color: #617354; font: inherit; font-size: 12px; cursor: pointer; }
+.ppe-dashboard-leave:hover { background: #e1e9d8; }
+.ppe-dashboard-main { flex: 1; min-width: 0; width: 100%; }
+.ppe-page .ppe-page-header { position: static; width: 100%; min-height: 82px; margin: 0; padding: 18px 25px; gap: 16px; border: 1px solid var(--ppe-border); border-radius: 20px; background: #ffffffdc; box-shadow: 0 5px 25px #35432b05; }
+.ppe-page .ppe-page-heading strong { font-size: 19px; font-weight: 550; letter-spacing: -.6px; }
+.ppe-page .ppe-page-heading span { font-size: 11px; color: var(--ppe-muted); }
+.ppe-page .ppe-page-mark { display: none; }
+.ppe-page .ppe-page-back { padding: 8px 11px; border-color: #d2ddc6; border-radius: 10px; color: var(--ppe-accent); font-size: 12px; font-weight: 550; }
+.ppe-page .ppe-page-role { padding: 7px 12px; border-color: #dce6d2; background: #edf2e7; color: #5d764c; font-size: 9px; font-weight: 600; letter-spacing: 1.4px; }
+.ppe-page .ppe-page-content { width: 100%; margin: 0; padding: 24px 4px; }
+.ppe-page .ppe-page-intro { max-width: none; margin: 0 0 24px; }
+.ppe-page .ppe-page-kicker { margin-bottom: 10px; color: #77866b; font-size: 9px; letter-spacing: 1.7px; font-weight: 550; }
+.ppe-page .ppe-page-intro h1 { margin: 0 0 8px; font-size: clamp(24px, 2.5vw, 32px); font-weight: 550; line-height: 1.15; letter-spacing: -1px; }
+.ppe-page .ppe-page-intro p { max-width: 720px; margin: 0; color: var(--ppe-muted); font-size: 12px; line-height: 1.7; }
+.ppe-page .ppe-assigned-checkpoint { margin: 0 0 24px; padding: 18px 20px; border-color: var(--ppe-border); border-radius: 20px; box-shadow: 0 5px 20px #35432b04; }
+.ppe-page .ppe-assigned-checkpoint strong { font-size: 14px; font-weight: 550; }
+.ppe-page .ppe-assigned-checkpoint small { font-size: 11px; }
+.ppe-page .ppe-local-controls { flex-wrap: wrap; }
+.ppe-page .ppe-local-controls button { min-height: 36px; padding: 8px 11px; border: 1px solid #d3dec9; border-radius: 10px; background: #fff; color: var(--ppe-accent); font-size: 11px; font-weight: 550; }
+.ppe-page .ppe-local-controls button:hover { background: #edf2e7; }
+.ppe-page .ppe-stat-row { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; margin-bottom: 24px; }
+.ppe-page .ppe-mini-stat { min-width: 0; padding: 22px 18px; border: 1px solid var(--ppe-border); border-radius: 21px; background: #fff; box-shadow: 0 5px 20px #35432b04; text-align: left; }
+.ppe-page .ppe-mini-stat::before { display: none; }
+.ppe-page .ppe-mini-stat:hover { transform: none; border-color: #b2c4a1; box-shadow: 0 12px 28px #35432b0b; }
+.ppe-page .ppe-mini-stat-val { color: var(--ppe-ink); font-size: 32px; font-weight: 550; letter-spacing: -1.3px; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.ppe-page .ppe-mini-stat-val.green { color: #38784a; }
+.ppe-page .ppe-mini-stat-val.red { color: #bf4444; }
+.ppe-page .ppe-mini-stat-val.orange { color: #a8681c; }
+.ppe-page .ppe-mini-stat-label { margin-top: 9px; color: #69765f; font-size: 11px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.ppe-page .ppe-session-steps { flex-wrap: wrap; margin-bottom: 20px; gap: 8px; font-size: 11px; font-weight: 550; }
+.ppe-page .ppe-session-steps span { padding: 9px 13px; border: 1px solid #e1e7da; border-radius: 10px; background: #edf2e7; }
+.ppe-page .ppe-session-steps span.active { background: #2f4028; border-color: #2f4028; box-shadow: none; }
+.ppe-page .ppe-detect-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(300px, .85fr); align-items: start; gap: 24px; }
+.ppe-page .ppe-detect-grid > div { min-width: 0; }
+.ppe-page .ppe-camera-shell { min-height: 240px; border-width: 2px; border-color: #b5c2ab; border-radius: 20px; background: #1e281d; box-shadow: 0 5px 20px #35432b08; }
+.ppe-page .ppe-camera-shell.pass { border-color: #22c55e; }
+.ppe-page .ppe-camera-shell.fail { border-color: #ef4444; }
+.ppe-page .ppe-camera-shell.review { border-color: #f59e0b; }
+.ppe-page :is(.ppe-session-status, .ppe-worker-card, .ppe-progress-card, .ppe-live-result) { border-radius: 16px; box-shadow: none; }
+.ppe-page .ppe-worker-card { padding: 18px; }
+.ppe-page .ppe-worker-card strong { font-size: 15px; font-weight: 550; }
+.ppe-page .ppe-checkpoint-card { padding: 18px; border-color: var(--ppe-border); border-radius: 16px; background: #f5f7f0; }
+.ppe-page .ppe-checkpoint-card strong { font-size: 13px; font-weight: 550; }
+.ppe-page .ppe-progress-card { padding: 18px; }
+.ppe-page .ppe-progress-card strong, .ppe-page .ppe-session-status strong { font-size: 11px; font-weight: 600; }
+.ppe-page .ppe-qr-panel { padding: 26px; border-color: var(--ppe-border); border-radius: 21px; background: #fff; color: var(--ppe-ink); box-shadow: 0 5px 20px #35432b04; }
+.ppe-page .ppe-qr-panel h3 { font-size: 19px; font-weight: 550; letter-spacing: -.5px; }
+.ppe-page .ppe-qr-panel p { color: var(--ppe-muted); font-size: 12px; }
+.ppe-page .ppe-panel-icon { color: var(--ppe-accent); }
+.ppe-page .ppe-inline-status { background: #edf4e9; border-color: #d4e3cb; color: #526f43; font-weight: 550; }
+.ppe-page .ppe-manual-id-divider { color: #7a866f; }
+.ppe-page .ppe-manual-id-divider::before, .ppe-page .ppe-manual-id-divider::after { background: #e1e7da; }
+.ppe-page .ppe-manual-id label { color: #526249; font-size: 11px; font-weight: 550; }
+.ppe-page .ppe-manual-id input { padding: 12px; border-color: #dde5d5; border-radius: 10px; background: #fff; color: var(--ppe-ink); }
+.ppe-page .ppe-manual-id button { border-radius: 10px; background: #2f4028; font-weight: 550; }
+.ppe-page .ppe-manual-id > small { display: block; margin-top: 9px; color: var(--ppe-muted); font-size: 11px; line-height: 1.5; }
+.ppe-page .ppe-setup-card { border-color: var(--ppe-border); border-radius: 21px; background: #fff; box-shadow: 0 5px 20px #35432b04; }
+.ppe-page .ppe-setup-actions button { background: #2f4028; font-weight: 550; }
+.ppe-page .ppe-setup-actions button.secondary { background: #fff; }
+.ppe-page .ppe-recent-log { margin-top: 24px; padding: 20px; border: 1px solid var(--ppe-border); border-radius: 21px; background: #fff; }
+.ppe-page .ppe-recent-log h3 { margin-bottom: 16px; }
+.ppe-page .ppe-log-table { min-width: 420px; }
+.ppe-page .ppe-log-table th { padding: 13px 14px; background: #f5f7f0; border-color: var(--ppe-border); color: #7a866f; font-size: 9px; font-weight: 550; }
+.ppe-page .ppe-log-table td { padding: 15px 14px; border-color: #edf1e7; font-size: 12px; }
+.ppe-page .ppe-log-table tr:hover td { background: #f8faf4; }
 
-.ppe-page-header {
-  width: min(1280px, calc(100% - 64px));
-  min-height: 68px;
-  margin: 16px auto 0;
-  padding: 0 22px;
-  border-color: rgba(69, 92, 67, .16);
-  border-radius: 22px;
-  background: rgba(255, 255, 255, .82);
-  box-shadow: 0 16px 40px rgba(48, 68, 47, .08);
+/* Match dashboard reveals and control feedback without animating live video. */
+.ppe-page :is(.ppe-page-intro, .ppe-assigned-checkpoint, .ppe-setup-card, .ppe-disabled-card, .ppe-page-status) {
+  animation: ppe-dashboard-reveal .4s ease both;
 }
-.ppe-page-mark { border-radius: 14px; background: #e5efe3; color: var(--ppe-green); }
-.ppe-page-heading strong { color: var(--ppe-ink); letter-spacing: -.035em; }
-.ppe-page-heading span { color: var(--ppe-muted); }
-.ppe-page-role { border-color: #d8e5d5; background: #edf4ea; color: #597255; }
-.ppe-page-back { border-color: #d3dfce; border-radius: 14px; background: #fff; color: #41523e; }
-.ppe-page-back:hover { border-color: #7e9b78; color: var(--ppe-green); }
-
-.ppe-page-content { width: min(1180px, calc(100% - 48px)); padding: 4.5rem 0 6rem; }
-.ppe-page-intro { max-width: 760px; margin-bottom: 2.5rem; }
-.ppe-page-kicker { color: var(--ppe-green); letter-spacing: .16em; }
-.ppe-page-intro h1 { color: var(--ppe-ink); font-size: clamp(2.5rem, 5.2vw, 4.65rem); letter-spacing: -.075em; line-height: .96; }
-.ppe-page-intro p { color: var(--ppe-muted); }
-.ppe-page-selector, .ppe-page-status, .ppe-worker-card, .ppe-progress-card, .ppe-live-result {
-  border-color: #e1e7dc;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, .84);
-  box-shadow: 0 12px 32px rgba(55, 75, 53, .05);
+.ppe-page .ppe-mini-stat {
+  animation: ppe-dashboard-reveal .4s ease both;
+  transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease;
 }
-.ppe-page-selector select, .ppe-setup-card select, .ppe-local-controls select {
-  border-color: #d7e1d2;
-  border-radius: 12px;
-  background: #fbfcfa;
+.ppe-page .ppe-mini-stat:nth-child(2) { animation-delay: .04s; }
+.ppe-page .ppe-mini-stat:nth-child(3) { animation-delay: .08s; }
+.ppe-page .ppe-mini-stat:nth-child(4) { animation-delay: .12s; }
+.ppe-page .ppe-mini-stat:nth-child(5) { animation-delay: .16s; }
+.ppe-page :is(.ppe-qr-panel, .ppe-worker-card, .ppe-verdict-card, .ppe-authorization, .ppe-error-box) {
+  animation: ppe-dashboard-reveal .4s ease both;
 }
-.ppe-page-assignment { background: #e8f1e5; color: #365a40; }
-
-.ppe-setup-card, .ppe-disabled-card {
-  border-color: #e1e7dc;
-  border-radius: 24px;
-  box-shadow: 0 20px 55px rgba(55, 75, 53, .09);
+.ppe-page :is(.ppe-session-status, .ppe-progress-card) {
+  transition: background-color .2s ease, border-color .2s ease, box-shadow .2s ease;
 }
-.ppe-setup-card { background: rgba(255, 255, 255, .88); }
-.ppe-setup-icon, .ppe-assigned-mark { background: #e6efe2; color: var(--ppe-green); }
-.ppe-setup-actions button, .ppe-disabled-card button, .ppe-assigned-checkpoint button {
-  border-radius: 13px;
-  background: var(--ppe-deep-green);
+.ppe-page :is(.ppe-dashboard-nav-item, .ppe-dashboard-leave, .ppe-page-back, .ppe-local-controls button, .ppe-setup-actions button, .ppe-manual-id button, .ppe-manual-reset) {
+  transition: background-color .2s ease, border-color .2s ease, color .2s ease, box-shadow .2s ease, transform .2s ease;
 }
-.ppe-setup-actions button:hover, .ppe-disabled-card button:hover, .ppe-assigned-checkpoint button:hover { background: #40573b; }
-.ppe-setup-actions button.secondary, .ppe-assigned-checkpoint button { border-color: #d4dfcf; background: #fff; color: #4a6045; }
-.ppe-assigned-checkpoint { border-color: #e0e8dc; border-radius: 20px; background: rgba(255,255,255,.86); box-shadow: 0 14px 36px rgba(55,75,53,.06); }
-.ppe-checkpoint-card { border-color: #dce6d6; border-radius: 18px; background: #f2f7ef; }
-.ppe-checkpoint-items b { background: #e2eddd; color: #486844; }
-
-.ppe-session-steps { color: #899487; }
-.ppe-session-steps span { background: #edf2e9; }
-.ppe-session-steps span.active { background: var(--ppe-deep-green); box-shadow: 0 8px 18px rgba(41,49,37,.18); }
-.ppe-camera-shell { border-color: #789077; border-radius: 20px; box-shadow: 0 18px 45px rgba(36, 55, 39, .12); }
-.ppe-box-overlay, .ppe-video-stage, .ppe-video-stage video { border-radius: 16px; }
-.ppe-qr-target { border-color: #a7cf9e; border-radius: 16px; }
-.ppe-session-status { border-color: #e0e8dc; border-radius: 14px; }
-.ppe-session-status.state-scanning, .ppe-session-status.state-person_detected { border-color: #b8d8b5; background: #f0f7ed; }
-.ppe-session-status.state-processing, .ppe-session-status.state-waiting_for_exit { border-color: #e8d7af; background: #fff9ec; }
-
-.ppe-qr-panel { border-color: #d7e5d2; border-radius: 22px; background: linear-gradient(135deg, #eff6eb, #e5efe1); color: #315d3e; box-shadow: 0 16px 38px rgba(55,75,53,.06); }
-.ppe-qr-panel p { color: #5e7860; }
-.ppe-inline-status { border-color: #bdd9b9; background: #e4f2e1; color: #3c7949; }
-.ppe-manual-id-divider { color: #71836e; }
-.ppe-manual-id-divider::before, .ppe-manual-id-divider::after { background: #d0dfcb; }
-.ppe-manual-id label { color: #52704f; }
-.ppe-manual-id input { border-color: #cbdcc6; border-radius: 12px; color: #304a31; }
-.ppe-manual-id button { border-radius: 12px; background: var(--ppe-deep-green); }
-.ppe-error-box { border-radius: 14px; }
-
-@media (max-width: 640px) {
-  .ppe-page-header { width: calc(100% - 20px); margin-top: 10px; border-radius: 18px; }
-  .ppe-page-content { width: calc(100% - 28px); padding-top: 3rem; }
-  .ppe-page-intro h1 { font-size: clamp(2.4rem, 13vw, 3.5rem); }
+.ppe-page :is(.ppe-manual-id input, .ppe-setup-card select, .ppe-local-controls select) {
+  transition: border-color .2s ease, box-shadow .2s ease;
+}
+.ppe-page :is(.ppe-manual-id input, .ppe-setup-card select, .ppe-local-controls select):focus-visible {
+  border-color: #789167;
+  box-shadow: 0 0 0 3px #78916715;
+}
+@media (hover: hover) and (pointer: fine) {
+  .ppe-page .ppe-dashboard-nav-item:hover { transform: translateX(2px); }
+  .ppe-page .ppe-mini-stat:hover { transform: translateY(-3px); }
+  .ppe-page :is(.ppe-page-back, .ppe-local-controls button, .ppe-setup-actions button, .ppe-manual-id button, .ppe-manual-reset):not(:disabled):hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px #2f402814;
+  }
+}
+.ppe-page :is(.ppe-dashboard-nav-item, .ppe-dashboard-leave, .ppe-page-back, .ppe-local-controls button, .ppe-setup-actions button, .ppe-manual-id button, .ppe-manual-reset):not(:disabled):active {
+  transform: translateY(0);
+  box-shadow: none;
+}
+@keyframes ppe-dashboard-reveal {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: none; }
+}
+@media (max-width: 1200px) {
+  .ppe-dashboard-sidebar { flex-basis: 205px; width: 205px; }
+  .ppe-page .ppe-stat-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ppe-page .ppe-assigned-checkpoint { grid-template-columns: auto minmax(0, 1fr); }
+  .ppe-page .ppe-assigned-status, .ppe-page .ppe-local-controls { grid-column: 1 / -1; }
+  .ppe-page .ppe-local-controls { justify-content: flex-start; }
+}
+@media (max-width: 1100px) {
+  .ppe-page .ppe-detect-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 760px) {
+  .ppe-page { flex-direction: column; gap: 12px; padding: 12px; }
+  .ppe-dashboard-sidebar { position: static; flex: auto; width: 100%; height: auto; overflow: visible; padding: 16px; border-radius: 19px; }
+  .ppe-dashboard-brand { margin-bottom: 12px; padding: 0 0 12px; font-size: 17px; }
+  .ppe-dashboard-nav { flex-direction: row; gap: 8px; }
+  .ppe-dashboard-nav-label { display: none; }
+  .ppe-dashboard-nav-item { justify-content: center; padding: 11px 8px; }
+  .ppe-dashboard-sidebar-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding-top: 12px; }
+  .ppe-dashboard-account { margin: 0; }
+  .ppe-dashboard-leave { width: auto; white-space: nowrap; }
+  .ppe-page .ppe-page-header { padding: 16px 18px; }
+  .ppe-page .ppe-page-content { padding: 18px 0; }
+  .ppe-page .ppe-stat-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .ppe-page .ppe-mini-stat { padding: 18px; }
+  .ppe-page .ppe-mini-stat:last-child { grid-column: 1 / -1; }
+  .ppe-page .ppe-page-back { font-size: 0; }
+  .ppe-page .ppe-page-back svg { margin: 0; }
+  .ppe-page .ppe-qr-panel { padding: 22px; }
+  .ppe-page .ppe-manual-id input { font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ppe-page *, .ppe-page *::before, .ppe-page *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  .ppe-page :is(.ppe-mini-stat, .ppe-dashboard-nav-item, button):hover { transform: none; }
 }

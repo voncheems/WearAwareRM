@@ -1,3 +1,4 @@
+import useMobileSidebar from '../hooks/useMobileSidebar';
 import { escapeHtml, printDocument } from '../utils/print';
 import React, { useState, useEffect, useRef } from 'react';
 import './AdminDashboard.css';
@@ -419,6 +420,7 @@ function BulkQRModal({ workers, onClose }) {
 // ─────────────────────────────────────────────
 export default function AdminDashboard({ setCurrentPage }) {
   const sidebarRef = useRef(null);
+  const mobileSidebar = useMobileSidebar(sidebarRef);
   const [loadErrors, setLoadErrors] = useState({});
   const [activeTab,     setActiveTab]     = useState('overview');
   const [users,         setUsers]         = useState([]);
@@ -1163,7 +1165,9 @@ export default function AdminDashboard({ setCurrentPage }) {
   return (
     <div className="ad-page">
 
-      <div ref={sidebarRef} className="wa-admin-sidebar" role="complementary" aria-label="Admin controls" style={{ display: 'flex' }}>
+      {mobileSidebar.backdrop}
+      <div {...mobileSidebar.props} className="wa-admin-sidebar" aria-label="Admin navigation" style={{ display: 'flex' }}>
+        {mobileSidebar.closeButton}
         <button className="ad-logo" onClick={() => setActiveTab('overview')} aria-label="WearAware admin overview">
           <span className="ad-logo-icon"><WearAwareLogo size={30} /></span> WearAware<span className="ad-brand-dot">.</span>
         </button>
@@ -1189,7 +1193,7 @@ export default function AdminDashboard({ setCurrentPage }) {
 
       <main className="ad-main">
         <div className="ad-topbar">
-          <div>
+          <div className="dashboard-title-group">{mobileSidebar.toggle}<div>
             <div className="ad-topbar-title">
               {activeTab === 'overview'   && 'Dashboard Overview'}
               {activeTab === 'analytics'  && 'Violation Analytics'}
@@ -1202,7 +1206,7 @@ export default function AdminDashboard({ setCurrentPage }) {
               {activeTab === 'pwrequests' && 'Password Reset Requests'}
             </div>
             <div className="ad-topbar-sub">Welcome back, {user.full_name || 'Admin'}</div>
-          </div>
+          </div></div>
           <div className="ad-topbar-right">
             <span className="ad-badge">ADMIN</span>
             <button className="ad-topbar-logout" onClick={handleLogout}>Sign Out</button>
@@ -1335,7 +1339,7 @@ export default function AdminDashboard({ setCurrentPage }) {
 
           {/* ── VIOLATION ANALYTICS ── */}
           {activeTab === 'analytics' && (
-            <AdminPanelBoundary><ViolationAnalytics checkpoints={stationDevices} profiles={profiles} /></AdminPanelBoundary>
+            <AdminPanelBoundary><ViolationAnalytics checkpoints={stationDevices} profiles={profiles} onViewDetections={() => setActiveTab('detections')} /></AdminPanelBoundary>
           )}
 
           {/* ── EMPLOYEE COMPLIANCE ── */}
@@ -1477,7 +1481,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                           <td><span style={{ fontWeight: 600 }}>{parseInt(d.active_workers || 0)}</span><span style={{ color: '#aaa', fontSize: '0.8rem' }}> / {parseInt(d.total_workers || 0)}</span></td>
                           <td>{(d.required_ppe || []).length > 0 ? d.required_ppe.map(p => <span key={p} className="ad-ppe-tag">{ppeLabel(p)}</span>) : <span style={{ color: '#aaa', fontSize: '0.8rem' }}>No PPE required</span>}</td>
                           <td>
-                            <select className="ad-filter-select" style={{ minWidth: '180px', fontSize: '0.83rem' }}
+                            <select className="ad-filter-select" style={{ minWidth: '180px' }}
                               value={d.inspector_id || ''} onChange={e => handleAssignInspector(d.id, e.target.value)}>
                               <option value="">— Unassigned —</option>
                               {inspectors.map(ins => <option key={ins.id} value={ins.id}>{ins.full_name}</option>)}
@@ -1580,7 +1584,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                         <td>{d.profile_name || <span style={{ color: '#aaa' }}>Custom</span>}</td>
                         <td style={{ color: '#555' }}>{d.inspector || '—'}</td>
                         <td style={{ fontSize: '0.85rem' }}><div style={{ color: '#444' }}>{d.date}</div><div style={{ color: '#bbb' }}>{d.time}</div></td>
-                        <td><span className={`ad-violation-badge ${d.result === 'violation' ? 'ad-violation-yes' : 'ad-violation-no'}`} style={d.alert_type === 'manual_review' ? { background: '#fff7ed', color: '#b45309' } : undefined}>{d.alert_type === 'manual_review' ? '⚠ Manual Review' : d.result === 'violation' ? '⚠ Violation' : '✓ Compliant'}</span>{d.result === 'manual_review' && d.review_status === 'pending' && <select aria-label={`Resolve manual review ${d.id}`} defaultValue="" onChange={event => handleManualReview(d.id, event.target.value)} style={{ display: 'block', marginTop: 6, maxWidth: 190, fontSize: '0.7rem', padding: 3, border: '1px solid #d6a646', borderRadius: 5, color: '#8a5107' }}><option value="" disabled>Resolve entry…</option><option value="compliant">Allow Entry — PPE Confirmed</option><option value="non_compliant">Deny Entry — PPE Missing</option><option value="false_detection">Allow Entry — False Detection</option><option value="unable_to_verify">Deny Entry — Unable to Verify</option></select>}{d.result === 'manual_review' && d.review_status === 'reviewed' && <small style={{ display: 'block', marginTop: 5, color: '#8a5107' }}>{String(d.inspector_decision || '').replaceAll('_', ' ')}</small>}</td>
+                        <td><span className={`ad-violation-badge ${d.result === 'violation' ? 'ad-violation-yes' : 'ad-violation-no'}`} style={d.alert_type === 'manual_review' ? { background: '#fff7ed', color: '#b45309' } : undefined}>{d.alert_type === 'manual_review' ? '⚠ Manual Review' : d.result === 'violation' ? '⚠ Violation' : '✓ Compliant'}</span>{d.result === 'manual_review' && d.review_status === 'pending' && <select aria-label={`Resolve manual review ${d.id}`} defaultValue="" onChange={event => handleManualReview(d.id, event.target.value)} className="dashboard-select-review"><option value="" disabled>Resolve entry…</option><option value="compliant">Allow Entry — PPE Confirmed</option><option value="non_compliant">Deny Entry — PPE Missing</option><option value="false_detection">Allow Entry — False Detection</option><option value="unable_to_verify">Deny Entry — Unable to Verify</option></select>}{d.result === 'manual_review' && d.review_status === 'reviewed' && <small style={{ display: 'block', marginTop: 5, color: '#8a5107' }}>{String(d.inspector_decision || '').replaceAll('_', ' ')}</small>}</td>
                         <td><span className="ad-violation-badge" style={authorizationStyle(d.authorization_status)}>{authorizationLabel(d.authorization_status)}</span>{d.authorization_override_at && <small style={{ display: 'block', marginTop: 5, color: '#718096' }}>Inspector override</small>}</td>
                             <td><span className="ad-violation-badge" style={{ background: d.resolution_status === 'CONFIRMED_VIOLATION' ? '#fee2e2' : d.resolution_status === 'FALSE_DETECTION' ? '#e0f2fe' : d.resolution_status === 'PENDING_REVIEW' ? '#fff7ed' : '#dcfce7', color: d.resolution_status === 'CONFIRMED_VIOLATION' ? '#b91c1c' : d.resolution_status === 'FALSE_DETECTION' ? '#075985' : d.resolution_status === 'PENDING_REVIEW' ? '#9a5706' : '#166534' }}>{resolutionLabel(d.resolution_status)}</span>{(d.resolution_status === 'PENDING_REVIEW' || (!d.resolution_status && d.result === 'violation')) && <div className="ad-resolution-actions"><button className="ad-resolution-action confirm" type="button" onClick={() => handleResolution(d.id, 'CONFIRMED_VIOLATION')}>Confirm</button><button className="ad-resolution-action false-detection" type="button" onClick={() => handleResolution(d.id, 'FALSE_DETECTION')}>False detection</button></div>}</td>
                         <td>{(d.required_ppe || []).length > 0 ? d.required_ppe.map(p => <span key={p} className="ad-ppe-tag">{ppeLabel(p)}</span>) : <span style={{ color: '#ccc', fontSize: '0.8rem' }}>None</span>}</td>

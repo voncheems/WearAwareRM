@@ -1,3 +1,4 @@
+import useMobileSidebar from '../hooks/useMobileSidebar';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, CheckCircle2, LogOut, MapPin, RefreshCw, ScanLine, Settings2, Volume2, VolumeX } from 'lucide-react';
 import PPEDetectionTab from './PPEDetectionTab';
@@ -14,6 +15,7 @@ function checkpointLabel(checkpoint) {
 export default function PPEDetectionPage({ setCurrentPage }) {
   const account = useMemo(() => JSON.parse(localStorage.getItem('user') || '{}'), []);
   const isScanner = account.role === 'scanner';
+  const mobileSidebar = useMobileSidebar();
   const backPage = isScanner ? 'landing' : 'inspector';
   const [assignedId, setAssignedId] = useState(() => localStorage.getItem(ASSIGNMENT_KEY) || '');
   const [checkpoint, setCheckpoint] = useState(null);
@@ -130,11 +132,27 @@ export default function PPEDetectionPage({ setCurrentPage }) {
     setCurrentPage(backPage);
   };
 
-  return <main className="ppe-page">
+  return <div className="ppe-page">
+    {mobileSidebar.backdrop}
+    <aside {...mobileSidebar.props} className="ppe-dashboard-sidebar" aria-label="Scanner navigation">
+      {mobileSidebar.closeButton}
+      <div className="ppe-dashboard-brand">Scanner workspace<span>WearAware</span></div>
+      <nav className="ppe-dashboard-nav" aria-label="Scanner navigation">
+        <span className="ppe-dashboard-nav-label">YOUR WORKSPACE</span>
+        <a className={`ppe-dashboard-nav-item ${!setupMode ? 'active' : ''}`} href="#scanner-workspace" aria-current={!setupMode ? 'page' : undefined} onClick={() => { if (checkpoint) setSetupMode(false); }}><ScanLine size={18} /> PPE Scanner</a>
+        <button type="button" className={`ppe-dashboard-nav-item ${setupMode ? 'active' : ''}`} aria-current={setupMode ? 'page' : undefined} onClick={openSetup}><Settings2 size={18} /> Checkpoint Setup</button>
+      </nav>
+      <div className="ppe-dashboard-sidebar-footer">
+        <div className="ppe-dashboard-account"><span className="ppe-dashboard-avatar" aria-hidden="true">{(account.full_name || 'Checkpoint Scanner').split(' ').filter(Boolean).map(part => part[0]).join('').slice(0, 2)}</span><div><strong>{account.full_name || 'Checkpoint Scanner'}</strong><small>{isScanner ? 'Scanner' : 'Inspector'}</small></div></div>
+        <button type="button" className="ppe-dashboard-leave" onClick={leave}>{isScanner ? <LogOut size={16} /> : <ArrowLeft size={16} />}{isScanner ? 'Sign out' : 'Back to dashboard'}</button>
+      </div>
+    </aside>
+    <main className="ppe-dashboard-main" id="scanner-workspace">
     <header className="ppe-page-header">
       <div className="ppe-page-heading">
+        {mobileSidebar.toggle}
         <div className="ppe-page-mark"><ScanLine size={20} /></div>
-        <div><strong>Checkpoint Scanner</strong><span>{checkpoint?.label || 'WearAware safety station'}</span></div>
+        <div><strong>Checkpoint Scanner</strong><span>Welcome back, {account.full_name || 'Checkpoint Scanner'}</span></div>
       </div>
       <div className="ppe-page-header-actions">
         <span className="ppe-page-role">{isScanner ? 'SCANNER' : 'INSPECTOR'}</span>
@@ -196,5 +214,6 @@ export default function PPEDetectionPage({ setCurrentPage }) {
                   </>
                 : <div className="ppe-page-status">This scanner has no checkpoint assignment.</div>}
     </section>
-  </main>;
+    </main>
+  </div>;
 }
