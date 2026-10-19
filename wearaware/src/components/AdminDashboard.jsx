@@ -1,3 +1,4 @@
+import { signOut } from '../utils/auth-session';
 import useMobileSidebar from '../hooks/useMobileSidebar';
 import { escapeHtml, printDocument } from '../utils/print';
 import React, { useState, useEffect, useRef } from 'react';
@@ -979,7 +980,10 @@ export default function AdminDashboard({ setCurrentPage }) {
     finally { setEditUserSubmitting(false); }
   };
 
-  const handleLogout = () => { localStorage.removeItem('token'); localStorage.removeItem('user'); setCurrentPage('landing'); };
+  const handleLogout = async () => {
+    try { if (await signOut(API)) setCurrentPage('landing'); }
+    catch (error) { window.alert(error.message); }
+  };
 
   const [reportModal,  setReportModal]  = useState(false);
   const [adminPhoto,   setAdminPhoto]   = useState(null);

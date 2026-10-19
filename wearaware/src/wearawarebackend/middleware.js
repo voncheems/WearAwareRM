@@ -4,8 +4,17 @@ const JWT_SECRET = process.env.JWT_SECRET;
 async function authenticateToken(token) {
   const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
   if (!Number.isSafeInteger(decoded.id) || !Number.isFinite(decoded.iat) || !Number.isFinite(decoded.exp)) throw new Error('Invalid claims');
-  const user = (await data.users({ id: decoded.id }, 'updated_at is_active role session_version password_reset_required mfa_enabled')).rows[0];
+  if (decoded.mfa_pending === true || (decoded.token_use !== undefined && decoded.token_use !== 'access')) throw new Error('Access token required');
+  if (decoded.session_version !== undefined && (!Number.isSafeInteger(decoded.session_version) || decoded.session_version < 0)) throw new Error('Invalid session version');
+  let user;
+  try {
+    user = (await data.users({ id: decoded.id }, 'updated_at is_active role session_version password_reset_required mfa_enabled')).rows[0];
+  } catch {
+    // An unavailable database does not prove a credential expired or was revoked.
+    throw Object.assign(new Error('Session verification unavailable'), { status: 503 });
+  }
   if (!user || !user.is_active || user.password_reset_required) throw new Error('Inactive account');
+  if (user.mfa_enabled && decoded.mfa_verified !== true) throw new Error('MFA verification required');
   if ((decoded.session_version || 0) !== (user.session_version || 0)) throw new Error('Revoked session');
   if (Math.floor(new Date(user.updated_at).getTime() / 1000) > decoded.iat) throw new Error('Stale session');
   return { ...decoded, role: user.role };
@@ -16,7 +25,10 @@ async function requireAuth(req, res, next) {
   const match = /^Bearer ([^\s]+)$/i.exec(header);
   if (!match) return res.status(401).json({ error: 'Invalid authorization header.' });
   try { req.user = await authenticateToken(match[1]); next(); }
-  catch { res.status(401).json({ error: 'Invalid or expired session. Please sign in again.' }); }
+  catch (error) {
+    if (error.status === 503) return res.status(503).json({ error: 'Session verification is temporarily unavailable. Please retry.' });
+    res.status(401).json({ error: 'Invalid or expired session. Please sign in again.' });
+  }
 }
 function requireRole(...roles) {
   return (req, res, next) => {

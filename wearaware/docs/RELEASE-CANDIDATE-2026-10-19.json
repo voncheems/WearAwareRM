@@ -1,0 +1,16 @@
+{
+  "baseline_commit": "30cd315606cd701455ef0d21f5bfa6b2885d8e68",
+  "candidate_commit": null,
+  "candidate_fingerprint_sha256": "ebcd9158f26d7205f61cc366be199fb45db4b467712a830f1011f3c3858a692e",
+  "scope": "Eight reviewed pending files; readiness report, manifest and sanitized result artifacts are additional release documentation and excluded to avoid self-referential hashes.",
+  "files_sha256": {
+    "docs/STABILITY-AUDIT-2026-10-19.md": "3d02d7d8aaf01fcac226ca0b1ce0a76b00cfedb113aee089484ee18008920d23",
+    "services/ppe-api/README.md": "eb2f2a87072dc4744f78bbebd0607f68b3b215930ee6c90b8045832198b9219a",
+    "services/ppe-api/api.py": "c1eeedd450556cdd90fc233e83bc3e234c037ca3e122e739e1603626f3009c1b",
+    "services/ppe-api/benchmark_memory.py": "1a455eec5e145db6d53a9c7c3d2c220b43940122fd31507208ebf3afc5ba14a0",
+    "services/ppe-api/test_security.py": "ae5d79e9e3d5f5ad5537e28019fa93051fb53dcc8e8e250b3d78c40f3a65f084",
+    "services/ppe-api/verify_local_service.py": "5bf5dca2b5a57a66712b0e48f91b3a1141693467e18c97376d0e362672cd84ee",
+    "src/wearawarebackend/test/scanner-contract.test.js": "8ecb897556d12d6434b08bc6e7bcbb04db2ee4212887492edb2badfe26db3b78",
+    "src/wearawarebackend/test/security.test.js": "b91fea1f7e613206793f900b6dc1c4da2b4b9cd9ce6390f244ca6618046f4a6b"
+  }
+}

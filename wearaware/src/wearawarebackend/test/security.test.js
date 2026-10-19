@@ -617,6 +617,14 @@ test('AI failures and malformed responses remain service errors without creating
       upstream = async () => { const error = new Error('private diagnostic'); error.name = name; throw error; };
       assert.equal((await send()).status, 503);
     }
+    const previousKey = process.env.AI_API_KEY;
+    delete process.env.AI_API_KEY;
+    try {
+      upstream = async () => { throw new Error('Upstream must not be called without credentials'); };
+      const unconfigured = await send();
+      assert.equal(unconfigured.status, 503);
+      assert.deepEqual(await unconfigured.json(), { error: 'Detection service is not configured.' });
+    } finally { process.env.AI_API_KEY = previousKey; }
     upstream = async () => Response.json({ detections: [], total_detections: 0 });
     const empty = await (await send()).json();
     assert.equal(empty.person_count, 0);
@@ -683,6 +691,34 @@ test('finalized scans persist compliance, risk and review independently and conc
     }
     assert.equal(await db.collection('notifications').countDocuments({ detection_id: record.id }), result === 'compliant' ? 0 : 1);
   }
+});
+
+test('database insertion failure never returns a saved verdict or creates notifications', async () => {
+  const { data } = require('../middleware');
+  const originalInsert = data.insert;
+  const scanSessionId = require('node:crypto').randomUUID();
+  const notificationsBefore = await db.collection('notifications').countDocuments();
+  let response;
+  data.insert = async function (table, ...args) {
+    if (table === 'detections') throw new Error('isolated storage failure');
+    return originalInsert.call(this, table, ...args);
+  };
+  try {
+    response = await call('/api/detections', token(6, 'scanner'), 'POST', {
+      worker_id: 11, checkpoint_id: 1, scan_session_id: scanSessionId,
+      frame_count: 3, confidence_score: 0.9, visibility_score: 1,
+      confidence_summary: [
+        { ppe: 'helmet', average_confidence: 0.9, positive_frames: 3, weak_frames: 0, observed_frames: 3 },
+        { ppe: 'vest', average_confidence: 0, positive_frames: 0, weak_frames: 0, observed_frames: 0 },
+      ],
+    });
+  } finally {
+    data.insert = originalInsert;
+  }
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: 'Failed to save detection.' });
+  assert.equal(await db.collection('detections').countDocuments({ scan_session_id: scanSessionId }), 0);
+  assert.equal(await db.collection('notifications').countDocuments(), notificationsBefore);
 });
 
 test('legacy plaintext cleanup revokes access and strict database validation rejects unsafe records', async () => {

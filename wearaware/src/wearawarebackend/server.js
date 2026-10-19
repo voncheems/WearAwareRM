@@ -13,13 +13,13 @@ const { assessRisk } = require('./risk-assessment');
 const { ensureDefaultComplianceProfiles } = require('./compliance-profiles');
 const { getWorkerRepeatStatus } = require('./repeat-violations');
 const { authorizationRecord } = require('./entry-authorization');
+const { issueAccessToken, revokeAccountSessions } = require('./auth-sessions');
 const { installMfa, issueLoginOtp, createMfaChallenge, readMfaChallenge, verifyMfaCode } = require('./mfa');
 const bcrypt   = require('bcrypt');
-const jwt      = require('jsonwebtoken');
 const http = require('node:http');
 const nodemailer = require('nodemailer');
 
-const { data, JWT_SECRET, requireAuth, requireRole } = require('./middleware');
+const { data, requireAuth, requireRole } = require('./middleware');
 const { connectDatabase, closeDatabase, ensureIndexes, ensureUserRole, ensureScannerRole } = require('./database');
 
 const app = express();
@@ -138,11 +138,7 @@ app.post('/api/auth/login', validateRequest, async (req, res) => {
       }
     }
 
-    const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role, full_name: user.full_name, session_version: user.session_version || 0 },
-      JWT_SECRET,
-      { expiresIn: '8h', algorithm: 'HS256' }
-    );
+    const token = issueAccessToken(user, { mfaVerified: Boolean(user.mfa_enabled) });
 
     await recordAudit({ category: 'login', action: 'Signed in', actor: user, target: user.email });
     res.json({
@@ -162,6 +158,14 @@ app.post('/api/auth/login', validateRequest, async (req, res) => {
     }
     res.status(500).json({ error: 'Server error.' });
   }
+});
+
+app.post('/api/auth/logout', requireAuth, async (req, res, next) => {
+  try {
+    await revokeAccountSessions(req.user.id, req.user.session_version || 0);
+    await recordAudit({ category: 'action', action: 'Signed out all sessions', actor: req.user });
+    res.json({ success: true, scope: 'all_sessions' });
+  } catch (error) { next(error); }
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -313,7 +317,7 @@ app.patch('/api/inspector/profile', requireAuth, requireRole('inspector'), valid
 
     const updated = await data.users({ id: req.user.id }, "id full_name email role created_at session_version", {});
     const account = updated.rows[0];
-    const token = new_password ? undefined : jwt.sign({ id: account.id, role: account.role, session_version: account.session_version || 0 }, JWT_SECRET, { expiresIn: '8h', algorithm: 'HS256' });
+    const token = new_password ? undefined : issueAccessToken(account, { mfaVerified: req.user.mfa_verified === true, expiresAt: req.user.exp });
     res.json({ success: true, user: account, ...(token ? { token } : {}) });
   } catch (err) {
     if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });

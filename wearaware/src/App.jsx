@@ -1,5 +1,6 @@
 import ResetPasswordPage from './components/ResetPasswordPage';
 import { API } from './config/api';
+import { AUTH_SIGNED_OUT } from './utils/auth-session';
 import React, { useState, useEffect } from 'react';
 import UserDashboard from './components/UserDashboard';
 import LandingPage from './components/LandingPage';
@@ -17,6 +18,22 @@ function App() {
   const [currentPage, setCurrentPage] = useState('landing');
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [authChecked, setAuthChecked] = useState(() => !!resetToken || !localStorage.getItem('token'));
+
+  useEffect(() => {
+    const signedOut = () => { setCurrentPage('landing'); setAuthChecked(true); };
+    const onStorage = event => {
+      if (event.key === 'token' && !event.newValue) {
+        localStorage.removeItem('user');
+        signedOut();
+      }
+    };
+    window.addEventListener(AUTH_SIGNED_OUT, signedOut);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(AUTH_SIGNED_OUT, signedOut);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
 
   useEffect(() => {
     const consumeResetLink = () => {
@@ -55,7 +72,7 @@ function App() {
         return res.json();
       })
       .then(data => {
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || localStorage.getItem('token') !== token) return;
         // Overwrite stale localStorage with fresh DB data
         localStorage.setItem('user', JSON.stringify(data.user));
         const role = data.user.role;
@@ -65,7 +82,7 @@ function App() {
         if (role === 'scanner')   setCurrentPage('scanner');
       })
       .catch(() => {
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || localStorage.getItem('token') !== token) return;
         // Token expired or invalid — clear storage and go to landing
         localStorage.removeItem('token');
         localStorage.removeItem('user');

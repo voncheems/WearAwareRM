@@ -1,3 +1,4 @@
+import { signOut } from '../utils/auth-session';
 import useMobileSidebar from '../hooks/useMobileSidebar';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, CheckCircle2, LogOut, MapPin, RefreshCw, ScanLine, Settings2, Volume2, VolumeX } from 'lucide-react';
@@ -127,9 +128,11 @@ export default function PPEDetectionPage({ setCurrentPage }) {
     setSetupMode(true);
   };
 
-  const leave = () => {
-    if (isScanner) { localStorage.removeItem('token'); localStorage.removeItem('user'); }
-    setCurrentPage(backPage);
+  const leave = async () => {
+    if (isScanner) {
+      try { if (await signOut(API)) setCurrentPage(backPage); }
+      catch (error) { window.alert(error.message); }
+    } else setCurrentPage(backPage);
   };
 
   return <div className="ppe-page">

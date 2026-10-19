@@ -1,3 +1,4 @@
+import { signOut } from '../utils/auth-session';
 import useMobileSidebar from '../hooks/useMobileSidebar';
 import { API } from '../config/api';
 import { createElement, useEffect, useState } from 'react';
@@ -64,7 +65,10 @@ export default function UserDashboard({ setCurrentPage }) {
     return () => controller.abort();
   }, [page, refresh, setCurrentPage]);
 
-  const logout = () => { localStorage.removeItem('token'); localStorage.removeItem('user'); setCurrentPage('landing'); };
+  const logout = async () => {
+    try { if (await signOut(API)) setCurrentPage('landing'); }
+    catch (error) { window.alert(error.message); }
+  };
   const name = data?.worker.full_name || 'Your workspace';
   const stats = data?.stats;
   return <div className="ins-page user-page">

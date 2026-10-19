@@ -1,0 +1,315 @@
+{
+  "local_http": {
+    "scope": "localhost synthetic JPEGs; real model; one Uvicorn worker",
+    "startup_to_ready_ms": 1485.38,
+    "sampled_process_rss_peak_mib": 403.06,
+    "rss_sampling_interval_ms": 100,
+    "unexpected_failures": 0,
+    "expected_overload_503_count": 1,
+    "sequential_latency_ms": {
+      "median": 32.71,
+      "p95": 33.1
+    },
+    "records": [
+      {
+        "case": "concurrent_cold",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 782.31,
+        "elapsed_ms": 794.6
+      },
+      {
+        "case": "concurrent_cold",
+        "status": 503,
+        "elapsed_ms": 107.2
+      },
+      {
+        "case": "single",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 35.77,
+        "elapsed_ms": 39.41
+      },
+      {
+        "case": "sequential",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 30.41,
+        "elapsed_ms": 33.1
+      },
+      {
+        "case": "sequential",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 30.4,
+        "elapsed_ms": 33.02
+      },
+      {
+        "case": "sequential",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 29.68,
+        "elapsed_ms": 32.52
+      },
+      {
+        "case": "sequential",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 30.58,
+        "elapsed_ms": 33.36
+      },
+      {
+        "case": "sequential",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 30.02,
+        "elapsed_ms": 32.66
+      },
+      {
+        "case": "sequential",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 29.67,
+        "elapsed_ms": 32.32
+      },
+      {
+        "case": "sequential",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 30.01,
+        "elapsed_ms": 32.95
+      },
+      {
+        "case": "sequential",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 30.09,
+        "elapsed_ms": 33.08
+      },
+      {
+        "case": "sequential",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 29.8,
+        "elapsed_ms": 32.49
+      },
+      {
+        "case": "sequential",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 29.81,
+        "elapsed_ms": 32.76
+      },
+      {
+        "case": "sequential",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 29.31,
+        "elapsed_ms": 32.11
+      },
+      {
+        "case": "sequential",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 29.61,
+        "elapsed_ms": 32.18
+      },
+      {
+        "case": "sequential",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 29.93,
+        "elapsed_ms": 32.65
+      },
+      {
+        "case": "sequential",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 29.69,
+        "elapsed_ms": 32.32
+      },
+      {
+        "case": "sequential",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 30.18,
+        "elapsed_ms": 32.84
+      },
+      {
+        "case": "sequential",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 29.18,
+        "elapsed_ms": 31.91
+      },
+      {
+        "case": "sequential",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 29.76,
+        "elapsed_ms": 32.9
+      },
+      {
+        "case": "sequential",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 29.95,
+        "elapsed_ms": 32.77
+      },
+      {
+        "case": "sequential",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 29.3,
+        "elapsed_ms": 31.98
+      },
+      {
+        "case": "sequential",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 29.77,
+        "elapsed_ms": 32.81
+      },
+      {
+        "case": "large_resize",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 74.13,
+        "elapsed_ms": 83.54
+      },
+      {
+        "case": "pixel_limit",
+        "status": 400,
+        "elapsed_ms": 6.66
+      },
+      {
+        "case": "byte_limit",
+        "status": 413,
+        "elapsed_ms": 5.11
+      },
+      {
+        "case": "invalid_image",
+        "status": 400,
+        "elapsed_ms": 35.57
+      },
+      {
+        "case": "unauthenticated",
+        "status": 401,
+        "elapsed_ms": 0.65
+      },
+      {
+        "case": "short_client_timeout",
+        "error_category": "timeout",
+        "elapsed_ms": 1.35
+      },
+      {
+        "case": "recovery",
+        "status": 200,
+        "person_count": 0,
+        "total_detections": 0,
+        "inference_time_ms": 36.59,
+        "elapsed_ms": 42.49
+      },
+      {
+        "case": "final_readiness",
+        "status": 200,
+        "elapsed_ms": 1.09
+      }
+    ]
+  },
+  "public_checks": [
+    {
+      "check": "declared_backend",
+      "http_status": 503,
+      "elapsed_ms": 689.5
+    },
+    {
+      "check": "active_backend",
+      "http_status": 200,
+      "elapsed_ms": 369.2,
+      "status": "ok"
+    },
+    {
+      "check": "ai_readiness",
+      "http_status": 200,
+      "elapsed_ms": 377.1,
+      "status": "ok"
+    },
+    {
+      "check": "ai_protected",
+      "http_status": 401,
+      "elapsed_ms": 589.5
+    },
+    {
+      "check": "analytics_unauthenticated",
+      "http_status": 401,
+      "elapsed_ms": 482.3
+    },
+    {
+      "check": "frontend",
+      "http_status": 200,
+      "api_hosts": [
+        "https://wearaware-api-36mh.onrender.com"
+      ],
+      "assets": [
+        "/assets/index-DRrbjqdU.js"
+      ]
+    }
+  ],
+  "vercel_metadata": {
+    "id": "dpl_EfpFGyVZxj4GtAQgmJJ6k6ML6kiT",
+    "state": "READY",
+    "target": "production",
+    "commit": null,
+    "branch": null
+  },
+  "secret_scan": {
+    "staged_file_count": 0,
+    "staged_secret_match_count": 0,
+    "candidate_secret_matches": [],
+    "built_bundle_secret_match_count": 0
+  },
+  "scope": "Read-only public production checks and isolated local/synthetic tests; no authenticated production scan or camera test.",
+  "local_tests": {
+    "backend": {
+      "passed": 61,
+      "failed": 0,
+      "skipped": 0
+    },
+    "ai": {
+      "passed": 15,
+      "failed": 0
+    },
+    "build": "passed",
+    "lint": {
+      "errors": 0,
+      "existing_warnings": 2
+    },
+    "diff_check": "passed"
+  },
+  "real_camera": "NOT RUN \u2014 user requested a checklist for later",
+  "authenticated_production_workflow": "NOT RUN \u2014 requires dedicated demo accounts and explicit approval for production test writes"
+}

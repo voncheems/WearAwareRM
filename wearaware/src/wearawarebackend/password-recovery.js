@@ -17,7 +17,7 @@ function installRecovery(app, transporter) {
       // Same response for missing accounts, duplicates, and new requests.
       await new Promise(resolve => setTimeout(resolve, Math.max(0, 250 - (Date.now() - started))));
       res.json({ success: true, message: 'If the account is eligible, your administrator can assist with recovery.' });
-    } catch (err) { console.error('forgot-password handler error:', err.message); next(err); }
+    } catch (err) { console.error('forgot-password handler failed.'); next(err); }
   });
   app.get('/api/admin/password-requests', requireAuth, requireRole('admin'), validateRequest, async (req, res, next) => {
     try {

@@ -7,6 +7,8 @@ import asyncio
 import io
 import json
 import unittest
+import threading
+from unittest.mock import patch
 from types import SimpleNamespace
 import numpy as np
 from PIL import Image
@@ -56,6 +58,95 @@ def multipart(content):
     return body, {'X-API-Key': os.environ['AI_API_KEY'], 'Content-Type': 'multipart/form-data; boundary=boundary', 'Content-Length': str(len(body))}
 
 class SecurityTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.original_model = api.model
+        self.original_gate = api.inference_gate
+        api.inference_gate = asyncio.Semaphore(1)
+
+    async def asyncTearDown(self):
+        api.model = self.original_model
+        api.inference_gate = self.original_gate
+
+    def test_model_loads_only_once_per_process(self):
+        api.model = None
+        with patch.object(api, 'YOLO', return_value=FakeModel()) as constructor:
+            api.load_model()
+            api.load_model()
+            constructor.assert_called_once_with(api.WEIGHTS_PATH)
+
+    def test_rounded_resize_uses_actual_axis_ratios(self):
+        frame = np.zeros((1001, 1920, 3), dtype=np.uint8)
+        resized, scale_x, scale_y = api.prepare_inference_frame(frame)
+        self.assertEqual(resized.shape[:2], (334, 640))
+        self.assertEqual(api.source_box((0, 0, 640, 334), scale_x, scale_y, 1920, 1001),
+                         {'x1': 0, 'y1': 0, 'x2': 1920, 'y2': 1001})
+
+    def test_human_is_not_drawn_as_a_ppe_box(self):
+        api.model = DetectionModel([FakeBox(1, 0.8, [2, 3, 14, 15])])
+        with patch.object(api.cv2, 'rectangle', wraps=api.cv2.rectangle) as draw:
+            _, detections, _, compliant = api.run_detection(np.zeros((32, 32, 3), dtype=np.uint8))
+        self.assertEqual(compliant, [])
+        self.assertEqual(detections[0]['class_name'], 'human')
+        self.assertFalse(any(call.args[1:3] == ((2, 3), (14, 15)) for call in draw.call_args_list))
+
+    async def test_overload_rejected_before_decode_and_health_stays_responsive(self):
+        api.model = FakeModel()
+        out = io.BytesIO(); Image.new('RGB', (16, 16)).save(out, format='PNG')
+        body, headers = multipart(out.getvalue())
+        await api.inference_gate.acquire()
+        try:
+            with patch.object(api, 'decode_upload') as decode:
+                status, _ = await request('/detect?return_image=false', body, headers, 'POST')
+                self.assertEqual(status, 503)
+                decode.assert_not_called()
+            self.assertEqual((await request('/healthz'))[0], 200)
+        finally:
+            api.inference_gate.release()
+
+    async def test_concurrent_requests_do_not_overlap_decoded_images_or_inference(self):
+        api.model = FakeModel()
+        out = io.BytesIO(); Image.new('RGB', (16, 16)).save(out, format='PNG')
+        body, headers = multipart(out.getvalue())
+        started, release = threading.Event(), threading.Event()
+        def slow(*args):
+            started.set()
+            if not release.wait(5):
+                raise RuntimeError('Test inference did not unblock')
+            return None, [], [], []
+        with patch.object(api, 'decode_upload', wraps=api.decode_upload) as decode, patch.object(api, 'run_detection', side_effect=slow):
+            first = asyncio.create_task(request('/detect?return_image=false', body, headers, 'POST'))
+            try:
+                for _ in range(200):
+                    if started.is_set(): break
+                    await asyncio.sleep(.01)
+                self.assertTrue(started.is_set())
+                others = await asyncio.gather(*(request('/detect?return_image=false', body, headers, 'POST') for _ in range(3)))
+                self.assertEqual([status for status, _ in others], [503, 503, 503])
+                self.assertEqual(decode.call_count, 1)
+                self.assertEqual((await request('/healthz'))[0], 200)
+            finally:
+                release.set()
+                self.assertEqual((await first)[0], 200)
+        self.assertFalse(api.inference_gate.locked())
+
+    async def test_slot_covers_encoding_and_is_released_on_errors(self):
+        api.model = FakeModel()
+        out = io.BytesIO(); Image.new('RGB', (16, 16)).save(out, format='PNG')
+        body, headers = multipart(out.getvalue())
+        def encode(frame):
+            self.assertTrue(api.inference_gate.locked())
+            raise RuntimeError('private encoding failure')
+        with patch.object(api, 'run_detection', side_effect=lambda frame, *args: (frame, [], [], [])), patch.object(api, 'frame_to_base64', side_effect=encode):
+            status, payload = await request('/detect', body, headers, 'POST')
+            self.assertEqual(status, 500)
+            self.assertNotIn('private', str(payload))
+        self.assertFalse(api.inference_gate.locked())
+        with patch.object(api, 'run_detection', return_value=(None, [], [], [])):
+            self.assertEqual((await request('/detect?return_image=false', body, headers, 'POST'))[0], 200)
+        invalid, invalid_headers = multipart(b'not an image')
+        self.assertEqual((await request('/detect', invalid, invalid_headers, 'POST'))[0], 400)
+        self.assertFalse(api.inference_gate.locked())
+
     def test_human_observation_is_returned_without_becoming_ppe(self):
         original = api.model
         api.model = DetectionModel([FakeBox(1, 0.6666, [2, 3, 14, 15])])

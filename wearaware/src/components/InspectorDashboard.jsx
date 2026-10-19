@@ -1,3 +1,4 @@
+import { AUTH_SESSION_CHANGED, signOut, storeAccessToken } from '../utils/auth-session';
 import { createPortal } from 'react-dom';
 import useMobileSidebar from '../hooks/useMobileSidebar';
 import { escapeHtml, printDocument, safePhoto } from '../utils/print';
@@ -108,19 +109,28 @@ export default function InspectorDashboard({ setCurrentPage }) {
   };
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (!token) return undefined;
-    const protocol = API_ORIGIN.startsWith('https:') ? 'wss:' : 'ws:';
-    const socket = new WebSocket(`${protocol}//${new URL(API_ORIGIN).host}/alerts`);
-    socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'authenticate', token })));
-    socket.addEventListener('message', event => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload.type !== 'notification' && !payload.detection_id) return;
-        setNotifications(previous => [{ id: `live-${payload.detection_id}`, detection_id: payload.detection_id, type: payload.alert_type === 'manual_review' ? 'INSPECTION_REQUIRED' : 'NON_COMPLIANT_WORKER', title: payload.title || 'Non-Compliant Worker Detected', message: payload.message || 'A worker requires review.', is_read: false, created_at: new Date().toISOString(), ...payload }, ...previous.filter(item => Number(item.detection_id) !== Number(payload.detection_id))]);
-      } catch { /* Ignore malformed real-time messages; persisted notifications remain available. */ }
-    });
-    return () => socket.close();
+    let socket;
+    const connect = () => {
+      socket?.close();
+      const token = localStorage.getItem('token');
+      if (!token) return;
+      const protocol = API_ORIGIN.startsWith('https:') ? 'wss:' : 'ws:';
+      const connection = new WebSocket(`${protocol}//${new URL(API_ORIGIN).host}/alerts`);
+      connection.addEventListener('open', () => connection.send(JSON.stringify({ type: 'authenticate', token })));
+      connection.addEventListener('message', event => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.type !== 'notification' && !payload.detection_id) return;
+          setNotifications(previous => [{ id: `live-${payload.detection_id}`, detection_id: payload.detection_id, type: payload.alert_type === 'manual_review' ? 'INSPECTION_REQUIRED' : 'NON_COMPLIANT_WORKER', title: payload.title || 'Non-Compliant Worker Detected', message: payload.message || 'A worker requires review.', is_read: false, created_at: new Date().toISOString(), ...payload }, ...previous.filter(item => Number(item.detection_id) !== Number(payload.detection_id))]);
+        } catch { /* Ignore malformed real-time messages; persisted notifications remain available. */ }
+      });
+      socket = connection;
+    };
+    const onStorage = event => { if (event.key === 'token') connect(); };
+    connect();
+    window.addEventListener(AUTH_SESSION_CHANGED, connect);
+    window.addEventListener('storage', onStorage);
+    return () => { socket?.close(); window.removeEventListener(AUTH_SESSION_CHANGED, connect); window.removeEventListener('storage', onStorage); };
   }, []);
 
   const markNotificationRead = async (notification) => {
@@ -209,7 +219,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       if (newPass) { localStorage.removeItem('token'); localStorage.removeItem('user'); setCurrentPage('login'); return; }
-      if (data.token) localStorage.setItem('token', data.token);
+      if (data.token) storeAccessToken(data.token);
       localStorage.setItem('user', JSON.stringify({ ...storedUser, full_name: data.user.full_name }));
       setProfile(data.user);
       setFullName(data.user.full_name);
@@ -224,7 +234,10 @@ export default function InspectorDashboard({ setCurrentPage }) {
     finally { setProfileSaving(false); }
   };
 
-  const handleLogout = () => { localStorage.removeItem('token'); localStorage.removeItem('user'); setCurrentPage('landing'); };
+  const handleLogout = async () => {
+    try { if (await signOut(API)) setCurrentPage('landing'); }
+    catch (error) { window.alert(error.message); }
+  };
 
   const handleOverride = async (detectionId) => {
     if (!window.confirm('Override this violation as compliant?')) return;

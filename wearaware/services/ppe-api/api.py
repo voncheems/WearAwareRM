@@ -132,7 +132,7 @@ def prepare_inference_frame(frame: np.ndarray):
         return frame, 1.0, 1.0
     scale = MAX_INFERENCE_DIM / longest
     resized = cv2.resize(frame, (max(1, round(width * scale)), max(1, round(height * scale))), interpolation=cv2.INTER_AREA)
-    return resized, 1.0 / scale, 1.0 / scale
+    return resized, width / resized.shape[1], height / resized.shape[0]
 
 
 def source_box(box, scale_x, scale_y, width, height):
@@ -424,6 +424,21 @@ def run_detection(frame: np.ndarray, conf: float = 0.40, iou: float = 0.5, retur
     return annotated, detections, violations, compliant
 
 
+def decode_upload(contents):
+    """Validate and decode only after admission to the single inference slot."""
+    try:
+        with Image.open(io.BytesIO(contents)) as image:
+            if image.width * image.height > MAX_PIXELS or image.format not in ("JPEG", "PNG"):
+                raise ValueError("Invalid image")
+            image.verify()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid or oversized image")
+    frame = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
+    if frame is None:
+        raise HTTPException(status_code=400, detail="Could not decode image.")
+    return frame
+
+
 # ─────────────────────────────────────────────
 #  ROUTES
 # ─────────────────────────────────────────────
@@ -479,55 +494,45 @@ async def detect(
         raise HTTPException(status_code=400, detail="Invalid detection parameters")
     requested_ppe = [normalize_ppe_name(item) for item in required_ppe.split(',') if item.strip()]
     requested_ppe = list(dict.fromkeys(item for item in requested_ppe if item))[:32]
-    contents = await file.read(MAX_UPLOAD + 1)
-    if len(contents) > MAX_UPLOAD:
-        raise HTTPException(status_code=413, detail="Image too large")
-    try:
-        with Image.open(io.BytesIO(contents)) as image:
-            if image.width * image.height > MAX_PIXELS or image.format not in ("JPEG", "PNG"):
-                raise ValueError("Invalid image")
-            image.verify()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid or oversized image")
-    np_arr   = np.frombuffer(contents, np.uint8)
-    frame    = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-    del contents, np_arr
-
-    if frame is None:
-        raise HTTPException(status_code=400, detail="Could not decode image.")
-
-    t0 = time.time()
     try:
         await asyncio.wait_for(inference_gate.acquire(), timeout=0.1)
     except asyncio.TimeoutError:
         raise HTTPException(status_code=503, detail="Detection service busy")
     try:
+        # Reject overload before allocating a decoded image. The slot also covers
+        # annotation encoding so a new inference cannot overlap those buffers.
+        contents = await file.read(MAX_UPLOAD + 1)
+        if len(contents) > MAX_UPLOAD:
+            raise HTTPException(status_code=413, detail="Image too large")
+        frame = await run_in_threadpool(decode_upload, contents)
+        del contents
+        t0 = time.time()
         annotated, detections, violations, compliant = await run_in_threadpool(run_detection, frame, conf, iou, return_image)
+        del frame
+        inference_ms = round((time.time() - t0) * 1000, 2)
+
+        response = {
+            "detections"       : detections,
+            # Keep the person portion of the response explicit at the AI boundary.
+            # These values are derived only from model observations; no PPE box is
+            # treated as a person. Express still performs its own validation and
+            # filtering before evaluating checkpoint compliance.
+            "person_detections": [item for item in detections if item.get("class_name", "").lower() in ("human", "person")],
+            "person_count"     : sum(1 for item in detections if item.get("class_name", "").lower() in ("human", "person")),
+            "violations"       : list(set(violations)),
+            "compliant"        : list(set(compliant)),
+            "is_compliant"     : len(violations) == 0,
+            "total_detections" : len(detections),
+            "inference_time_ms": inference_ms,
+            "requested_ppe": requested_ppe,
+            "supported_ppe": sorted({normalize_ppe_name(name) for name in model.names.values() if normalize_ppe_name(name) not in NON_PPE}),
+            "unsupported_ppe": [item for item in requested_ppe if item not in {normalize_ppe_name(name) for name in model.names.values()}],
+        }
+
+        if return_image:
+            response["annotated_image"] = await run_in_threadpool(frame_to_base64, annotated)
+        del annotated, detections, violations, compliant
+
+        return JSONResponse(content=response)
     finally:
         inference_gate.release()
-    del frame
-    inference_ms = round((time.time() - t0) * 1000, 2)
-
-    response = {
-        "detections"       : detections,
-        # Keep the person portion of the response explicit at the AI boundary.
-        # These values are derived only from model observations; no PPE box is
-        # treated as a person. Express still performs its own validation and
-        # filtering before evaluating checkpoint compliance.
-        "person_detections": [item for item in detections if item.get("class_name", "").lower() in ("human", "person")],
-        "person_count"     : sum(1 for item in detections if item.get("class_name", "").lower() in ("human", "person")),
-        "violations"       : list(set(violations)),
-        "compliant"        : list(set(compliant)),
-        "is_compliant"     : len(violations) == 0,
-        "total_detections" : len(detections),
-        "inference_time_ms": inference_ms,
-        "requested_ppe": requested_ppe,
-        "supported_ppe": sorted({normalize_ppe_name(name) for name in model.names.values() if normalize_ppe_name(name) not in NON_PPE}),
-        "unsupported_ppe": [item for item in requested_ppe if item not in {normalize_ppe_name(name) for name in model.names.values()}],
-    }
-
-    if return_image:
-        response["annotated_image"] = frame_to_base64(annotated)
-    del annotated, detections, violations, compliant
-
-    return JSONResponse(content=response)
