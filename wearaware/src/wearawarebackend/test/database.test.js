@@ -4,6 +4,7 @@ const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const { MongoClient } = require('mongodb');
 const { createRepository } = require('../repository');
 const { ensureIndexes } = require('../database');
+const { provisionSessionActivity } = require('../session-activity-schema');
 let server, client, db, data;
 before(async () => {
   server = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
@@ -11,6 +12,7 @@ before(async () => {
   await client.connect();
   db = client.db('wearaware_test');
   await ensureIndexes(db);
+  await provisionSessionActivity(db);
   data = createRepository(() => db);
   await db.collection('roles').insertMany([{ id: 1, name: 'admin' }, { id: 2, name: 'inspector' }]);
   await db.collection('users').insertMany([{ id: 10, role_id: 1, email: 'admin@example.test', full_name: 'Admin', is_active: true, password_hash: 'hash', created_at: new Date() }, { id: 20, role_id: 2, email: 'inspector@example.test', full_name: 'Inspector', is_active: true, created_at: new Date() }]);

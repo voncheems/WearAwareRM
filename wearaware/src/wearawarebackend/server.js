@@ -6,11 +6,10 @@ const { configureSecurity, assertProductionConfig, safeErrors, limiter } = requi
 const { validateRequest } = require('./validation');
 const { installRecovery } = require('./password-recovery');
 const { createAlerts } = require('./alerts');
-const { applyDatabaseSecurity, verifyDatabaseSecurity, cleanLegacyPasswords, ensureAuditLogCollection, ensureCheckpointData, ensureRiskRulesCollection } = require('./database-security');
+const { inspectReadiness, assertStartupReady } = require('./startup-readiness');
 const { recordAudit } = require('./audit');
 const { evaluateSessionEvidence, normalizeAiObservations } = require('./ppe-compliance');
 const { assessRisk } = require('./risk-assessment');
-const { ensureDefaultComplianceProfiles } = require('./compliance-profiles');
 const { getWorkerRepeatStatus } = require('./repeat-violations');
 const { authorizationRecord } = require('./entry-authorization');
 const { issueAccessToken, revokeAccountSessions } = require('./auth-sessions');
@@ -21,7 +20,7 @@ const http = require('node:http');
 const nodemailer = require('nodemailer');
 
 const { data, requireAuth, requireRole } = require('./middleware');
-const { connectDatabase, closeDatabase, ensureIndexes, ensureUserRole, ensureScannerRole } = require('./database');
+const { connectDatabase, getDatabase, closeDatabase } = require('./database');
 
 const app = express();
 const DUMMY_PASSWORD_HASH = bcrypt.hashSync('non-account-comparison-value', 12);
@@ -29,9 +28,15 @@ const DUMMY_PASSWORD_HASH = bcrypt.hashSync('non-account-comparison-value', 12);
 // ── Middleware ──────────────────────────────────────────────
 configureSecurity(app);
 app.use(express.json({ limit: '3mb', strict: true }));
-// Render uses this unauthenticated endpoint to confirm that the process and
-// its database startup completed. It exposes no account or database data.
+// Liveness only. /ready separately checks database/storage readiness without writes.
 app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
+app.get('/ready', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  let readiness;
+  try { readiness = await inspectReadiness(getDatabase(), { production: process.env.NODE_ENV === 'production' }); }
+  catch { readiness = { status: 'not_ready', checks: { database: 'not_ready' }, issues: [{ component: 'database', code: 'DATABASE_UNAVAILABLE' }] }; }
+  res.status(readiness.status === 'ready' ? 200 : 503).json(readiness);
+});
 
 // ── Nodemailer Transporter ──────────────────────────────────
 // Add to your .env:
@@ -605,6 +610,7 @@ app.use(safeErrors);
 const PORT = process.env.PORT || 5000;
 function startupFailureMessage(err) {
   const message = [err?.message, err?.cause?.message, err?.reason?.message].filter(Boolean).join(' ');
+  if (err?.code === 'DATABASE_NOT_READY') return 'Database readiness failed. Review collection validators, indexes, required roles, migration status, session/privacy storage and legacy data before deployment. No automatic repair was performed.';
   if (err?.code === 'EADDRINUSE') return `Port ${PORT} is already in use.`;
   if (/Production requires an AI_API_KEY/.test(message)) return 'Startup configuration error: set AI_API_KEY to a random value of at least 32 characters.';
   if (/JWT_SECRET/.test(message)) return 'Startup configuration error: set a strong JWT_SECRET of at least 32 characters.';
@@ -616,24 +622,13 @@ function startupFailureMessage(err) {
   if (/not authorized|Unauthorized|code 13/i.test(message)) return 'Atlas database-user permissions are insufficient. Give the runtime user the readWrite role for the wearaware database.';
   if (/authentication failed|bad auth|auth failed|code 18/i.test(message)) return 'Database authentication failed. Reset the Atlas database-user password and update MONGODB_URI in Render.';
   if (/ENOTFOUND|querySrv|DNS/i.test(message)) return 'Database address could not be resolved. Copy the Atlas Driver URI again and keep the cluster hostname unchanged.';
-  if (err?.name === 'MongoServerSelectionError' || /ECONNREFUSED|timed out|network/i.test(message)) return 'Atlas could not be reached. In Atlas Network Access, add and activate the 0.0.0.0/0 rule for this demo.';
+  if (err?.name === 'MongoServerSelectionError' || /ECONNREFUSED|timed out|network/i.test(message)) return 'Atlas could not be reached. Review the configured database target and approved network access rules.';
   return 'Backend startup failed. Check the required Render environment variables and Atlas connection.';
 }
 async function start() {
   assertProductionConfig();
   const db = await connectDatabase();
-  const migration = await db.collection('_migration').findOne({ _id: 'postgres-v1' });
-  if (migration?.status !== 'complete') throw new Error('Database initialization is incomplete. Run the verified migration first.');
-  await ensureAuditLogCollection(db);
-  await ensureRiskRulesCollection(db);
-  await ensureDefaultComplianceProfiles(db);
-  await ensureCheckpointData(db);
-  await ensureIndexes(db);
-  await ensureUserRole(db);
-  await ensureScannerRole(db);
-  await cleanLegacyPasswords(db);
-  if (process.env.NODE_ENV === 'production') await verifyDatabaseSecurity(db);
-  else await applyDatabaseSecurity(db);
+  await assertStartupReady(db, { production: process.env.NODE_ENV === 'production' });
   const server = http.createServer(app);
   wss = createAlerts(server, app);
   try {
@@ -652,12 +647,7 @@ async function start() {
 if (require.main === module) {
   start().catch(async err => {
     console.error(startupFailureMessage(err));
-    if (process.env.NODE_ENV !== 'production') {
-      const privateValues = [process.env.MONGODB_URI, process.env.JWT_SECRET, process.env.AI_API_KEY].filter(Boolean);
-      const detail = [err?.name, err?.code, err?.message].filter(Boolean).join(' | ');
-      const safeDetail = privateValues.reduce((message, value) => message.replaceAll(value, '[redacted]'), detail);
-      console.error(`Startup detail: ${safeDetail}`);
-    }
+    if (err?.code === 'DATABASE_NOT_READY') console.error(JSON.stringify(err.readiness));
     await closeDatabase();
     process.exitCode = 1;
   });

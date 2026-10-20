@@ -22,19 +22,20 @@ async function closeDatabase() {
   database = undefined;
   client = undefined;
 }
-async function ensureIndexes(db) {
-  for (const table of TABLES) await db.collection(table).createIndex({ id: 1 }, { unique: true });
+function requiredIndexes() {
+  const indexes = [];
+  for (const table of TABLES) indexes.push({ collection: table, key: { id: 1 }, options: { unique: true } });
   for (const [table, field] of [['roles', 'name'], ['users', 'email'], ['devices', 'device_id'], ['workers', 'employee_id']]) {
-    await db.collection(table).createIndex({ [field]: 1 }, { unique: true });
+    indexes.push({ collection: table, key: { [field]: 1 }, options: { unique: true } });
   }
-  await db.collection('devices').createIndex({ code: 1 }, { unique: true, partialFilterExpression: { code: { $type: 'string' } } });
-  await db.collection('compliance_profiles').createIndex({ name_key: 1 }, { unique: true });
-  await db.collection('risk_rules').createIndex({ name: 1 }, { unique: true });
-  await db.collection('risk_rules').createIndex({ is_active: 1, checkpoint_id: 1, profile_id: 1 });
-  await db.collection('users').createIndex({ worker_id: 1 }, { unique: true, partialFilterExpression: { worker_id: { $type: 'number' } } });
-  await db.collection('workers').createIndex({ qr_token: 1 }, { unique: true, partialFilterExpression: { qr_token: { $type: 'string' } } });
-  await db.collection('detections').createIndex({ scan_session_id: 1 }, { unique: true, partialFilterExpression: { scan_session_id: { $type: 'string' } } });
-  await db.collection('notifications').createIndex({ detection_id: 1, inspector_id: 1 }, { unique: true });
+  indexes.push({ collection: 'devices', key: { code: 1 }, options: { unique: true, partialFilterExpression: { code: { $type: 'string' } } } });
+  indexes.push({ collection: 'compliance_profiles', key: { name_key: 1 }, options: { unique: true } });
+  indexes.push({ collection: 'risk_rules', key: { name: 1 }, options: { unique: true } });
+  indexes.push({ collection: 'risk_rules', key: { is_active: 1, checkpoint_id: 1, profile_id: 1 }, options: {} });
+  indexes.push({ collection: 'users', key: { worker_id: 1 }, options: { unique: true, partialFilterExpression: { worker_id: { $type: 'number' } } } });
+  indexes.push({ collection: 'workers', key: { qr_token: 1 }, options: { unique: true, partialFilterExpression: { qr_token: { $type: 'string' } } } });
+  indexes.push({ collection: 'detections', key: { scan_session_id: 1 }, options: { unique: true, partialFilterExpression: { scan_session_id: { $type: 'string' } } } });
+  indexes.push({ collection: 'notifications', key: { detection_id: 1, inspector_id: 1 }, options: { unique: true } });
   for (const [table, keys] of [
     ['users', { role_id: 1 }], ['workers', { device_id: 1 }], ['devices', { profile_id: 1 }],
     ['devices', { inspector_id: 1 }], ['detections', { inspector_id: 1, detected_at: -1 }],
@@ -45,7 +46,11 @@ async function ensureIndexes(db) {
     ['notifications', { inspector_id: 1, is_read: 1 }],
     ['notifications', { detection_id: 1 }], ['password_reset_requests', { email: 1, status: 1 }],
     ['audit_logs', { occurred_at: -1 }], ['audit_logs', { category: 1, occurred_at: -1 }],
-  ]) await db.collection(table).createIndex(keys);
+  ]) indexes.push({ collection: table, key: keys, options: {} });
+  return indexes;
+}
+async function ensureIndexes(db) {
+  for (const index of requiredIndexes()) await db.collection(index.collection).createIndex(index.key, index.options);
 }
 async function ensureRole(db, name) {
   if (await db.collection('roles').findOne({ name })) return;
@@ -60,4 +65,4 @@ async function ensureRole(db, name) {
 }
 async function ensureUserRole(db) { return ensureRole(db, 'user'); }
 async function ensureScannerRole(db) { return ensureRole(db, 'scanner'); }
-module.exports = { ensureUserRole, ensureScannerRole, TABLES, connectDatabase, getDatabase, closeDatabase, ensureIndexes };
+module.exports = { requiredIndexes, ensureUserRole, ensureScannerRole, TABLES, connectDatabase, getDatabase, closeDatabase, ensureIndexes };

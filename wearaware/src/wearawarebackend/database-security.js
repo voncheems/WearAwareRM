@@ -195,4 +195,7 @@ async function cleanLegacyPasswords(db) {
     });
   } finally { await session.endSession(); }
 }
-module.exports = { applyDatabaseSecurity, verifyDatabaseSecurity, cleanLegacyPasswords, ensureAuditLogCollection, ensureCheckpointData, ensureRiskRulesCollection };
+function databaseValidators() {
+  return Object.fromEntries(Object.entries(fields).map(([name, properties]) => [name, validatorFor(name, properties)]));
+}
+module.exports = { databaseValidators, applyDatabaseSecurity, verifyDatabaseSecurity, cleanLegacyPasswords, ensureAuditLogCollection, ensureCheckpointData, ensureRiskRulesCollection };
