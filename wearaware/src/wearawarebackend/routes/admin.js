@@ -8,6 +8,8 @@ const { recordAudit } = require('../audit');
 const { getViolationAnalytics } = require('../analytics');
 const { getRepeatViolationOverview, getWorkerComplianceHistory } = require('../repeat-violations');
 
+router.use('/retention', require('./retention').createRetentionRouter());
+
 const riskRuleFields = 'id name condition_type ppe_item checkpoint_id profile_id severity is_active created_by created_at updated_at';
 
 router.get('/risk-rules', requireAuth, requireRole('admin'), validateRequest, async (req, res, next) => {

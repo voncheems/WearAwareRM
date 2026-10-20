@@ -22,6 +22,7 @@ before(async () => {
     CORS_ORIGINS: 'http://localhost:5173', FRONTEND_URL: 'http://localhost:5173', TRUST_PROXY: '' });
   nodemailer.createTransport = () => ({ sendMail: async value => { mail = value; } });
   db = await require('../database').connectDatabase();
+  await require('../session-activity-schema').provisionSessionActivity(db);
   await require('../database').ensureIndexes(db);
   await db.collection('roles').insertMany([{ id: 1, name: 'admin' }, { id: 2, name: 'inspector' }, { id: 3, name: 'user' }, { id: 4, name: 'scanner' }]);
   const password_hash = await bcrypt.hash('SessionPassword123', 4);
@@ -93,8 +94,11 @@ test('expired, wrong-purpose and cross-role tokens are rejected using database r
   for (const claims of [{ token_use: 'mfa' }, { mfa_pending: true }, { session_version: -1 }]) {
     assert.equal((await call('/api/auth/me', signed(claims))).status, 401);
   }
-  assert.equal((await call('/api/admin/stats', signed({ role: 'admin' }))).status, 403);
-  assert.equal((await call('/api/inspector/profile', signed({ role: 'admin' }))).status, 403);
+  const wrongRole = signed({ role: 'admin' });
+  // Explicit test-issued access credential, with isolated activity persistence.
+  await require('../session-activity').registerActivity(wrongRole, jwt.decode(wrongRole));
+  assert.equal((await call('/api/admin/stats', wrongRole)).status, 403);
+  assert.equal((await call('/api/inspector/profile', wrongRole)).status, 403);
   assert.equal((await call('/api/auth/me', null)).status, 401);
 });
 

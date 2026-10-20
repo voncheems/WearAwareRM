@@ -1,4 +1,6 @@
-import { signOut } from '../utils/auth-session';
+import { showAlert } from '../utils/dialogs';
+import PrivacyRequestsLink from './PrivacyRequestsLink';
+import { signOut, expireSession } from '../utils/auth-session';
 import useMobileSidebar from '../hooks/useMobileSidebar';
 import { API } from '../config/api';
 import { createElement, useEffect, useState } from 'react';
@@ -48,11 +50,13 @@ export default function UserDashboard({ setCurrentPage }) {
     async function load() {
       setLoading(true); setError('');
       try {
+        const token = localStorage.getItem('token');
         const response = await fetch(`${API}/user/dashboard?page=${page}`, {
-          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }, signal: controller.signal,
+          headers: { Authorization: `Bearer ${token}` }, signal: controller.signal,
         });
         const result = await response.json();
-        if (response.status === 401 || response.status === 403) {
+        if (response.status === 401) { expireSession(token); return; }
+        if (response.status === 403) {
           localStorage.removeItem('token'); localStorage.removeItem('user'); setCurrentPage('login'); return;
         }
         if (!response.ok) throw new Error(result.error || 'Unable to load your records.');
@@ -67,7 +71,7 @@ export default function UserDashboard({ setCurrentPage }) {
 
   const logout = async () => {
     try { if (await signOut(API)) setCurrentPage('landing'); }
-    catch (error) { window.alert(error.message); }
+    catch (error) { await showAlert(error.message); }
   };
   const name = data?.worker.full_name || 'Your workspace';
   const stats = data?.stats;
@@ -78,6 +82,7 @@ export default function UserDashboard({ setCurrentPage }) {
       <button className="ins-logo" onClick={() => setTab('overview')} aria-label="WearAware user overview"><img src="/favicon.svg" width="30" height="34" alt="" /> WearAware<span className="ins-brand-dot">.</span></button>
       <nav className="ins-nav" aria-label="User navigation"><div className="ins-nav-label">Your workspace</div>
         {tabs.map(([id, label, Icon]) => <button className={`ins-nav-item ${tab === id ? 'active' : ''}`} aria-current={tab === id ? 'page' : undefined} key={id} onClick={() => setTab(id)}>{createElement(Icon, { size: 18 })}{label}</button>)}
+        <PrivacyRequestsLink className="ins-nav-item" />
       </nav>
       <div className="ins-sidebar-footer"><div className="ins-user-info"><div className="ins-avatar"><User size={19} /></div><div><div className="ins-user-name">{name}</div><div className="ins-user-role">Worker portal</div></div></div><button className="ins-logout" onClick={logout}>Sign out</button></div>
     </aside>

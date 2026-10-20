@@ -1,6 +1,6 @@
 import ResetPasswordPage from './components/ResetPasswordPage';
 import { API } from './config/api';
-import { AUTH_SIGNED_OUT } from './utils/auth-session';
+import { AUTH_SIGNED_OUT, AUTH_SESSION_EXPIRED, expireSession } from './utils/auth-session';
 import React, { useState, useEffect } from 'react';
 import UserDashboard from './components/UserDashboard';
 import LandingPage from './components/LandingPage';
@@ -17,10 +17,12 @@ function App() {
   const [resetToken, setResetToken] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get('reset') || '');
   const [currentPage, setCurrentPage] = useState('landing');
   const [isTransitioning, setIsTransitioning] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [authChecked, setAuthChecked] = useState(() => !!resetToken || !localStorage.getItem('token'));
 
   useEffect(() => {
     const signedOut = () => { setCurrentPage('landing'); setAuthChecked(true); };
+    const expired = () => { setSessionExpired(true); setIsTransitioning(false); setCurrentPage('login'); setAuthChecked(true); };
     const onStorage = event => {
       if (event.key === 'token' && !event.newValue) {
         localStorage.removeItem('user');
@@ -28,9 +30,11 @@ function App() {
       }
     };
     window.addEventListener(AUTH_SIGNED_OUT, signedOut);
+    window.addEventListener(AUTH_SESSION_EXPIRED, expired);
     window.addEventListener('storage', onStorage);
     return () => {
       window.removeEventListener(AUTH_SIGNED_OUT, signedOut);
+      window.removeEventListener(AUTH_SESSION_EXPIRED, expired);
       window.removeEventListener('storage', onStorage);
     };
   }, []);
@@ -68,7 +72,7 @@ function App() {
       },
     })
       .then(res => {
-        if (!res.ok) throw new Error('Token invalid or expired');
+        if (!res.ok) throw Object.assign(new Error('Session check failed'), { status: res.status });
         return res.json();
       })
       .then(data => {
@@ -81,12 +85,10 @@ function App() {
         if (role === 'inspector') setCurrentPage('inspector');
         if (role === 'scanner')   setCurrentPage('scanner');
       })
-      .catch(() => {
+      .catch(error => {
         if (controller.signal.aborted || localStorage.getItem('token') !== token) return;
-        // Token expired or invalid — clear storage and go to landing
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        setCurrentPage('landing');
+        if (error.status === 401) expireSession(token);
+        else setCurrentPage('login');
       })
       .finally(() => {
         if (!controller.signal.aborted) setAuthChecked(true);
@@ -115,7 +117,7 @@ function App() {
     <div className="App">
       <div className={`page-container ${isTransitioning ? 'page-exit' : 'page-enter'}`}>
         {currentPage === 'landing'    && <LandingPage        setCurrentPage={handlePageChange} />}
-        {currentPage === 'login'      && <LoginPage          setCurrentPage={handlePageChange} />}
+        {currentPage === 'login'      && <LoginPage sessionExpired={sessionExpired} setCurrentPage={handlePageChange} />}
         {currentPage === 'projects'   && <OurProjects        setCurrentPage={handlePageChange} />}
         {currentPage === 'expertise'  && <ExpertisePage      setCurrentPage={handlePageChange} />}
         {currentPage === 'contact'    && <ContactPage        setCurrentPage={handlePageChange} />}

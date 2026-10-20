@@ -119,7 +119,11 @@ router.get('/by-employee-id/:employee_id', requireAuth, requireRole('admin', 'sc
       const profile = station.profile_id && (await data.find('compliance_profiles', { id: station.profile_id }, 'name')).rows[0];
       const checkpoint = { ...station, profile_name: profile?.name || null };
       delete checkpoint.inspector_id;
-      return res.json({ ...worker, checkpoint });
+      // The scanner needs identity/assignment, not contact details or unrelated
+      // registry fields. Keep the legacy flat identity response shape.
+      return res.json({ id: worker.id, employee_id: worker.employee_id,
+        full_name: worker.full_name, status: worker.status, device_id: worker.device_id,
+        checkpoint });
     }
 
     res.json(worker);

@@ -8,6 +8,13 @@ const { validateRequest } = require('./validation');
 const { issueAccessToken, versionFilter } = require('./auth-sessions');
 const { limiter } = require('./security');
 
+// Successful password checks return a 200 MFA challenge, so the failed-login
+// limiter does not bound OTP mail. Invoke only after password verification and
+// key by the server-resolved account, never a client-supplied account identifier.
+const loginOtpLimit = limiter(5, 15 * 60 * 1000, {
+  keyGenerator: req => String(req.verifiedMfaAccountId),
+});
+
 const otp = () => String(crypto.randomInt(0, 1000000)).padStart(6, '0');
 const maskEmail = email => { const [name, domain] = String(email).split('@'); return `${(name || '').slice(0, 2)}***@${domain || ''}`; };
 async function sendOtp(user, transporter, purpose, field = 'mfa_login_otp_hash') {
@@ -68,7 +75,8 @@ async function installMfa(app, transporter) {
       if (!changed) return res.status(409).json({ error: 'Account security changed. Sign in again.' });
       await recordAudit({ category: 'action', action: 'Enabled multi-factor authentication', actor: req.user, target: user.email });
       res.json({ enabled: true, recovery_codes: plainCodes,
-        token: issueAccessToken({ ...changed, role: req.user.role }, { mfaVerified: true, expiresAt: req.user.exp }) });
+        token: await issueAccessToken({ ...changed, role: req.user.role }, { mfaVerified: true,
+          expiresAt: req.user.exp, previousActivity: req.user.session_activity }) });
     } catch { res.status(500).json({ error: 'Could not enable MFA.' }); }
   });
   app.post('/api/auth/mfa/disable', requireAuth, verificationLimit, validateRequest, async (req, res) => {
@@ -84,8 +92,9 @@ async function installMfa(app, transporter) {
       }, { returnDocument: 'after' });
       if (!changed) return res.status(409).json({ error: 'Account security changed. Sign in again.' });
       await recordAudit({ category: 'action', action: 'Disabled multi-factor authentication', actor: req.user, target: user.email });
-      res.json({ enabled: false, token: issueAccessToken({ ...changed, role: req.user.role }, { expiresAt: req.user.exp }) });
+      res.json({ enabled: false, token: await issueAccessToken({ ...changed, role: req.user.role }, {
+        expiresAt: req.user.exp, previousActivity: req.user.session_activity }) });
     } catch { res.status(500).json({ error: 'Could not disable MFA.' }); }
   });
 }
-module.exports = { installMfa, issueLoginOtp, createMfaChallenge, readMfaChallenge, verifyMfaCode };
+module.exports = { installMfa, issueLoginOtp, loginOtpLimit, createMfaChallenge, readMfaChallenge, verifyMfaCode };

@@ -1,11 +1,12 @@
 import { API } from '../config/api';
+import { storeAccessToken } from '../utils/auth-session';
 import React, { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowUpRight, Eye, EyeOff, ShieldCheck, ScanLine, QrCode, ClipboardCheck, KeyRound } from 'lucide-react';
 import './LoginPage.css';
 
 const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 
-export default function LoginPage({ setCurrentPage }) {
+export default function LoginPage({ setCurrentPage, sessionExpired = false }) {
   const [email,    setEmail]    = useState('');
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(false);
@@ -71,7 +72,7 @@ export default function LoginPage({ setCurrentPage }) {
         setError('');
         return;
       }
-      localStorage.setItem('token', data.token);
+      storeAccessToken(data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       switch (data.user.role) {
         case 'admin':     setCurrentPage('admin');     break;
@@ -147,6 +148,7 @@ export default function LoginPage({ setCurrentPage }) {
               </div>
 
               <form className="login-form" onSubmit={handleSubmit}>
+                {sessionExpired && <div className="login-error" role="status">Your session has expired or is no longer active. Please sign in again to continue.</div>}
                 {error && <div className="login-error" role="alert">{error}</div>}
 
                 {mfaStep ? <>
@@ -212,7 +214,7 @@ export default function LoginPage({ setCurrentPage }) {
 
           </div>
         </main>
-        <footer className="login-footer"><span>© 2026 WearAware</span><span>Better awareness. Safer workplaces.</span></footer>
+        <footer className="login-footer"><span>© 2026 WearAware</span><a className="privacy-login-link" href="/privacy" target="_blank" rel="noopener noreferrer">Privacy notice (opens in a new tab)</a><span>Better awareness. Safer workplaces.</span></footer>
       </div>
 
       {/* ── Forgot Password Modal ── */}

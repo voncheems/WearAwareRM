@@ -1,13 +1,13 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { MongoMemoryReplSet } = require('mongodb-memory-server');
-const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const { connectDatabase, closeDatabase, ensureIndexes, ensureUserRole } = require('../database');
 let server, db, http, base, role;
 const secret = 'isolated-worker-portal-test-secret';
-const token = (id, roleName) => jwt.sign({ id, role: roleName }, secret, { expiresIn: '1h' });
+const token = require('./helpers/session-token').fixtureTokens(secret, (id, roleName) => ({ id, role: roleName }));
 async function request(path, auth, method = 'GET', body) {
+  await token.ready(auth);
   return fetch(base + path, { method, headers: { ...(auth ? { Authorization: `Bearer ${auth}` } : {}), 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
 }
 before(async () => {
@@ -16,6 +16,7 @@ before(async () => {
   process.env.MONGODB_DB = 'worker_portal_test';
   process.env.JWT_SECRET = secret;
   db = await connectDatabase();
+  await require('../session-activity-schema').provisionSessionActivity(db);
   await ensureIndexes(db);
   await db.collection('roles').insertMany([{ id: 1, name: 'admin' }, { id: 2, name: 'inspector' }, { id: 3, name: 'scanner' }]);
   await ensureUserRole(db); await ensureUserRole(db);

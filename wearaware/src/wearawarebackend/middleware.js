@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const { data } = require('./repository');
+const { checkActivity } = require('./session-activity');
 const JWT_SECRET = process.env.JWT_SECRET;
 async function authenticateToken(token) {
   const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
@@ -17,7 +18,10 @@ async function authenticateToken(token) {
   if (user.mfa_enabled && decoded.mfa_verified !== true) throw new Error('MFA verification required');
   if ((decoded.session_version || 0) !== (user.session_version || 0)) throw new Error('Revoked session');
   if (Math.floor(new Date(user.updated_at).getTime() / 1000) > decoded.iat) throw new Error('Stale session');
-  return { ...decoded, role: user.role };
+  const activity = await checkActivity(token, decoded);
+  // Internal metadata for bounded token replacement; never a JWT claim or part
+  // of serialized user/profile responses. Validation itself never renews it.
+  return Object.defineProperty({ ...decoded, role: user.role }, 'session_activity', { value: activity });
 }
 async function requireAuth(req, res, next) {
   const header = req.headers.authorization;
@@ -27,7 +31,8 @@ async function requireAuth(req, res, next) {
   try { req.user = await authenticateToken(match[1]); next(); }
   catch (error) {
     if (error.status === 503) return res.status(503).json({ error: 'Session verification is temporarily unavailable. Please retry.' });
-    res.status(401).json({ error: 'Invalid or expired session. Please sign in again.' });
+    res.status(401).json({ error: 'Invalid or expired session. Please sign in again.',
+      ...(error.code === 'SESSION_INACTIVE' ? { code: error.code } : {}) });
   }
 }
 function requireRole(...roles) {

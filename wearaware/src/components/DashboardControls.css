@@ -1,6 +1,6 @@
 /* Shared dashboard selects. Native selection, keyboard support and form values
    are retained; customizable pickers progressively enhance supported browsers. */
-:is(.ad-page, .ins-page, .ppe-page) select:not([multiple]):not([size]) {
+:is(.ad-page, .ins-page, .ppe-page, .privacy-requests-page) select:not([multiple]):not([size]) {
   --select-border: #d6e1cf;
   --select-surface: #fff;
   --select-ink: #34482e;
@@ -32,16 +32,16 @@
   box-shadow: 0 1px 2px #25302104;
   transition: border-color .18s ease, background-color .18s ease, box-shadow .18s ease;
 }
-:is(.ad-page, .ins-page, .ppe-page) select:not([multiple]):not([size]):not(:disabled):hover { border-color: #a4b897; background-color: #fbfdf9; }
-:is(.ad-page, .ins-page, .ppe-page) select:not([multiple]):not([size]):focus {
+:is(.ad-page, .ins-page, .ppe-page, .privacy-requests-page) select:not([multiple]):not([size]):not(:disabled):hover { border-color: #a4b897; background-color: #fbfdf9; }
+:is(.ad-page, .ins-page, .ppe-page, .privacy-requests-page) select:not([multiple]):not([size]):focus {
   border-color: #789167;
   box-shadow: 0 0 0 3px #78916718;
 }
-:is(.ad-page, .ins-page, .ppe-page) select:not([multiple]):not([size]):focus-visible { outline: 2px solid #789167; outline-offset: 3px; }
-:is(.ad-page, .ins-page, .ppe-page) select:not([multiple]):not([size]):disabled { opacity: .6; background-color: #f3f5ef; color: #7f8b76; cursor: not-allowed; box-shadow: none; }
-:is(.ad-page, .ins-page, .ppe-page) select option { background: #fff; color: #34482e; font: inherit; }
-:is(.ad-page, .ins-page, .ppe-page) select option:disabled { color: #899480; }
-:is(.ad-page, .ins-page, .ppe-page) select.dashboard-select-review:not([multiple]):not([size]) {
+:is(.ad-page, .ins-page, .ppe-page, .privacy-requests-page) select:not([multiple]):not([size]):focus-visible { outline: 2px solid #789167; outline-offset: 3px; }
+:is(.ad-page, .ins-page, .ppe-page, .privacy-requests-page) select:not([multiple]):not([size]):disabled { opacity: .6; background-color: #f3f5ef; color: #7f8b76; cursor: not-allowed; box-shadow: none; }
+:is(.ad-page, .ins-page, .ppe-page, .privacy-requests-page) select option { background: #fff; color: #34482e; font: inherit; }
+:is(.ad-page, .ins-page, .ppe-page, .privacy-requests-page) select option:disabled { color: #899480; }
+:is(.ad-page, .ins-page, .ppe-page, .privacy-requests-page) select.dashboard-select-review:not([multiple]):not([size]) {
   --select-border: #e5ce9e;
   --select-surface: #fffaf0;
   --select-ink: #87551a;
@@ -59,10 +59,10 @@
 }
 
 @supports (appearance: base-select) {
-  :is(.ad-page, .ins-page, .ppe-page) select:not([multiple]):not([size]),
-  :is(.ad-page, .ins-page, .ppe-page) select:not([multiple]):not([size])::picker(select) { appearance: base-select; }
-  :is(.ad-page, .ins-page, .ppe-page) select::picker-icon { display: none; }
-  :is(.ad-page, .ins-page, .ppe-page) select::picker(select) {
+  :is(.ad-page, .ins-page, .ppe-page, .privacy-requests-page) select:not([multiple]):not([size]),
+  :is(.ad-page, .ins-page, .ppe-page, .privacy-requests-page) select:not([multiple]):not([size])::picker(select) { appearance: base-select; }
+  :is(.ad-page, .ins-page, .ppe-page, .privacy-requests-page) select::picker-icon { display: none; }
+  :is(.ad-page, .ins-page, .ppe-page, .privacy-requests-page) select::picker(select) {
     max-height: min(340px, 55dvh);
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -76,7 +76,7 @@
     font-family: inherit;
     font-size: 13px;
   }
-  :is(.ad-page, .ins-page, .ppe-page) select option {
+  :is(.ad-page, .ins-page, .ppe-page, .privacy-requests-page) select option {
     min-height: 38px;
     gap: 10px;
     padding: 10px 12px;
@@ -85,19 +85,19 @@
     overflow-wrap: anywhere;
     cursor: pointer;
   }
-  :is(.ad-page, .ins-page, .ppe-page) select option:checked { background: #edf3e7; color: #304527; font-weight: 600; }
-  :is(.ad-page, .ins-page, .ppe-page) select option:not(:disabled):is(:hover, :focus) { background: #e5eedc; color: #304527; }
-  :is(.ad-page, .ins-page, .ppe-page) select option::checkmark { color: #526f43; }
-  :is(.ad-page, .ins-page, .ppe-page) select option:disabled { cursor: not-allowed; }
+  :is(.ad-page, .ins-page, .ppe-page, .privacy-requests-page) select option:checked { background: #edf3e7; color: #304527; font-weight: 600; }
+  :is(.ad-page, .ins-page, .ppe-page, .privacy-requests-page) select option:not(:disabled):is(:hover, :focus) { background: #e5eedc; color: #304527; }
+  :is(.ad-page, .ins-page, .ppe-page, .privacy-requests-page) select option::checkmark { color: #526f43; }
+  :is(.ad-page, .ins-page, .ppe-page, .privacy-requests-page) select option:disabled { cursor: not-allowed; }
 }
 @media (max-width: 768px) {
-  :is(.ad-page, .ins-page, .ppe-page) select:not([multiple]):not([size]) { min-height: 44px; font-size: 16px; }
+  :is(.ad-page, .ins-page, .ppe-page, .privacy-requests-page) select:not([multiple]):not([size]) { min-height: 44px; font-size: 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  :is(.ad-page, .ins-page, .ppe-page) select:not([multiple]):not([size]) { transition: none; }
+  :is(.ad-page, .ins-page, .ppe-page, .privacy-requests-page) select:not([multiple]):not([size]) { transition: none; }
 }
 @media (forced-colors: active) {
-  :is(.ad-page, .ins-page, .ppe-page) select:not([multiple]):not([size]) {
+  :is(.ad-page, .ins-page, .ppe-page, .privacy-requests-page) select:not([multiple]):not([size]) {
     appearance: auto;
     background-image: none;
     border-color: ButtonText;

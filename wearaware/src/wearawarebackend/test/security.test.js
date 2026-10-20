@@ -12,13 +12,17 @@ let reusableProfileId;
 let sentResetMail;
 const originalCreateTransport = nodemailer.createTransport;
 const secret = 'isolated-security-suite-secret-not-production';
-const token = (id, role = 'inspector', extra = {}) => jwt.sign({ id, role, ...extra }, secret, { expiresIn: '1h' });
-const call = (path, auth, method = 'GET', body, headers = {}) => fetch(base + path, { method, headers: { ...(auth ? { Authorization: `Bearer ${auth}` } : {}), ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...headers }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+const token = require('./helpers/session-token').fixtureTokens(secret, (id, role = 'inspector', extra = {}) => ({ id, role, ...extra }));
+const call = async (path, auth, method = 'GET', body, headers = {}) => {
+  await token.ready(auth);
+  return fetch(base + path, { method, headers: { ...(auth ? { Authorization: `Bearer ${auth}` } : {}), ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...headers }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+};
 before(async () => {
   mongo = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   Object.assign(process.env, { NODE_ENV: 'test', MONGODB_URI: mongo.getUri(), MONGODB_DB: 'security_test', JWT_SECRET: secret, EMAIL_USER: 'test-sender@example.test', EMAIL_PASS: 'test-password', AI_API_KEY: 'isolated-ai-test-key-with-32-characters', TRUST_PROXY: '', CORS_ORIGINS: 'http://localhost:5173', FRONTEND_URL: 'http://localhost:5173' });
   nodemailer.createTransport = () => ({ sendMail: async mail => { sentResetMail = mail; return { messageId: 'test-message' }; } });
   const database = require('../database'); db = await database.connectDatabase(); await database.ensureIndexes(db);
+  await require('../session-activity-schema').provisionSessionActivity(db);
   await db.collection('roles').insertMany([{ id: 1, name: 'admin' }, { id: 2, name: 'inspector' }, { id: 3, name: 'user' }, { id: 4, name: 'scanner' }]);
   const password_hash = await bcrypt.hash('OriginalPass123', 4);
   await db.collection('users').insertMany([
@@ -528,6 +532,7 @@ test('recovery is generic, stores only hashes, enforces expiry and consumes a li
 });
 test('authenticated WebSocket alerts are isolated and recheck revoked sessions', async () => {
   const connect = async auth => {
+    await token.ready(auth);
     const ws = new WebSocket(base.replace('http:', 'ws:') + '/alerts'); await once(ws, 'open');
     const result = once(ws, auth ? 'message' : 'close'); ws.send(JSON.stringify(auth ? { type: 'authenticate', token: auth } : { type: 'authenticate', token: 'invalid' })); await result; return ws;
   };
@@ -568,7 +573,7 @@ test('AI uploads require an authorized scanning account and forward confidence a
   const mock = httpModule.createServer((req, res) => { received = { url: req.url, key: req.headers['x-api-key'] }; req.resume(); res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ detections: [{ class_name: 'human', confidence: 0.92, bbox: { x1: 10, y1: 10, x2: 200, y2: 400 } }], total_detections: 1, is_compliant: false })); });
   mock.listen(0, '127.0.0.1'); await once(mock, 'listening'); process.env.AI_API_URL = `http://127.0.0.1:${mock.address().port}`;
   try {
-    const send = async (auth, size = 16, requiredPpe = ['helmet', 'vest']) => { const form = new FormData(); form.append('conf', '0.35'); form.append('required_ppe', JSON.stringify(requiredPpe)); form.append('file', new Blob([new Uint8Array(size)], { type: 'image/jpeg' }), 'frame.jpg'); return fetch(base + '/api/ppe/detect', { method: 'POST', headers: auth ? { Authorization: `Bearer ${auth}` } : {}, body: form }); };
+    const send = async (auth, size = 16, requiredPpe = ['helmet', 'vest']) => { await token.ready(auth); const form = new FormData(); form.append('conf', '0.35'); form.append('required_ppe', JSON.stringify(requiredPpe)); form.append('file', new Blob([new Uint8Array(size)], { type: 'image/jpeg' }), 'frame.jpg'); return fetch(base + '/api/ppe/detect', { method: 'POST', headers: auth ? { Authorization: `Bearer ${auth}` } : {}, body: form }); };
     assert.equal((await send(null)).status, 401); assert.equal((await send(token(1))).status, 403); assert.equal(received, null);
     assert.equal((await send(token(3))).status, 403); assert.equal(received, null);
     const allowed = await send(token(6, 'scanner'));
@@ -590,10 +595,12 @@ test('AI failures and malformed responses remain service errors without creating
   let upstream;
   const beforeCount = await db.collection('detections').countDocuments();
   global.fetch = (url, options) => String(url).startsWith('https://ai.example.test/') ? upstream() : originalFetch(url, options);
-  const send = () => {
+  const send = async () => {
     const form = new FormData();
     form.append('file', new Blob([new Uint8Array(16)], { type: 'image/jpeg' }), 'frame.jpg');
-    return originalFetch(base + '/api/ppe/detect', { method: 'POST', headers: { Authorization: `Bearer ${token(6, 'scanner')}` }, body: form });
+    const scannerToken = token(6, 'scanner');
+    await token.ready(scannerToken);
+    return originalFetch(base + '/api/ppe/detect', { method: 'POST', headers: { Authorization: `Bearer ${scannerToken}` }, body: form });
   };
   try {
     for (const status of [401, 503]) {

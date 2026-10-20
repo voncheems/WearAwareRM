@@ -39,6 +39,7 @@ export default function MarketingNav({ currentPage, setCurrentPage }) {
       </button>
       <div id="marketing-links" className={`wa-nav-links ${open ? 'is-open' : ''}`}>
         {links.map(([page, label]) => <button key={page} aria-current={currentPage === page ? 'page' : undefined} onClick={() => navigate(page)}>{label}</button>)}
+        <a className="privacy-nav-link" href="/privacy" onClick={() => setOpen(false)}>Privacy notice</a>
         <button className="wa-nav-cta" onClick={() => navigate('login')}>Get started <ArrowUpRight size={15} /></button>
       </div>
     </nav>

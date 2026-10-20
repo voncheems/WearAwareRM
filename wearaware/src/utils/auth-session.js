@@ -1,6 +1,16 @@
 export const AUTH_SIGNED_OUT = 'wearaware:signed-out';
 export const AUTH_SESSION_CHANGED = 'wearaware:session-changed';
+export const AUTH_SESSION_EXPIRED = 'wearaware:session-expired';
 const notifyBrowser = name => window.dispatchEvent(new Event(name));
+
+export function expireSession(token, { storage = localStorage, notify = notifyBrowser } = {}) {
+  // A delayed response from an old session must not clear a newer login.
+  if (storage.getItem('token') !== token) return false;
+  storage.removeItem('token');
+  storage.removeItem('user');
+  notify(AUTH_SESSION_EXPIRED);
+  return true;
+}
 
 export function storeAccessToken(token, { storage = localStorage, notify = notifyBrowser } = {}) {
   storage.setItem('token', token);

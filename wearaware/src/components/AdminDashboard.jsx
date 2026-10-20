@@ -1,4 +1,6 @@
-import { signOut } from '../utils/auth-session';
+import { showAlert, showConfirm, showPrompt } from '../utils/dialogs';
+import PrivacyRequestsLink from './PrivacyRequestsLink';
+import { signOut, expireSession } from '../utils/auth-session';
 import useMobileSidebar from '../hooks/useMobileSidebar';
 import { escapeHtml, printDocument } from '../utils/print';
 import React, { useState, useEffect, useRef } from 'react';
@@ -150,6 +152,7 @@ async function adminFetch(url, options) {
       : 'Cannot reach the backend. Check that the backend and demo tunnel are running.');
   }
   if (!response.ok) {
+    if (response.status === 401) expireSession(options?.headers?.Authorization?.replace(/^Bearer /i, ''));
     const body = await response.json().catch(() => ({}));
     const detail = body.fields?.map(item => `${item.field}: ${item.message}`).join(' ');
     throw new Error(response.status === 401 ? 'Your session has expired. Sign out and sign in again.'
@@ -197,7 +200,7 @@ function QRModal({ worker, onClose }) {
   }, [qrData?.qr_token]);
 
   const regenerate = async () => {
-    if (qrData?.qr_token && !window.confirm('Regenerate this QR code? The previous printed QR will stop working immediately.')) return;
+    if (qrData?.qr_token && !(await showConfirm('Regenerate this QR code? The previous printed QR will stop working immediately.'))) return;
     setWorking(true); setError('');
     try {
       const response = await adminFetch(`${API}/workers/${worker.id}/qr/regenerate`, { method: 'POST', headers: getAuthHeaders(), body: '{}' });
@@ -208,7 +211,7 @@ function QRModal({ worker, onClose }) {
   };
 
   const revoke = async () => {
-    if (!window.confirm('Revoke this QR code? It will no longer identify the employee at a checkpoint.')) return;
+    if (!(await showConfirm('Revoke this QR code? It will no longer identify the employee at a checkpoint.'))) return;
     setWorking(true); setError('');
     try {
       const response = await adminFetch(`${API}/workers/${worker.id}/qr`, { method: 'DELETE', headers: getAuthHeaders() });
@@ -368,8 +371,8 @@ function BulkQRModal({ workers, onClose }) {
         </body>
       </html>
       `, true);
-      if (printable.length !== workers.length) alert(`${workers.length - printable.length} revoked QR code(s) were skipped.`);
-    } catch (error) { alert(error.message); }
+      if (printable.length !== workers.length) await showAlert(`${workers.length - printable.length} revoked QR code(s) were skipped.`);
+    } catch (error) { await showAlert(error.message); }
     finally { setGenerating(false); }
   };
 
@@ -548,23 +551,23 @@ export default function AdminDashboard({ setCurrentPage }) {
 
   const handleManualReview = async (detectionId, decision) => {
     if (!decision) return;
-    const notes = window.prompt('Optional authorization reason or inspection note:', '');
+    const notes = await showPrompt('Optional authorization reason or inspection note:', '');
     if (notes === null) return;
     try {
       const res = await adminFetch(`${API}/admin/detections/${detectionId}/review`, { method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify({ decision, notes: notes.trim() || null }) });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || 'Could not save the review decision.');
       await fetchDetections();
-    } catch (err) { alert(err.message); }
+    } catch (err) { await showAlert(err.message); }
   };
 
   const handleResolution = async (detectionId, status) => {
-    const reason = window.prompt(status === 'FALSE_DETECTION' || status === 'AUTHORIZED_EXCEPTION' ? 'Reason (required):' : 'Inspection notes (optional):', '');
+    const reason = await showPrompt(status === 'FALSE_DETECTION' || status === 'AUTHORIZED_EXCEPTION' ? 'Reason (required):' : 'Inspection notes (optional):', '', { required: status === 'FALSE_DETECTION' || status === 'AUTHORIZED_EXCEPTION' });
     if (reason === null || ((status === 'FALSE_DETECTION' || status === 'AUTHORIZED_EXCEPTION') && !reason.trim())) return;
     try {
       const res = await adminFetch(`${API}/violations/${detectionId}/resolve`, { method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify({ status, reason: reason.trim() || null }) });
       const body = await res.json(); if (!res.ok) throw new Error(body.error || 'Could not resolve incident.'); await fetchDetections();
-    } catch (err) { alert(err.message); }
+    } catch (err) { await showAlert(err.message); }
   };
 
   const fetchAuditLogs = async () => {
@@ -630,12 +633,12 @@ export default function AdminDashboard({ setCurrentPage }) {
     try {
       await adminFetch(editingRiskRule ? `${API}/admin/risk-rules/${editingRiskRule.id}` : `${API}/admin/risk-rules`, { method: editingRiskRule ? 'PUT' : 'POST', headers: getAuthHeaders(), body: JSON.stringify(payload) });
       setShowRiskRuleModal(false); setEditingRiskRule(null); fetchRiskRules();
-    } catch (err) { alert(err.message); }
+    } catch (err) { await showAlert(err.message); }
   };
 
   const toggleRiskRule = async (rule) => {
     try { await adminFetch(`${API}/admin/risk-rules/${rule.id}/status`, { method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify({ is_active: !rule.is_active }) }); fetchRiskRules(); }
-    catch (err) { alert(err.message); }
+    catch (err) { await showAlert(err.message); }
   };
 
   const fetchPwRequests = async () => {
@@ -651,7 +654,7 @@ export default function AdminDashboard({ setCurrentPage }) {
   };
 
   const handleResetPassword = async (id, email) => {
-    if (!window.confirm(`Create a single-use password reset link for ${email}?`)) return;
+    if (!(await showConfirm(`Create a single-use password reset link for ${email}?`))) return;
     try {
       const res  = await adminFetch(`${API}/admin/password-requests/${id}/reset`, {
         method: 'PATCH', headers: getAuthHeaders(),
@@ -661,17 +664,17 @@ export default function AdminDashboard({ setCurrentPage }) {
       if (!res.ok) throw new Error(data.error);
 
       if (!data.emailed) throw new Error('The reset link was not emailed. Check the backend email configuration.');
-      alert('A single-use reset link was emailed to the account recovery address.');
+      await showAlert('A single-use reset link was emailed to the account recovery address.');
       fetchPwRequests();
-    } catch (err) { alert(err.message); }
+    } catch (err) { await showAlert(err.message); }
   };
 
   const handleDeletePwRequest = async (id) => {
-    if (!window.confirm('Delete this request?')) return;
+    if (!(await showConfirm('Delete this request?'))) return;
     try {
       await adminFetch(`${API}/admin/password-requests/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
       fetchPwRequests();
-    } catch (err) { alert(err.message); }
+    } catch (err) { await showAlert(err.message); }
   };
 
   const validateWorker = () => {
@@ -735,23 +738,23 @@ export default function AdminDashboard({ setCurrentPage }) {
   };
 
   const handleDeactivateWorker = async (id, name) => {
-    if (!window.confirm(`Deactivate worker "${name}"?`)) return;
+    if (!(await showConfirm(`Deactivate worker "${name}"?`))) return;
     try {
       const res  = await adminFetch(`${API}/workers/${id}/status`, { method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify({ status: 'terminated' }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       fetchWorkers();
-    } catch (err) { alert(err.message); }
+    } catch (err) { await showAlert(err.message); }
   };
 
   const handleReactivateWorker = async (id, name) => {
-    if (!window.confirm(`Reactivate worker "${name}"?`)) return;
+    if (!(await showConfirm(`Reactivate worker "${name}"?`))) return;
     try {
       const res  = await adminFetch(`${API}/workers/${id}/status`, { method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify({ status: 'active' }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       fetchWorkers();
-    } catch (err) { alert(err.message); }
+    } catch (err) { await showAlert(err.message); }
   };
 
   const handleAssignInspector = async (deviceId, inspectorId) => {
@@ -763,7 +766,7 @@ export default function AdminDashboard({ setCurrentPage }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       fetchDevices();
-    } catch (err) { alert(err.message); }
+    } catch (err) { await showAlert(err.message); }
   };
 
   const openStationModal = (station = null) => {
@@ -832,13 +835,13 @@ export default function AdminDashboard({ setCurrentPage }) {
   };
 
   const handleDeleteStation = async (id, name) => {
-    if (!window.confirm(`Delete checkpoint "${name}"? If it has detection records, it will be blocked — deactivate it instead.`)) return;
+    if (!(await showConfirm(`Delete checkpoint "${name}"? If it has detection records, it will be blocked — deactivate it instead.`))) return;
     try {
       const res  = await adminFetch(`${API}/checkpoints/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       fetchDevices();
-    } catch (err) { alert(err.message); }
+    } catch (err) { await showAlert(err.message); }
   };
 
   const handleCheckpointStatus = async (checkpoint) => {
@@ -848,7 +851,7 @@ export default function AdminDashboard({ setCurrentPage }) {
         body: JSON.stringify({ is_active: !checkpoint.is_active }),
       });
       fetchDevices();
-    } catch (err) { alert(err.message); }
+    } catch (err) { await showAlert(err.message); }
   };
 
   const handleSaveProfile = async (event) => {
@@ -914,18 +917,18 @@ export default function AdminDashboard({ setCurrentPage }) {
   };
 
   const handleDeactivate = async (id, name) => {
-    if (!window.confirm(`Deactivate ${name}?`)) return;
+    if (!(await showConfirm(`Deactivate ${name}?`))) return;
     try {
       await adminFetch(`${API}/users/${id}/deactivate`, { method: 'PATCH', headers: getAuthHeaders() });
       fetchUsers();
-    } catch (err) { alert(err.message); }
+    } catch (err) { await showAlert(err.message); }
   };
   const handleReactivate = async (id, name) => {
-    if (!window.confirm(`Reactivate ${name}?`)) return;
+    if (!(await showConfirm(`Reactivate ${name}?`))) return;
     try {
       await adminFetch(`${API}/users/${id}/reactivate`, { method: 'PATCH', headers: getAuthHeaders() });
       fetchUsers();
-    } catch (err) { alert(err.message); }
+    } catch (err) { await showAlert(err.message); }
   };
   const openEditUser = (u) => {
     setEditingUser(u);
@@ -969,7 +972,7 @@ export default function AdminDashboard({ setCurrentPage }) {
       if (editingUser.id === user.id) {
         localStorage.removeItem('token');
         localStorage.removeItem('user');
-        alert('Your account was updated. Please sign in again.');
+        await showAlert('Your account was updated. Please sign in again.');
         setCurrentPage('login');
         return;
       }
@@ -982,7 +985,7 @@ export default function AdminDashboard({ setCurrentPage }) {
 
   const handleLogout = async () => {
     try { if (await signOut(API)) setCurrentPage('landing'); }
-    catch (error) { window.alert(error.message); }
+    catch (error) { await showAlert(error.message); }
   };
 
   const [reportModal,  setReportModal]  = useState(false);
@@ -998,7 +1001,7 @@ export default function AdminDashboard({ setCurrentPage }) {
       if (!res.ok || !data.photo_url) throw new Error(data.error || 'No camera photo is available for this detection.');
       setAdminPhoto(data.photo_url);
     } catch (err) {
-      alert(err.message);
+      await showAlert(err.message);
     }
   };
 
@@ -1182,6 +1185,7 @@ export default function AdminDashboard({ setCurrentPage }) {
               <span className="ad-nav-icon">{item.icon}</span> {item.label}
             </button>
           ))}
+          <PrivacyRequestsLink className="ad-nav-item" />
         </nav>
         <div className="ad-sidebar-footer">
           <div className="ad-user-info">

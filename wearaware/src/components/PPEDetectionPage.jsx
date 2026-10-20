@@ -1,3 +1,4 @@
+import { showAlert } from '../utils/dialogs';
 import { signOut } from '../utils/auth-session';
 import useMobileSidebar from '../hooks/useMobileSidebar';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -131,7 +132,7 @@ export default function PPEDetectionPage({ setCurrentPage }) {
   const leave = async () => {
     if (isScanner) {
       try { if (await signOut(API)) setCurrentPage(backPage); }
-      catch (error) { window.alert(error.message); }
+      catch (error) { await showAlert(error.message); }
     } else setCurrentPage(backPage);
   };
 

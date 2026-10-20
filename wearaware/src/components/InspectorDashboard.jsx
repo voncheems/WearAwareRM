@@ -1,4 +1,6 @@
-import { AUTH_SESSION_CHANGED, signOut, storeAccessToken } from '../utils/auth-session';
+import { showAlert, showConfirm, showPrompt } from '../utils/dialogs';
+import PrivacyRequestsLink from './PrivacyRequestsLink';
+import { AUTH_SESSION_CHANGED, signOut, storeAccessToken, expireSession } from '../utils/auth-session';
 import { createPortal } from 'react-dom';
 import useMobileSidebar from '../hooks/useMobileSidebar';
 import { escapeHtml, printDocument, safePhoto } from '../utils/print';
@@ -67,16 +69,12 @@ export default function InspectorDashboard({ setCurrentPage }) {
 
   const storedUser = useMemo(() => JSON.parse(localStorage.getItem('user') || '{}'), []);
 
-  const handleUnauthorized = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    setCurrentPage('landing');
-  };
-
   const authFetch = async (url, options = {}) => {
-    const res = await fetch(url, { ...options, headers: { ...getAuthHeaders(), ...(options.headers || {}) } });
+    const headers = { ...getAuthHeaders(), ...(options.headers || {}) };
+    const token = headers.Authorization?.replace(/^Bearer /i, '');
+    const res = await fetch(url, { ...options, headers });
     if (res.status === 401) {
-      handleUnauthorized();
+      expireSession(token);
       throw new Error('Session expired');
     }
     return res;
@@ -236,40 +234,40 @@ export default function InspectorDashboard({ setCurrentPage }) {
 
   const handleLogout = async () => {
     try { if (await signOut(API)) setCurrentPage('landing'); }
-    catch (error) { window.alert(error.message); }
+    catch (error) { await showAlert(error.message); }
   };
 
   const handleOverride = async (detectionId) => {
-    if (!window.confirm('Override this violation as compliant?')) return;
+    if (!(await showConfirm('Override this violation as compliant?'))) return;
     try {
       const res  = await authFetch(`${API}/inspector/detections/${detectionId}/override`, { method: 'PATCH' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       fetchDetections();  // refresh stats + log
     } catch (err) {
-      alert(err.message);
+      await showAlert(err.message);
     }
   };
 
   const handleManualReview = async (detectionId, decision) => {
     if (!decision) return;
-    const notes = window.prompt('Optional authorization reason or inspection note:', '');
+    const notes = await showPrompt('Optional authorization reason or inspection note:', '');
     if (notes === null) return;
     try {
       const res = await authFetch(`${API}/inspector/detections/${detectionId}/review`, { method: 'PATCH', body: JSON.stringify({ decision, notes: notes.trim() || null }) });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || 'Could not save the review decision.');
       await fetchDetections();
-    } catch (err) { if (err.message !== 'Session expired') alert(err.message); }
+    } catch (err) { if (err.message !== 'Session expired') await showAlert(err.message); }
   };
 
   const handleResolution = async (detectionId, status) => {
-    const reason = window.prompt(status === 'FALSE_DETECTION' || status === 'AUTHORIZED_EXCEPTION' ? 'Reason (required):' : 'Inspection notes (optional):', '');
+    const reason = await showPrompt(status === 'FALSE_DETECTION' || status === 'AUTHORIZED_EXCEPTION' ? 'Reason (required):' : 'Inspection notes (optional):', '', { required: status === 'FALSE_DETECTION' || status === 'AUTHORIZED_EXCEPTION' });
     if (reason === null || ((status === 'FALSE_DETECTION' || status === 'AUTHORIZED_EXCEPTION') && !reason.trim())) return;
     try {
       const res = await authFetch(`${API}/violations/${detectionId}/resolve`, { method: 'PATCH', body: JSON.stringify({ status, reason: reason.trim() || null }) });
       const body = await res.json(); if (!res.ok) throw new Error(body.error || 'Could not resolve incident.'); await fetchDetections();
-    } catch (err) { if (err.message !== 'Session expired') alert(err.message); }
+    } catch (err) { if (err.message !== 'Session expired') await showAlert(err.message); }
   };
 
   const [photoModal,   setPhotoModal]   = useState(null);
@@ -333,7 +331,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
       setPhotoCache(prev => ({ ...prev, [detectionId]: data.photo_url }));
       setPhotoModal(data.photo_url);
     } catch (err) {
-      if (err.message !== 'Session expired') alert(err.message);
+      if (err.message !== 'Session expired') await showAlert(err.message);
     }
   };
 
@@ -725,6 +723,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
               <span className="ins-nav-icon">{item.icon}</span> {item.label}
             </button>
           ))}
+          <PrivacyRequestsLink className="ins-nav-item" />
         </nav>
         <div className="ins-sidebar-footer">
           <div className="ins-user-info">

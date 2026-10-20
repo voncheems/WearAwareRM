@@ -2,7 +2,7 @@ const { resolveWorkerLink, removeCreatedWorker } = require('./worker-access');
 require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 
 const express  = require('express');
-const { configureSecurity, assertProductionConfig, safeErrors } = require('./security');
+const { configureSecurity, assertProductionConfig, safeErrors, limiter } = require('./security');
 const { validateRequest } = require('./validation');
 const { installRecovery } = require('./password-recovery');
 const { createAlerts } = require('./alerts');
@@ -14,7 +14,8 @@ const { ensureDefaultComplianceProfiles } = require('./compliance-profiles');
 const { getWorkerRepeatStatus } = require('./repeat-violations');
 const { authorizationRecord } = require('./entry-authorization');
 const { issueAccessToken, revokeAccountSessions } = require('./auth-sessions');
-const { installMfa, issueLoginOtp, createMfaChallenge, readMfaChallenge, verifyMfaCode } = require('./mfa');
+const { checkActivity } = require('./session-activity');
+const { installMfa, issueLoginOtp, loginOtpLimit, createMfaChallenge, readMfaChallenge, verifyMfaCode } = require('./mfa');
 const bcrypt   = require('bcrypt');
 const http = require('node:http');
 const nodemailer = require('nodemailer');
@@ -51,6 +52,7 @@ let wss;
 
 // ── Routes ──────────────────────────────────────────────────
 app.use('/api/admin',     require('./routes/admin'));
+app.use('/api/privacy-requests', require('./routes/privacy-requests').createPrivacyRequestRouter());
 app.use('/api/workers',   require('./routes/workers'));
 app.use('/api/devices',   require('./routes/devices'));
 app.use('/api/checkpoints', require('./routes/devices'));
@@ -128,8 +130,16 @@ app.post('/api/auth/login', validateRequest, async (req, res) => {
 
     if (user.mfa_enabled) {
       if (!mfa_token || !mfa_code || !readMfaChallenge(mfa_token, user)) {
-        try { await issueLoginOtp(user, transporter); } catch { return res.status(503).json({ error: 'Email delivery is not configured. Please contact your administrator.' }); }
-        return res.json({ mfa_required: true, mfa_token: createMfaChallenge(user) });
+        req.verifiedMfaAccountId = user.id;
+        return loginOtpLimit(req, res, async limitError => {
+          if (limitError) return res.status(503).json({ error: 'Sign-in verification is temporarily unavailable. Please retry.' });
+          try {
+            await issueLoginOtp(user, transporter);
+            res.json({ mfa_required: true, mfa_token: createMfaChallenge(user) });
+          } catch {
+            res.status(503).json({ error: 'Email delivery is not configured. Please contact your administrator.' });
+          }
+        });
       }
       const mfaResult = await verifyMfaCode(user, mfa_code);
       if (!mfaResult.ok) {
@@ -138,7 +148,7 @@ app.post('/api/auth/login', validateRequest, async (req, res) => {
       }
     }
 
-    const token = issueAccessToken(user, { mfaVerified: Boolean(user.mfa_enabled) });
+    const token = await issueAccessToken(user, { mfaVerified: Boolean(user.mfa_enabled) });
 
     await recordAudit({ category: 'login', action: 'Signed in', actor: user, target: user.email });
     res.json({
@@ -151,6 +161,7 @@ app.post('/api/auth/login', validateRequest, async (req, res) => {
       },
     });
   } catch (err) {
+    if (err.status === 503) return res.status(503).json({ error: 'Session verification is temporarily unavailable. Please retry.' });
     if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
     console.error('Request handler failed.');
     if (err.code === '42P01') {
@@ -166,6 +177,24 @@ app.post('/api/auth/logout', requireAuth, async (req, res, next) => {
     await recordAudit({ category: 'action', action: 'Signed out all sessions', actor: req.user });
     res.json({ success: true, scope: 'all_sessions' });
   } catch (error) { next(error); }
+});
+
+// Only explicit foreground interactions call this route. Ordinary REST calls,
+// scanner frames, polling and WebSocket traffic never update activity.
+app.post('/api/auth/activity', requireAuth,
+  limiter(20, 60000, { keyGenerator: req => String(req.user.id) }), async (req, res, next) => {
+    if (Array.isArray(req.body) || Object.keys(req.body || {}).length || Object.keys(req.query).length) return res.status(400).json({ error: 'Invalid request data.' });
+    try {
+      const activity = await checkActivity(req.headers.authorization.split(' ')[1], req.user, { renew: true });
+      res.json({ idle_expires_at: activity.idle_expires_at, absolute_expires_at: activity.absolute_expires_at });
+    } catch (error) {
+      if (error.code === 'SESSION_INACTIVE') return res.status(401).json({ error: 'Session inactive. Please sign in again.', code: error.code });
+      next(error);
+    }
+  });
+app.get('/api/auth/session', requireAuth, (req, res) => {
+  const activity = req.user.session_activity;
+  res.json({ idle_expires_at: activity.idle_expires_at, absolute_expires_at: activity.absolute_expires_at });
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -317,7 +346,8 @@ app.patch('/api/inspector/profile', requireAuth, requireRole('inspector'), valid
 
     const updated = await data.users({ id: req.user.id }, "id full_name email role created_at session_version", {});
     const account = updated.rows[0];
-    const token = new_password ? undefined : issueAccessToken(account, { mfaVerified: req.user.mfa_verified === true, expiresAt: req.user.exp });
+    const token = new_password ? undefined : await issueAccessToken(account, { mfaVerified: req.user.mfa_verified === true,
+      expiresAt: req.user.exp, previousActivity: req.user.session_activity });
     res.json({ success: true, user: account, ...(token ? { token } : {}) });
   } catch (err) {
     if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
