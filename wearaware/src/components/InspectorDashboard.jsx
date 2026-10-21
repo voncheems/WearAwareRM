@@ -1,6 +1,8 @@
 import { reviewStatusPresentation, entryStatusLabel, hasPpeVerdict } from '../utils/review-status';
 import FinalPpeVerdictControl from './FinalPpeVerdictControl';
 import ComplianceResult from './ComplianceResult';
+import InspectorNotifications, { InspectorNotificationToasts } from './InspectorNotifications';
+import { createNotificationSound } from '../utils/notification-sound';
 import { finalComplianceOutcome } from '../utils/compliance-outcome';
 import { showAlert, showConfirm, showPrompt } from '../utils/dialogs';
 import PrivacyRequestsLink from './PrivacyRequestsLink';
@@ -14,7 +16,7 @@ import './InspectorTheme.css';
 import {
   AlertTriangle, MapPin, TrendingUp, User,
   ClipboardList, CheckCircle, BarChart3, HardHat, Radio, Calendar,
-  Phone, ChevronUp, ChevronDown, X, Mail, Shield, Clock, KeyRound, ArrowUpRight, Bell
+  Phone, ChevronUp, ChevronDown, X, Mail, Shield, Clock, KeyRound, ArrowUpRight, Bell, Volume2, VolumeX
 } from 'lucide-react';
 import WearAwareLogo from './Wearawarelogo';
 import MfaSettings from './MfaSettings';
@@ -65,6 +67,14 @@ export default function InspectorDashboard({ setCurrentPage }) {
   const [notifications, setNotifications] = useState([]);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [notificationError, setNotificationError] = useState('');
+  const [notificationSaving, setNotificationSaving] = useState(false);
+  const [notificationToasts, setNotificationToasts] = useState([]);
+  const [notificationSound] = useState(() => createNotificationSound());
+  const [soundEnabled, setSoundEnabled] = useState(() => {
+    try { return localStorage.getItem('wearaware.notificationSound') !== 'muted'; }
+    catch { return true; }
+  });
+  const notificationWriteRef = useRef(false);
   const proofPanelRef = useRef(null);
 
   const storedUser = useMemo(() => JSON.parse(localStorage.getItem('user') || '{}'), []);
@@ -82,6 +92,31 @@ export default function InspectorDashboard({ setCurrentPage }) {
 
   useEffect(() => { fetchProfile(); fetchDetections(); fetchStations(); fetchNotifications(); }, []);
 
+  useEffect(() => {
+    notificationSound.setEnabled(soundEnabled);
+    try { localStorage.setItem('wearaware.notificationSound', soundEnabled ? 'on' : 'muted'); }
+    catch { /* Sound still works when browser preference storage is unavailable. */ }
+  }, [notificationSound, soundEnabled]);
+
+  useEffect(() => {
+    notificationSound.activate();
+    const unlock = () => { notificationSound.unlock(); };
+    window.addEventListener('pointerdown', unlock);
+    window.addEventListener('keydown', unlock);
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+      notificationSound.dispose();
+    };
+  }, [notificationSound]);
+
+  const toggleNotificationSound = () => {
+    const enabled = !soundEnabled;
+    notificationSound.setEnabled(enabled);
+    setSoundEnabled(enabled);
+    if (enabled) notificationSound.unlock().then(ready => { if (ready) notificationSound.play(); });
+  };
+
   // Start each inspector section at its header so proof photos are immediately visible
   // instead of inheriting the previous section's scroll position.
   useEffect(() => {
@@ -98,6 +133,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
       const body = await res.json().catch(() => ({}));
       if (!res.ok || !Array.isArray(body)) throw new Error(body.error || `Notifications request failed (${res.status}).`);
       setNotifications(body); setNotificationError('');
+      return body;
     } catch (err) {
       if (err.message === 'Session expired') return;
       setNotificationError(err.name === 'TypeError'
@@ -119,7 +155,9 @@ export default function InspectorDashboard({ setCurrentPage }) {
         try {
           const payload = JSON.parse(event.data);
           if (payload.type !== 'notification' && !payload.detection_id) return;
+          notificationSound.play(payload.detection_id == null ? undefined : `scan-${payload.detection_id}`);
           setNotifications(previous => [{ id: `live-${payload.detection_id}`, detection_id: payload.detection_id, type: payload.alert_type === 'manual_review' ? 'INSPECTION_REQUIRED' : 'NON_COMPLIANT_WORKER', title: payload.title || 'Non-Compliant Worker Detected', message: payload.message || 'A worker requires review.', is_read: false, created_at: new Date().toISOString(), ...payload }, ...previous.filter(item => Number(item.detection_id) !== Number(payload.detection_id))]);
+          setNotificationToasts(previous => [{ ...payload, id: `live-${payload.detection_id}`, is_read: false }, ...previous.filter(item => Number(item.detection_id) !== Number(payload.detection_id))].slice(0, 3));
         } catch { /* Ignore malformed real-time messages; persisted notifications remain available. */ }
       });
       socket = connection;
@@ -129,15 +167,49 @@ export default function InspectorDashboard({ setCurrentPage }) {
     window.addEventListener(AUTH_SESSION_CHANGED, connect);
     window.addEventListener('storage', onStorage);
     return () => { socket?.close(); window.removeEventListener(AUTH_SESSION_CHANGED, connect); window.removeEventListener('storage', onStorage); };
-  }, []);
+  }, [notificationSound]);
 
   const markNotificationRead = async (notification) => {
-    if (notification.is_read || String(notification.id).startsWith('live-')) { if (String(notification.id).startsWith('live-')) fetchNotifications(); return; }
+    if (notification.is_read || notificationWriteRef.current) return;
+    notificationWriteRef.current = true;
+    setNotificationSaving(true);
     try {
-      const res = await authFetch(`${API}/inspector/notifications/${notification.id}/read`, { method: 'PATCH' });
-      if (!res.ok) throw new Error('Could not mark notification as read.');
-      setNotifications(previous => previous.map(item => item.id === notification.id ? { ...item, is_read: true, read_at: new Date().toISOString() } : item));
-    } catch (err) { setNotificationError(err.message); }
+      // Socket alerts use temporary IDs; resolve their persisted notification first.
+      let target = notification;
+      if (String(target.id).startsWith('live-')) {
+        const stored = await fetchNotifications();
+        target = stored?.find(item => Number(item.detection_id) === Number(notification.detection_id));
+        if (!target) throw new Error('Notification is not available yet. Refresh and try again.');
+      }
+      if (!target.is_read) {
+        const res = await authFetch(`${API}/inspector/notifications/${target.id}/read`, { method: 'PATCH' });
+        if (!res.ok) throw new Error('Could not mark notification as read.');
+        setNotifications(previous => previous.map(item => Number(item.detection_id) === Number(target.detection_id) ? { ...item, is_read: true } : item));
+      }
+      setNotificationError('');
+    } catch (err) { if (err.message !== 'Session expired') setNotificationError(err.message); }
+    finally { notificationWriteRef.current = false; setNotificationSaving(false); }
+  };
+
+  const markAllNotificationsRead = async () => {
+    if (notificationWriteRef.current) return;
+    notificationWriteRef.current = true;
+    setNotificationSaving(true);
+    try {
+      const res = await authFetch(`${API}/inspector/notifications/read-all`, { method: 'PATCH' });
+      if (!res.ok) throw new Error('Could not mark all notifications as read.');
+      // Reload persisted state so new socket alerts are not blindly marked read.
+      await fetchNotifications();
+    } catch (err) { if (err.message !== 'Session expired') setNotificationError(err.message); }
+    finally { notificationWriteRef.current = false; setNotificationSaving(false); }
+  };
+
+  const openNotificationIncident = notification => {
+    markNotificationRead(notification);
+    if (notification.detection_id) {
+      setActiveTab('violations');
+      window.setTimeout(() => document.querySelector(`[data-detection-id="${notification.detection_id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80);
+    }
   };
 
   const unreadNotifications = notifications.filter(notification => !notification.is_read);
@@ -254,7 +326,9 @@ export default function InspectorDashboard({ setCurrentPage }) {
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || 'Could not save the PPE verdict.');
     setDetections(previous => previous.map(record => record.id === detectionId ? { ...record, ...body.detection } : record));
+    setNotificationToasts(previous => [{ ...body.detection, id: `verdict-${detectionId}`, detection_id: detectionId, is_read: true, message: 'Inspector PPE verdict saved. Entry access is unchanged.' }, ...previous.filter(item => Number(item.detection_id) !== Number(detectionId))].slice(0, 3));
     await fetchDetections();
+    await fetchNotifications();
   };
 
   const handleManualReview = async (detectionId, decision) => {
@@ -718,6 +792,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
 
   return (
     <div className="ins-page">
+      {createPortal(<InspectorNotificationToasts notifications={notificationToasts} onDismiss={id => setNotificationToasts(previous => previous.filter(item => item.id !== id))} onOpenIncident={notification => { openNotificationIncident(notification); setNotificationToasts(previous => previous.filter(item => item.id !== notification.id)); }} />, document.body)}
 
       {mobileSidebar.backdrop}
       <aside {...mobileSidebar.props} className="ins-sidebar" aria-label="Inspector navigation">
@@ -759,9 +834,10 @@ export default function InspectorDashboard({ setCurrentPage }) {
             <div className="ins-topbar-sub">Welcome back, {displayName}</div>
           </div></div>
           <div className="ins-topbar-actions">
+            <button type="button" className="ins-notification-button" onClick={toggleNotificationSound} aria-label={soundEnabled ? 'Mute notification sound' : 'Enable notification sound'} aria-pressed={soundEnabled} title={soundEnabled ? 'Notification sound on — click to mute' : 'Notification sound muted — click to enable'}>{soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}</button>
             <button type="button" className="ins-notification-button" aria-label={`${unreadNotifications.length} unread notifications`} aria-expanded={notificationOpen} onClick={() => { setNotificationOpen(open => !open); if (!notificationOpen) fetchNotifications(); }}><Bell size={19} />{unreadNotifications.length > 0 && <span className="ins-notification-count">{unreadNotifications.length > 99 ? '99+' : unreadNotifications.length}</span>}</button>
             <span className="ins-badge">INSPECTOR</span>
-            {notificationOpen && <div className="ins-notification-panel" role="dialog" aria-label="Inspector notifications"><div className="ins-notification-header"><strong>Notifications</strong><div className="ins-notification-header-actions"><button type="button" onClick={fetchNotifications}>Refresh</button><button type="button" aria-label="Close notifications" onClick={() => setNotificationOpen(false)}><X size={16} /></button></div></div>{notificationError && <div className="ins-notification-error">{notificationError}</div>}{notifications.length === 0 ? <div className="ins-notification-empty">No notifications yet.</div> : <div className="ins-notification-list">{notifications.map(notification => <button type="button" key={notification.id} className={`ins-notification-item ${notification.is_read ? 'read' : 'unread'}`} onClick={() => { markNotificationRead(notification); if (notification.detection_id) { setActiveTab('violations'); window.setTimeout(() => document.querySelector(`[data-detection-id="${notification.detection_id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80); } }}><span className="ins-notification-dot" /><span><strong>{notification.title || 'Inspector notification'}{notification.risk_severity && <em className={`ins-risk-badge ins-risk-${String(notification.risk_severity).toLowerCase()}`}>{notification.risk_severity} risk</em>}</strong><small>{notification.message || 'Open the violation history to review this incident.'}</small><small>{notification.station || 'Checkpoint'} · {notification.worker_name || notification.worker_employee_id || 'Worker'} · {notification.created_at ? new Date(notification.created_at).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }) : 'Just now'}</small><small className="ins-notification-link">View incident →</small></span></button>)}</div>}</div>}
+            {notificationOpen && <InspectorNotifications notifications={notifications} error={notificationError} saving={notificationSaving} onRefresh={fetchNotifications} onClose={() => setNotificationOpen(false)} onMarkRead={markNotificationRead} onMarkAllRead={markAllNotificationsRead} onOpenIncident={openNotificationIncident} />}
           </div>
         </div>
 

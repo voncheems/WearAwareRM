@@ -84,6 +84,38 @@
 .ins-notification-item .ins-notification-link { margin-top: .3rem; color: #4b7651; font-weight: 800; }
 .ins-notification-empty, .ins-notification-error { padding: 1.2rem; color: #738072; font-size: .8rem; }
 .ins-notification-error { color: #a53b35; background: #fff4f3; }
+.ins-notification-header { flex-wrap: wrap; gap: .5rem; }
+.ins-notification-header-actions, .ins-notification-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; }
+.ins-notification-content { min-width: 0; overflow-wrap: anywhere; }
+.ins-notification-actions { justify-content: space-between; margin-top: .55rem; }
+.ins-notification-actions button { padding: .25rem 0; border: 0; background: transparent; color: #4b7651; font: inherit; font-size: .72rem; font-weight: 700; cursor: pointer; }
+.ins-notification-panel button:disabled { opacity: .45; cursor: default; }
+.ins-notification-panel button:focus-visible { outline: 2px solid #56795b; outline-offset: 3px; border-radius: 3px; }
+.ins-notification-item .ins-notification-link { margin-top: 0; }
+.ins-notification-read-label { color: #56795b; }
+.ins-notification-tone-compliant { --notification-color: #24743a; --notification-tint: #f0fbf2; --notification-border: #a8d6b1; }
+.ins-notification-tone-violation { --notification-color: #b4232f; --notification-tint: #fff3f3; --notification-border: #efb3b8; }
+.ins-notification-tone-manual-review { --notification-color: #9a5706; --notification-tint: #fff8ed; --notification-border: #ead1a9; }
+.ins-notification-item { border-left: 4px solid var(--notification-color); cursor: default; }
+.ins-notification-item.unread, .ins-notification-item:hover { background: var(--notification-tint); }
+.ins-notification-item.unread .ins-notification-dot { background: var(--notification-color); box-shadow: none; }
+.ins-notification-item .ins-notification-outcome { margin-bottom: .3rem; color: var(--notification-color); font-weight: 800; }
+.ins-notification-toasts { position: fixed; bottom: max(20px, env(safe-area-inset-bottom)); right: max(20px, env(safe-area-inset-right)); z-index: 1200; display: grid; gap: 9px; width: min(320px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); overflow-y: auto; pointer-events: none; font-family: 'Inter', sans-serif; }
+.ins-notification-toast { display: flex; align-items: flex-start; gap: 9px; padding: 12px; border: 1px solid var(--notification-border); border-left: 4px solid var(--notification-color); border-radius: 12px; color: #263629; background: var(--notification-tint); box-shadow: 0 8px 24px rgba(35,55,38,.14); pointer-events: auto; transform-origin: bottom right; animation: ins-notification-enter .28s cubic-bezier(.2,.8,.3,1.15) both, ins-notification-exit .35s ease-in 6.3s forwards; }
+.ins-notification-toast:hover, .ins-notification-toast:focus-within { animation-play-state: paused; }
+.ins-toast-icon { flex-shrink: 0; color: var(--notification-color); }
+.ins-toast-content { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ins-toast-content strong { color: var(--notification-color); font-size: .82rem; }
+.ins-toast-content p { margin: 4px 0; font-size: .74rem; line-height: 1.4; }
+.ins-toast-content small { display: block; color: #647260; font-size: .68rem; }
+.ins-toast-content button, .ins-toast-dismiss { border: 0; padding: 0; background: transparent; color: var(--notification-color); cursor: pointer; }
+.ins-toast-content button { margin-top: 7px; font: inherit; font-size: .71rem; font-weight: 700; }
+.ins-toast-dismiss { display: inline-flex; padding: 3px; border-radius: 5px; }
+.ins-notification-toast button:focus-visible { outline: 2px solid var(--notification-color); outline-offset: 3px; }
+@keyframes ins-notification-enter { from { opacity: 0; transform: translateY(10px) scale(.88); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes ins-notification-exit { from { opacity: 1; } to { opacity: 0; } }
+@media (max-width: 600px) { .ins-notification-toasts { bottom: max(16px, env(safe-area-inset-bottom)); right: max(16px, env(safe-area-inset-right)); } }
+@media (prefers-reduced-motion: reduce) { .ins-notification-toast { animation: ins-notification-exit .1s linear 6.3s forwards; } }
 .ins-resolution-actions { display: flex; flex-direction: column; align-items: stretch; gap: 7px; width: 148px; margin-top: 9px; padding: 8px; border: 1px solid #edf1eb; border-radius: 12px; background: #fbfcfa; }
 .ins-resolution-action { display: inline-flex; align-items: center; justify-content: center; width: 100%; min-height: 34px; border: 1px solid; border-radius: 9px; padding: 7px 9px; font: inherit; font-size: .76rem; font-weight: 700; line-height: 1.2; text-align: center; cursor: pointer; transition: background .15s ease, color .15s ease, border-color .15s ease; }
 .ins-resolution-action.confirm { border-color: #86c895; background: #f0fbf2; color: #24743a; }

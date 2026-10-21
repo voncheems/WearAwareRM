@@ -165,12 +165,22 @@ router.get('/notifications', requireAuth, requireRole('inspector'), validateRequ
 });
 
 // ══════════════════════════════════════════════════════════════
-//  PATCH /api/inspector/notifications/:id/read
+//  PATCH /api/inspector/notifications/read-all and /:id/read
 // ══════════════════════════════════════════════════════════════
+router.patch('/notifications/read-all', requireAuth, requireRole('inspector'), validateRequest, async (req, res) => {
+  try {
+    const updated = await data.markAllNotificationsRead(req.user.id);
+    res.json({ success: true, updated });
+  } catch {
+    console.error('Notification update failed.');
+    res.status(500).json({ error: 'Failed to update notifications.' });
+  }
+});
+
 router.patch('/notifications/:id/read', requireAuth, requireRole('inspector'), validateRequest, async (req, res) => {
   try {
-    const updated = await data.update('notifications', { id: req.params.id, inspector_id: req.user.id }, { is_read: true, read_at: new Date() }, "id is_read read_at");
-    if (!updated.rows[0]) return res.status(404).json({ error: 'Notification not found.' });
+    // Preserve the original read timestamp on retries and repeated clicks.
+    if (!await data.markNotificationRead(req.params.id, req.user.id)) return res.status(404).json({ error: 'Notification not found.' });
     res.json({ success: true });
   } catch (err) {
     if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });

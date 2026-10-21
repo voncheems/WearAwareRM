@@ -58,6 +58,8 @@ const schemas = {
   'POST /api/users': z.object({ full_name: text(120), email, password, role, gmail: optionalEmail, worker_id: optionalId }).strict(),
   'PUT /api/users/:id': z.object({ full_name: text(120), role, gmail: optionalEmail, is_active: z.boolean().optional(), worker_id: optionalId }).strict(),
   'PATCH /api/inspector/profile': z.object({ full_name: text(120).optional(), current_password: z.string().max(1024).optional(), new_password: password.optional() }).strict(),
+  'PATCH /api/inspector/notifications/read-all': z.object({}).strict(),
+  'PATCH /api/inspector/notifications/:id/read': z.object({}).strict(),
   'POST /api/workers': worker, 'PUT /api/workers/:id': worker,
   'POST /api/workers/identify': employeeIdentity,
   'POST /api/workers/:id/qr/regenerate': z.object({}).strict(),
