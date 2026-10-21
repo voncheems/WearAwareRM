@@ -1,3 +1,7 @@
+import { reviewStatusPresentation, entryStatusLabel, hasPpeVerdict } from '../utils/review-status';
+import FinalPpeVerdictControl from './FinalPpeVerdictControl';
+import ComplianceResult from './ComplianceResult';
+import { finalComplianceOutcome } from '../utils/compliance-outcome';
 import { showAlert, showConfirm, showPrompt } from '../utils/dialogs';
 import PrivacyRequestsLink from './PrivacyRequestsLink';
 import { signOut, expireSession } from '../utils/auth-session';
@@ -33,18 +37,14 @@ function ppeLabel(value) {
     || String(value).replace(/-/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
-function authorizationLabel(value) {
-  return ({ authorized: 'Authorized', denied: 'Denied', pending_inspection: 'Pending Inspection' })[value] || 'Not Recorded';
-}
+
 
 function authorizationStyle(value) {
   if (value === 'authorized') return { background: '#dcfce7', color: '#166534' };
   if (value === 'denied') return { background: '#fee2e2', color: '#b91c1c' };
   return { background: '#fff7ed', color: '#9a5706' };
 }
-function resolutionLabel(value) {
-  return ({ PENDING_REVIEW: 'Pending review', CONFIRMED_VIOLATION: 'Confirmed violation', FALSE_DETECTION: 'False detection', RESOLVED_AFTER_CORRECTION: 'Resolved after correction', AUTHORIZED_EXCEPTION: 'Authorized exception' })[value] || '—';
-}
+
 
 function getAuthHeaders() {
   const token = localStorage.getItem('token');
@@ -549,6 +549,14 @@ export default function AdminDashboard({ setCurrentPage }) {
     finally { setDetLoading(false); }
   };
 
+  const handlePpeVerdict = async (detectionId, verdict) => {
+    const res = await adminFetch(`${API}/violations/${detectionId}/verdict`, { method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify(verdict) });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || 'Could not save the PPE verdict.');
+    setDetections(previous => previous.map(record => record.id === detectionId ? { ...record, ...body.detection } : record));
+    await fetchDetections();
+  };
+
   const handleManualReview = async (detectionId, decision) => {
     if (!decision) return;
     const notes = await showPrompt('Optional authorization reason or inspection note:', '');
@@ -1018,9 +1026,9 @@ export default function AdminDashboard({ setCurrentPage }) {
     });
 
     const fTotal      = filtered.length;
-    const fViolations = filtered.filter(d => d.result === 'violation').length;
-    const fCompliant  = filtered.filter(d => d.result === 'compliant').length;
-    const fManual     = filtered.filter(d => d.result === 'manual_review').length;
+    const fViolations = filtered.filter(d => finalComplianceOutcome(d) === 'violation').length;
+    const fCompliant  = filtered.filter(d => finalComplianceOutcome(d) === 'compliant').length;
+    const fManual     = filtered.filter(d => finalComplianceOutcome(d) === 'manual_review').length;
     const fDecided    = fCompliant + fViolations;
     const fRate       = fDecided === 0 ? 100 : Math.round((fCompliant / fDecided) * 100);
     const periodLabels = { all: 'All time', today: 'Today', yesterday: 'Yesterday', week: 'This week', month: 'This month', custom: `${reportFrom || 'start'} to ${reportTo || 'today'}` };
@@ -1030,12 +1038,12 @@ export default function AdminDashboard({ setCurrentPage }) {
     const reportTime   = now.toLocaleTimeString('en-PH');
 
     const byInspector = Object.create(null);
-    filtered.filter(d => d.result !== 'manual_review').forEach(d => {
+    filtered.filter(d => finalComplianceOutcome(d) !== 'manual_review').forEach(d => {
       const key = d.inspector || 'Unknown';
       if (!byInspector[key]) byInspector[key] = { total: 0, violations: 0, compliant: 0 };
       byInspector[key].total++;
-      if (d.result === 'violation') byInspector[key].violations++;
-      else if (d.result === 'compliant') byInspector[key].compliant++;
+      if (finalComplianceOutcome(d) === 'violation') byInspector[key].violations++;
+      else if (finalComplianceOutcome(d) === 'compliant') byInspector[key].compliant++;
     });
     const inspectorRows = Object.entries(byInspector).map(([name, c]) => `
       <tr>
@@ -1051,8 +1059,8 @@ export default function AdminDashboard({ setCurrentPage }) {
         <td style="font-family:monospace;font-size:11px">${escapeHtml(d.worker_employee_id || '—')}</td>
         <td>${escapeHtml(d.station || '—')}</td><td>${escapeHtml(d.inspector || '—')}</td>
         <td>${escapeHtml(d.date)} ${escapeHtml(d.time)}</td>
-        <td style="color:${d.result==='manual_review'?'#b45309':d.result==='violation'?'#dc2626':'#16a34a'};font-weight:700">${d.result==='manual_review'?'⚠ Manual Review':d.result==='violation'?'⚠ Violation':'✓ Compliant'}</td>
-        <td style="font-weight:700">${escapeHtml(authorizationLabel(d.authorization_status))}</td>
+        <td style="color:${finalComplianceOutcome(d)==='manual_review'?'#b45309':finalComplianceOutcome(d)==='violation'?'#dc2626':'#16a34a'};font-weight:700">${finalComplianceOutcome(d)==='manual_review'?'⚠ Manual Review':finalComplianceOutcome(d)==='violation'?'⚠ Violation':'✓ Compliant'}</td>
+        <td style="font-weight:700">${escapeHtml(entryStatusLabel(d))}</td>
         <td>${escapeHtml([...(d.missing_ppe||[]), ...(d.uncertain_ppe||[]).map(item => `? ${item}`)].join(', ')||'—')}</td>
       </tr>`).join('');
 
@@ -1094,7 +1102,7 @@ export default function AdminDashboard({ setCurrentPage }) {
   <table><thead><tr><th>Inspector</th><th>Total</th><th>Violations</th><th>Compliant</th><th>Rate</th></tr></thead>
   <tbody>${inspectorRows || '<tr><td colspan="5" style="color:#aaa;text-align:center">No data</td></tr>'}</tbody></table>
   <h2>Detection Log</h2>
-  <table><thead><tr><th>Worker</th><th>ID</th><th>Station</th><th>Inspector</th><th>Date & Time</th><th>PPE Result</th><th>Entry Access</th><th>Missing / Uncertain PPE</th></tr></thead>
+  <table><thead><tr><th>Worker</th><th>ID</th><th>Station</th><th>Inspector</th><th>Date & Time</th><th>Final PPE Result</th><th>Entry Access</th><th>Missing / Uncertain PPE</th></tr></thead>
   <tbody>${logRows || '<tr><td colspan="8" style="color:#aaa;text-align:center">No data</td></tr>'}</tbody></table>
   <div style="margin-top:32px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:10px;color:#94a3b8;text-align:center">
     WearAware PPE Compliance Monitoring System &mdash; Admin Report &mdash; ${reportDate}
@@ -1123,7 +1131,8 @@ export default function AdminDashboard({ setCurrentPage }) {
     if (filterInspector !== 'All Inspectors' && d.inspector !== filterInspector) return false;
     if (filterProfile !== 'All Profiles' && (d.profile_name || 'Custom requirements') !== filterProfile) return false;
     if (filterDate && d.date !== filterDate)                                      return false;
-    const alertType = d.alert_type || (d.result === 'compliant' ? 'compliant' : 'non_compliant');
+    const outcome = finalComplianceOutcome(d);
+    const alertType = outcome === 'manual_review' ? 'manual_review' : outcome === 'compliant' ? 'compliant' : 'non_compliant';
     if (filterViolation === 'Violation' && alertType !== 'non_compliant') return false;
     if (filterViolation === 'Manual Review' && alertType !== 'manual_review') return false;
     if (filterViolation === 'Compliant' && alertType !== 'compliant') return false;
@@ -1327,11 +1336,11 @@ export default function AdminDashboard({ setCurrentPage }) {
                       {detections.slice(0, 5).map(d => (
                         <div className="ad-activity-item" key={d.id}>
                           <div className="ad-activity-dot-wrap">
-                            <div className="ad-activity-dot" style={{ background: d.result === 'manual_review' ? '#d69e2e' : d.result === 'violation' ? '#e53e3e' : '#38a169' }} />
+                            <div className="ad-activity-dot" style={{ background: finalComplianceOutcome(d) === 'manual_review' ? '#d69e2e' : finalComplianceOutcome(d) === 'violation' ? '#e53e3e' : '#38a169' }} />
                           </div>
                           <div>
                             <div className="ad-activity-text">
-                              <strong>{d.station || 'Unknown Station'}</strong> — {d.result === 'manual_review' ? `Manual review: ${d.manual_review_message || 'inspector decision required'}` : d.result === 'violation' ? `Violation: ${(d.missing_ppe || []).join(', ') || 'missing PPE'}` : 'Compliant scan'}
+                              <strong>{d.station || 'Unknown Station'}</strong> — {finalComplianceOutcome(d) === 'manual_review' ? `Manual review: ${d.manual_review_message || 'inspector decision required'}` : finalComplianceOutcome(d) === 'violation' ? `Violation: ${(d.missing_ppe || []).join(', ') || 'missing PPE'}` : 'Compliant scan'}
                             </div>
                             <div className="ad-activity-time">{d.inspector || 'Unknown'} · {d.time} {d.date}</div>
                           </div>
@@ -1567,7 +1576,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                   <button className="ad-filter-reset" onClick={resetFilters}>Reset Filters</button>
                 </div>
                 <div className="ad-table-scroll" tabIndex={0} role="region" aria-label="Scrollable admin records"><table className="ad-table">
-                  <thead><tr><th>Photo</th><th>#</th><th>Worker</th><th>Checkpoint</th><th>Profile</th><th>Inspector</th><th>Date & Time</th><th>PPE Result</th><th>Entry Access</th><th>Resolution</th><th>Required PPE</th><th>Missing PPE</th><th>Detected PPE</th></tr></thead>
+                  <thead><tr><th>Photo</th><th>#</th><th>Worker</th><th>Checkpoint</th><th>Profile</th><th>Inspector</th><th>Date & Time</th><th>Final PPE Result</th><th>Entry Access</th><th>Resolution</th><th>Required PPE</th><th>Missing PPE</th><th>Detected PPE</th></tr></thead>
                   <tbody>
                     {detLoading ? <tr><td colSpan={13} className="ad-empty">Loading detections…</td></tr>
                     : filteredDetections.length === 0 ? <tr><td colSpan={13} className="ad-empty">No detections match your filters</td></tr>
@@ -1578,7 +1587,7 @@ export default function AdminDashboard({ setCurrentPage }) {
                             ? <button type="button" onClick={() => openAdminPhoto(d.id)} aria-label="Open proof photo"
                                 style={{ width: 44, height: 44, borderRadius: 6, cursor: 'pointer', border: '2px solid #fca5a5', background: '#fff1f2', fontSize: '1.1rem' }}>📷</button>
                             : <div style={{ width: 44, height: 44, borderRadius: 6, background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                <span style={{ fontSize: '1.1rem' }}>{d.result === 'manual_review' ? '⚠️' : d.result === 'violation' ? '🚨' : '✓'}</span>
+                                <span style={{ fontSize: '1.1rem' }}>{finalComplianceOutcome(d) === 'manual_review' ? '⚠️' : finalComplianceOutcome(d) === 'violation' ? '🚨' : '✓'}</span>
                               </div>}
                         </td>
                         <td style={{ color: '#ccc', fontSize: '0.8rem' }}>{d.id}</td>
@@ -1592,9 +1601,9 @@ export default function AdminDashboard({ setCurrentPage }) {
                         <td>{d.profile_name || <span style={{ color: '#aaa' }}>Custom</span>}</td>
                         <td style={{ color: '#555' }}>{d.inspector || '—'}</td>
                         <td style={{ fontSize: '0.85rem' }}><div style={{ color: '#444' }}>{d.date}</div><div style={{ color: '#bbb' }}>{d.time}</div></td>
-                        <td><span className={`ad-violation-badge ${d.result === 'violation' ? 'ad-violation-yes' : 'ad-violation-no'}`} style={d.alert_type === 'manual_review' ? { background: '#fff7ed', color: '#b45309' } : undefined}>{d.alert_type === 'manual_review' ? '⚠ Manual Review' : d.result === 'violation' ? '⚠ Violation' : '✓ Compliant'}</span>{d.result === 'manual_review' && d.review_status === 'pending' && <select aria-label={`Resolve manual review ${d.id}`} defaultValue="" onChange={event => handleManualReview(d.id, event.target.value)} className="dashboard-select-review"><option value="" disabled>Resolve entry…</option><option value="compliant">Allow Entry — PPE Confirmed</option><option value="non_compliant">Deny Entry — PPE Missing</option><option value="false_detection">Allow Entry — False Detection</option><option value="unable_to_verify">Deny Entry — Unable to Verify</option></select>}{d.result === 'manual_review' && d.review_status === 'reviewed' && <small style={{ display: 'block', marginTop: 5, color: '#8a5107' }}>{String(d.inspector_decision || '').replaceAll('_', ' ')}</small>}</td>
-                        <td><span className="ad-violation-badge" style={authorizationStyle(d.authorization_status)}>{authorizationLabel(d.authorization_status)}</span>{d.authorization_override_at && <small style={{ display: 'block', marginTop: 5, color: '#718096' }}>Inspector override</small>}</td>
-                            <td><span className="ad-violation-badge" style={{ background: d.resolution_status === 'CONFIRMED_VIOLATION' ? '#fee2e2' : d.resolution_status === 'FALSE_DETECTION' ? '#e0f2fe' : d.resolution_status === 'PENDING_REVIEW' ? '#fff7ed' : '#dcfce7', color: d.resolution_status === 'CONFIRMED_VIOLATION' ? '#b91c1c' : d.resolution_status === 'FALSE_DETECTION' ? '#075985' : d.resolution_status === 'PENDING_REVIEW' ? '#9a5706' : '#166534' }}>{resolutionLabel(d.resolution_status)}</span>{(d.resolution_status === 'PENDING_REVIEW' || (!d.resolution_status && d.result === 'violation')) && <div className="ad-resolution-actions"><button className="ad-resolution-action confirm" type="button" onClick={() => handleResolution(d.id, 'CONFIRMED_VIOLATION')}>Confirm</button><button className="ad-resolution-action false-detection" type="button" onClick={() => handleResolution(d.id, 'FALSE_DETECTION')}>False detection</button></div>}</td>
+                        <td><ComplianceResult record={d} /><FinalPpeVerdictControl key={`${d.id}:${d.reviewed_at || "none"}:${(d.risk_reassessment_history || []).length}`} record={d} onSave={handlePpeVerdict} onOpenEvidence={openAdminPhoto} />{finalComplianceOutcome(d) === 'manual_review' && d.review_status === 'pending' && <select aria-label={`Resolve manual review ${d.id}`} defaultValue="" onChange={event => handleManualReview(d.id, event.target.value)} className="dashboard-select-review"><option value="" disabled>Resolve entry…</option><option value="compliant">Allow Entry — PPE Confirmed</option><option value="non_compliant">Deny Entry — PPE Missing</option><option value="false_detection">Allow Entry — False Detection (PPE unverified)</option><option value="unable_to_verify">Deny Entry — Unable to Verify</option></select>}{finalComplianceOutcome(d) === 'manual_review' && d.review_status === 'reviewed' && <small style={{ display: 'block', marginTop: 5, color: '#8a5107' }}>{String(d.inspector_decision || '').replaceAll('_', ' ')}</small>}</td>
+                        <td><span className="ad-violation-badge" style={authorizationStyle(d.authorization_status)}>{entryStatusLabel(d)}</span>{d.authorization_override_at && <small style={{ display: 'block', marginTop: 5, color: '#718096' }}>Inspector override</small>}</td>
+                            <td><span className="ad-violation-badge" style={reviewStatusPresentation(d).style}>{reviewStatusPresentation(d).label}</span>{d.resolution_status === 'PENDING_REVIEW' && hasPpeVerdict(d) && <small style={{ display: 'block', marginTop: 5, color: '#718096' }}>Incident decision still required</small>}{(d.resolution_status === 'PENDING_REVIEW' || (!d.resolution_status && finalComplianceOutcome(d) === 'violation')) && <div className="ad-resolution-actions"><button className="ad-resolution-action confirm" type="button" onClick={() => handleResolution(d.id, 'CONFIRMED_VIOLATION')}>Confirm</button><button className="ad-resolution-action false-detection" type="button" onClick={() => handleResolution(d.id, 'FALSE_DETECTION')}>False detection + entry override</button></div>}</td>
                         <td>{(d.required_ppe || []).length > 0 ? d.required_ppe.map(p => <span key={p} className="ad-ppe-tag">{ppeLabel(p)}</span>) : <span style={{ color: '#ccc', fontSize: '0.8rem' }}>None</span>}</td>
                         <td>{(d.missing_ppe || []).map(p => <span key={`missing-${p}`} className="ad-ppe-tag missing">{ppeLabel(p)}</span>)}{(d.uncertain_ppe || []).map(p => <span key={`uncertain-${p}`} className="ad-ppe-tag" style={{ background: '#fff2c7', color: '#94600b' }}>? {ppeLabel(p)}</span>)}{!(d.missing_ppe || []).length && !(d.uncertain_ppe || []).length && <span style={{ color: '#ccc', fontSize: '0.8rem' }}>—</span>}{d.manual_review_message && <small style={{ display: 'block', maxWidth: 220, marginTop: 5, color: '#8a5107' }}>{d.manual_review_message}</small>}</td>
                         <td>{(d.detected_ppe || []).length > 0 ? d.detected_ppe.map(p => <span key={p} className="ad-ppe-tag">{ppeLabel(p)}</span>) : <span style={{ color: '#ccc', fontSize: '0.8rem' }}>—</span>}</td>

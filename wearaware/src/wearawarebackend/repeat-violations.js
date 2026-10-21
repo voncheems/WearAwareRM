@@ -1,3 +1,4 @@
+const { finalComplianceExpression } = require('./compliance-outcome');
 const { getDatabase } = require('./database');
 const configuredPolicy = require('../config/repeat-violations.json');
 
@@ -12,21 +13,18 @@ const linkedWorkerMatch = { $or: [{ worker_id: { $type: 'number' } }, { worker_e
 const completedSessionMatch = { result: { $in: ['compliant', 'violation', 'manual_review'] }, detected_at: { $type: 'date' }, session_status: { $in: ['completed', null] } };
 
 function finalOutcomeExpression() {
-  return {
-    $switch: {
-      branches: [
-        { case: { $in: ['$resolution_status', ['FALSE_DETECTION', 'AUTHORIZED_EXCEPTION']] }, then: 'excluded' },
-        { case: { $eq: ['$inspector_decision', 'false_detection'] }, then: 'excluded' },
-        { case: { $eq: ['$resolution_status', 'RESOLVED_AFTER_CORRECTION'] }, then: 'violation' },
-        { case: { $eq: ['$resolution_status', 'CONFIRMED_VIOLATION'] }, then: 'violation' },
-        { case: { $eq: ['$result', 'compliant'] }, then: 'compliant' },
-        { case: { $eq: ['$result', 'violation'] }, then: 'violation' },
-        { case: { $and: [{ $eq: ['$result', 'manual_review'] }, { $eq: ['$review_status', 'reviewed'] }, { $eq: ['$inspector_decision', 'non_compliant'] }] }, then: 'violation' },
-        { case: { $and: [{ $eq: ['$result', 'manual_review'] }, { $eq: ['$review_status', 'reviewed'] }, { $eq: ['$inspector_decision', 'compliant'] }] }, then: 'compliant' },
-      ],
-      default: 'manual_review',
-    },
-  };
+  // Preserve the existing repeat-policy exclusion of authorized exceptions and
+  // unverified false detections; explicit PPE decisions take precedence.
+  return { $cond: [
+    { $or: [
+      { $eq: ['$resolution_status', 'AUTHORIZED_EXCEPTION'] },
+      { $and: [
+        { $or: [{ $eq: ['$resolution_status', 'FALSE_DETECTION'] }, { $eq: ['$inspector_decision', 'false_detection'] }] },
+        { $not: [{ $and: [{ $eq: ['$review_status', 'reviewed'] }, { $in: ['$inspector_decision', ['compliant', 'non_compliant', 'unable_to_verify']] }] }] },
+      ] },
+    ] },
+    'excluded', finalComplianceExpression(),
+  ] };
 }
 
 function workerKeyExpression() {

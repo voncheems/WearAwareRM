@@ -1,3 +1,4 @@
+const { finalComplianceExpression } = require('./compliance-outcome');
 const { getDatabase } = require('./database');
 const { authorizationFromCompliance, authorizationFromInspectorDecision } = require('./entry-authorization');
 const { assessRisk } = require('./risk-assessment');
@@ -238,7 +239,7 @@ function createRepository(dbProvider = getDatabase) {
         { case: { $eq: ['$result', 'compliant'] }, then: 'authorized' },
         { case: { $eq: ['$result', 'violation'] }, then: 'denied' },
       ], default: 'pending_inspection' } }] };
-      const output = await aggregate('detections', [{ $match: normalize('detections', filter) }, { $group: { _id: null, total: { $sum: 1 }, violations: { $sum: { $cond: [{ $eq: ['$result', 'violation'] }, 1, 0] } }, compliant: { $sum: { $cond: [{ $eq: ['$result', 'compliant'] }, 1, 0] } }, manual_reviews: { $sum: { $cond: [{ $eq: ['$result', 'manual_review'] }, 1, 0] } }, pending_manual_reviews: { $sum: { $cond: [{ $and: [{ $eq: ['$result', 'manual_review'] }, { $eq: ['$review_status', 'pending'] }] }, 1, 0] } }, authorized: { $sum: { $cond: [{ $eq: [authorizationStatus, 'authorized'] }, 1, 0] } }, denied: { $sum: { $cond: [{ $eq: [authorizationStatus, 'denied'] }, 1, 0] } }, pending_authorization: { $sum: { $cond: [{ $eq: [authorizationStatus, 'pending_inspection'] }, 1, 0] } } } }, { $project: { _id: 0 } }]);
+      const output = await aggregate('detections', [{ $match: normalize('detections', filter) }, { $set: { _final_outcome: finalComplianceExpression() } }, { $group: { _id: null, total: { $sum: 1 }, violations: { $sum: { $cond: [{ $eq: ['$_final_outcome', 'violation'] }, 1, 0] } }, compliant: { $sum: { $cond: [{ $eq: ['$_final_outcome', 'compliant'] }, 1, 0] } }, manual_reviews: { $sum: { $cond: [{ $eq: ['$_final_outcome', 'manual_review'] }, 1, 0] } }, pending_manual_reviews: { $sum: { $cond: [{ $eq: ['$_final_outcome', 'manual_review'] }, 1, 0] } }, authorized: { $sum: { $cond: [{ $eq: [authorizationStatus, 'authorized'] }, 1, 0] } }, denied: { $sum: { $cond: [{ $eq: [authorizationStatus, 'denied'] }, 1, 0] } }, pending_authorization: { $sum: { $cond: [{ $eq: [authorizationStatus, 'pending_inspection'] }, 1, 0] } } } }, { $project: { _id: 0 } }]);
       const row = output.rows[0] || { total: 0, violations: 0, compliant: 0, manual_reviews: 0, pending_manual_reviews: 0, authorized: 0, denied: 0, pending_authorization: 0 };
       const decided = row.compliant + row.violations;
       const authorizationDecided = row.authorized + row.denied;
@@ -300,12 +301,14 @@ function createRepository(dbProvider = getDatabase) {
       } else {
         reassessedRisk = assessRisk([], { result: 'compliant', missing_ppe: [], uncertain_ppe: [] });
       }
-      const history = [...(Array.isArray(doc.risk_reassessment_history) ? doc.risk_reassessment_history : []), {
+      const priorHistory = Array.isArray(doc.risk_reassessment_history) ? doc.risk_reassessment_history : [];
+      if (priorHistory.length >= 32) return { rows: [], conflict: true };
+      const history = [...priorHistory, {
         decision, reviewed_by: reviewerId, reviewed_at: now, notes: notes || null,
         previous_risk: previousRisk,
         reassessed_risk: reassessedRisk,
-      }].slice(-32);
-      return api.update('detections', filter, {
+      }];
+      const updated = await api.update('detections', { ...filter, review_status: doc.review_status, inspector_decision: doc.inspector_decision ?? null }, {
         review_status: 'reviewed', inspector_decision: decision, reviewed_by: reviewerId,
         reviewed_at: now, review_notes: notes || null,
         original_authorization: doc.original_authorization || original.status,
@@ -320,6 +323,7 @@ function createRepository(dbProvider = getDatabase) {
         risk_rule_name: reassessedRisk.risk_rule_name, risk_rule_snapshot: reassessedRisk.risk_rule_snapshot,
         matched_rule_ids: reassessedRisk.matched_rule_ids, risk_evaluated_at: now, risk_reassessment_history: history,
       }, 'id result ai_result review_status inspector_decision reviewed_by reviewed_at review_notes original_authorization authorization_status authorization_event authorization_decided_at authorization_override_by authorization_override_at authorization_override_reason resolution_status resolution_decision resolution_inspector_id resolution_resolved_at resolution_notes risk_status risk_severity risk_rule_id risk_rule_name risk_rule_snapshot matched_rule_ids risk_evaluated_at risk_reassessment_history');
+      return updated.rows.length ? updated : { rows: [], conflict: true };
     },
     async resolveDetection(id, reviewerId, role, status, reason, correctedByScanId = null) {
       const filter = normalize('detections', { id, ...(role === 'inspector' ? { inspector_id: reviewerId } : {}), resolution_status: 'PENDING_REVIEW' });

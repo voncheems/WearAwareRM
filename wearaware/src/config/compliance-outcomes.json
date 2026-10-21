@@ -1,0 +1,59 @@
+[
+  {
+    "when": {
+      "review_status": "reviewed",
+      "inspector_decision": "unable_to_verify"
+    },
+    "outcome": "manual_review"
+  },
+  {
+    "when": {
+      "review_status": "reviewed",
+      "inspector_decision": "compliant"
+    },
+    "outcome": "compliant"
+  },
+  {
+    "when": {
+      "review_status": "reviewed",
+      "inspector_decision": "non_compliant"
+    },
+    "outcome": "violation"
+  },
+  {
+    "when": {
+      "inspector_decision": "false_detection"
+    },
+    "outcome": "manual_review"
+  },
+  {
+    "when": {
+      "resolution_status": "FALSE_DETECTION"
+    },
+    "outcome": "manual_review"
+  },
+  {
+    "when": {
+      "resolution_status": "RESOLVED_AFTER_CORRECTION"
+    },
+    "outcome": "violation"
+  },
+  {
+    "when": {
+      "resolution_status": "CONFIRMED_VIOLATION"
+    },
+    "outcome": "violation"
+  },
+  {
+    "when": {
+      "result": "compliant"
+    },
+    "outcome": "compliant"
+  },
+  {
+    "when": {
+      "result": "violation"
+    },
+    "outcome": "violation"
+  }
+]

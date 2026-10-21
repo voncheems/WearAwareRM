@@ -1,3 +1,4 @@
+const { finalComplianceExpression } = require('./compliance-outcome');
 const { getDatabase } = require('./database');
 const repeatPolicyConfig = require('../config/repeat-violations.json');
 
@@ -95,10 +96,10 @@ function analyticsPipeline(filters) {
 
   const selectedPpeMatch = filters.ppe ? [{ $match: { _id: filters.ppe } }] : [];
   const ppeMissing = filters.ppe ? { $in: [filters.ppe, { $ifNull: ['$missing_ppe', []] }] } : null;
-  const violationCondition = ppeMissing || { $eq: ['$result', 'violation'] };
+  const violationCondition = { $and: [{ $eq: ['$_final_outcome', 'violation'] }, ...(ppeMissing ? [ppeMissing] : [])] };
   const compliantCondition = filters.ppe
-    ? { $and: [{ $ne: ['$result', 'manual_review'] }, { $not: [ppeMissing] }] }
-    : { $eq: ['$result', 'compliant'] };
+    ? { $or: [{ $eq: ['$_final_outcome', 'compliant'] }, { $and: [{ $eq: ['$_final_outcome', 'violation'] }, { $not: [ppeMissing] }] }] }
+    : { $eq: ['$_final_outcome', 'compliant'] };
   const finalViolationMatch = filters.ppe ? { $and: [{ _final_outcome: 'violation' }, { missing_ppe: filters.ppe }] } : { _final_outcome: 'violation' };
 
   return [
@@ -108,13 +109,7 @@ function analyticsPipeline(filters) {
       { case: { $eq: ['$review_status', 'reviewed'] }, then: 'denied' },
       { case: { $eq: ['$result', 'compliant'] }, then: 'authorized' },
       { case: { $eq: ['$result', 'violation'] }, then: 'denied' },
-    ], default: 'pending_inspection' } }] }, _final_outcome: { $switch: { branches: [
-      { case: { $in: ['$resolution_status', ['FALSE_DETECTION', 'AUTHORIZED_EXCEPTION']] }, then: 'compliant' },
-      { case: { $eq: ['$resolution_status', 'RESOLVED_AFTER_CORRECTION'] }, then: 'violation' },
-      { case: { $eq: ['$result', 'compliant'] }, then: 'compliant' },
-      { case: { $eq: ['$result', 'violation'] }, then: 'violation' },
-      { case: { $and: [{ $eq: ['$review_status', 'reviewed'] }, { $eq: ['$inspector_decision', 'compliant'] }] }, then: 'compliant' },
-    ], default: 'manual_review' } } } },
+    ], default: 'pending_inspection' } }] }, _final_outcome: finalComplianceExpression() } },
     { $facet: {
       summary: [
         { $group: {
@@ -122,15 +117,16 @@ function analyticsPipeline(filters) {
           total: { $sum: 1 },
           compliant: countWhen(compliantCondition),
           violations: countWhen(violationCondition),
-          confirmed_violations: countWhen({ $eq: ['$_final_outcome', 'violation'] }),
-          ai_flagged: countWhen({ $in: ['$result', ['violation', 'manual_review']] }),
-          pending_review: countWhen({ $eq: ['$_resolution_status', 'PENDING_REVIEW'] }),
+          confirmed_violations: countWhen({ $and: [{ $eq: ['$_final_outcome', 'violation'] }, { $or: [{ $eq: ['$resolution_status', 'CONFIRMED_VIOLATION'] }, { $and: [{ $eq: ['$review_status', 'reviewed'] }, { $eq: ['$inspector_decision', 'non_compliant'] }] }] }] }),
+          ai_flagged: countWhen({ $in: [{ $ifNull: ['$ai_result', '$result'] }, ['violation', 'manual_review']] }), original_ai_violations: countWhen({ $eq: [{ $ifNull: ['$ai_result', '$result'] }, 'violation'] }),
+          pending_review: countWhen({ $and: [{ $eq: ['$_resolution_status', 'PENDING_REVIEW'] }, { $or: [{ $ne: ['$review_status', 'reviewed'] }, { $eq: ['$_final_outcome', 'manual_review'] }] }] }),
           false_detections: countWhen({ $eq: ['$_resolution_status', 'FALSE_DETECTION'] }),
           resolved_after_correction: countWhen({ $eq: ['$_resolution_status', 'RESOLVED_AFTER_CORRECTION'] }),
           authorized_exceptions: countWhen({ $eq: ['$_resolution_status', 'AUTHORIZED_EXCEPTION'] }),
-          manual_reviews: countWhen({ $eq: ['$result', 'manual_review'] }),
-          manual_resolved: countWhen({ $and: [{ $eq: ['$result', 'manual_review'] }, { $eq: ['$review_status', 'reviewed'] }] }),
-          manual_pending: countWhen({ $and: [{ $eq: ['$result', 'manual_review'] }, { $ne: ['$review_status', 'reviewed'] }] }),
+          manual_reviews: countWhen({ $eq: ['$_final_outcome', 'manual_review'] }),
+          manual_resolved: countWhen({ $and: [{ $eq: ['$result', 'manual_review'] }, { $eq: ['$review_status', 'reviewed'] }, { $ne: ['$_final_outcome', 'manual_review'] }] }),
+          manual_pending: countWhen({ $eq: ['$_final_outcome', 'manual_review'] }),
+          inconclusive_reviews: countWhen({ $and: [{ $eq: ['$_final_outcome', 'manual_review'] }, { $or: [{ $eq: ['$review_status', 'reviewed'] }, { $eq: ['$resolution_status', 'FALSE_DETECTION'] }, { $eq: ['$inspector_decision', 'false_detection'] }] }] }),
           authorized: countWhen({ $eq: ['$_authorization_status', 'authorized'] }),
           denied: countWhen({ $eq: ['$_authorization_status', 'denied'] }),
           pending_authorization: countWhen({ $eq: ['$_authorization_status', 'pending_inspection'] }),
@@ -152,8 +148,8 @@ function analyticsPipeline(filters) {
           _id: '$device_id', checkpoint_name: { $first: '$checkpoint_name' }, checkpoint_code: { $first: '$checkpoint_code' },
           historical_names: { $addToSet: '$checkpoint_name' }, total: { $sum: 1 },
           compliant: countWhen(compliantCondition), violations: countWhen(violationCondition),
-          ai_flagged: countWhen({ $in: ['$result', ['violation', 'manual_review']] }), pending_review: countWhen({ $eq: ['$_resolution_status', 'PENDING_REVIEW'] }), false_detections: countWhen({ $eq: ['$_resolution_status', 'FALSE_DETECTION'] }), resolved_after_correction: countWhen({ $eq: ['$_resolution_status', 'RESOLVED_AFTER_CORRECTION'] }), authorized_exceptions: countWhen({ $eq: ['$_resolution_status', 'AUTHORIZED_EXCEPTION'] }),
-          manual_reviews: countWhen({ $eq: ['$result', 'manual_review'] }),
+          ai_flagged: countWhen({ $in: [{ $ifNull: ['$ai_result', '$result'] }, ['violation', 'manual_review']] }), original_ai_violations: countWhen({ $eq: [{ $ifNull: ['$ai_result', '$result'] }, 'violation'] }), pending_review: countWhen({ $and: [{ $eq: ['$_resolution_status', 'PENDING_REVIEW'] }, { $or: [{ $ne: ['$review_status', 'reviewed'] }, { $eq: ['$_final_outcome', 'manual_review'] }] }] }), false_detections: countWhen({ $eq: ['$_resolution_status', 'FALSE_DETECTION'] }), resolved_after_correction: countWhen({ $eq: ['$_resolution_status', 'RESOLVED_AFTER_CORRECTION'] }), authorized_exceptions: countWhen({ $eq: ['$_resolution_status', 'AUTHORIZED_EXCEPTION'] }),
+          manual_reviews: countWhen({ $eq: ['$_final_outcome', 'manual_review'] }),
           authorized: countWhen({ $eq: ['$_authorization_status', 'authorized'] }),
           denied: countWhen({ $eq: ['$_authorization_status', 'denied'] }),
           pending_authorization: countWhen({ $eq: ['$_authorization_status', 'pending_inspection'] }),
@@ -168,8 +164,8 @@ function analyticsPipeline(filters) {
       profiles: [
         { $group: {
           _id: '$profile_id', profile_name: { $first: '$profile_name' }, total: { $sum: 1 },
-          confirmed_violations: countWhen({ $eq: ['$_final_outcome', 'violation'] }),
-          manual_reviews: countWhen({ $eq: ['$result', 'manual_review'] }),
+          confirmed_violations: countWhen({ $and: [{ $eq: ['$_final_outcome', 'violation'] }, { $or: [{ $eq: ['$resolution_status', 'CONFIRMED_VIOLATION'] }, { $and: [{ $eq: ['$review_status', 'reviewed'] }, { $eq: ['$inspector_decision', 'non_compliant'] }] }] }] }),
+          manual_reviews: countWhen({ $eq: ['$_final_outcome', 'manual_review'] }),
           low: countWhen({ $and: [{ $eq: ['$_final_outcome', 'violation'] }, { $eq: ['$risk_severity', 'Low'] }] }),
           medium: countWhen({ $and: [{ $eq: ['$_final_outcome', 'violation'] }, { $eq: ['$risk_severity', 'Medium'] }] }),
           high: countWhen({ $and: [{ $eq: ['$_final_outcome', 'violation'] }, { $eq: ['$risk_severity', 'High'] }] }),
@@ -221,15 +217,15 @@ function analyticsPipeline(filters) {
         { $project: { _id: 0, ppe: '$_id', count: 1 } }, { $sort: { count: -1, ppe: 1 } },
       ],
       uncertain_ppe: [
-        { $match: { result: 'manual_review' } }, { $unwind: '$uncertain_ppe' },
+        { $match: { _final_outcome: 'manual_review' } }, { $unwind: '$uncertain_ppe' },
         { $group: { _id: '$uncertain_ppe', count: { $sum: 1 } } }, ...selectedPpeMatch,
         { $project: { _id: 0, ppe: '$_id', count: 1 } }, { $sort: { count: -1, ppe: 1 } },
       ],
       trends: [
         { $group: {
           _id: trendKey(filters.granularity), total: { $sum: 1 },
-          compliant: countWhen(compliantCondition), violations: countWhen(violationCondition), ai_flagged: countWhen({ $in: ['$result', ['violation', 'manual_review']] }), pending_review: countWhen({ $eq: ['$_resolution_status', 'PENDING_REVIEW'] }), false_detections: countWhen({ $eq: ['$_resolution_status', 'FALSE_DETECTION'] }), resolved_after_correction: countWhen({ $eq: ['$_resolution_status', 'RESOLVED_AFTER_CORRECTION'] }), authorized_exceptions: countWhen({ $eq: ['$_resolution_status', 'AUTHORIZED_EXCEPTION'] }),
-          manual_reviews: countWhen({ $eq: ['$result', 'manual_review'] }),
+          compliant: countWhen(compliantCondition), violations: countWhen(violationCondition), ai_flagged: countWhen({ $in: [{ $ifNull: ['$ai_result', '$result'] }, ['violation', 'manual_review']] }), original_ai_violations: countWhen({ $eq: [{ $ifNull: ['$ai_result', '$result'] }, 'violation'] }), pending_review: countWhen({ $and: [{ $eq: ['$_resolution_status', 'PENDING_REVIEW'] }, { $or: [{ $ne: ['$review_status', 'reviewed'] }, { $eq: ['$_final_outcome', 'manual_review'] }] }] }), false_detections: countWhen({ $eq: ['$_resolution_status', 'FALSE_DETECTION'] }), resolved_after_correction: countWhen({ $eq: ['$_resolution_status', 'RESOLVED_AFTER_CORRECTION'] }), authorized_exceptions: countWhen({ $eq: ['$_resolution_status', 'AUTHORIZED_EXCEPTION'] }),
+          manual_reviews: countWhen({ $eq: ['$_final_outcome', 'manual_review'] }),
           authorized: countWhen({ $eq: ['$_authorization_status', 'authorized'] }),
           denied: countWhen({ $eq: ['$_authorization_status', 'denied'] }),
           pending_authorization: countWhen({ $eq: ['$_authorization_status', 'pending_inspection'] }),
@@ -276,7 +272,7 @@ function authorizationRate(authorized, denied) {
 async function getViolationAnalytics(query, now = new Date()) {
   const filters = parseAnalyticsQuery(query, now);
   const [result = {}] = await getDatabase().collection('detections').aggregate(analyticsPipeline(filters), { allowDiskUse: true }).toArray();
-  const summary = result.summary?.[0] || { total: 0, compliant: 0, violations: 0, confirmed_violations: 0, ai_flagged: 0, pending_review: 0, false_detections: 0, resolved_after_correction: 0, authorized_exceptions: 0, manual_reviews: 0, manual_resolved: 0, manual_pending: 0, authorized: 0, denied: 0, pending_authorization: 0, low_confidence: 0, average_confidence: null };
+  const summary = result.summary?.[0] || { total: 0, compliant: 0, violations: 0, confirmed_violations: 0, ai_flagged: 0, original_ai_violations: 0, pending_review: 0, false_detections: 0, resolved_after_correction: 0, authorized_exceptions: 0, manual_reviews: 0, manual_resolved: 0, manual_pending: 0, inconclusive_reviews: 0, authorized: 0, denied: 0, pending_authorization: 0, low_confidence: 0, average_confidence: null };
   summary.compliance_rate = rate(summary.compliant, summary.violations);
   summary.authorization_rate = authorizationRate(summary.authorized, summary.denied);
   summary.average_confidence = summary.average_confidence == null ? null : Math.round(summary.average_confidence * 1000) / 1000;

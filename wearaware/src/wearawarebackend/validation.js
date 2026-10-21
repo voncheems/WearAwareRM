@@ -1,4 +1,5 @@
 const { z } = require('zod');
+const { verdictSchema } = require('./ppe-verdict');
 const id = z.union([z.number(), z.string().regex(/^\d+$/).transform(Number)]).pipe(z.number().int().positive().max(Number.MAX_SAFE_INTEGER));
 const optionalId = z.preprocess(v => v === '' || v === undefined ? null : v, id.nullable());
 const text = max => z.string().trim().min(1).max(max).refine(v => ![...v].some(c => c.charCodeAt(0) < 32 && ![9, 10, 13].includes(c.charCodeAt(0))));
@@ -75,6 +76,7 @@ const schemas = {
   'PATCH /api/inspector/detections/:id/review': reviewDecision,
   'PATCH /api/admin/detections/:id/review': reviewDecision,
   'PATCH /api/violations/:id/resolve': violationResolution,
+  'PATCH /api/violations/:id/verdict': verdictSchema,
   'PATCH /api/admin/password-requests/:id/reset': z.object({}).strict(),
   'POST /api/detections': z.object({ worker_id: id, checkpoint_id: id.optional(), device_uuid: text(100).optional(), result: z.enum(['compliant', 'violation', 'manual_review']).optional(), detected_ppe: ppe.optional(), missing_ppe: ppe.optional(), confidence_score: z.number().min(0).max(1).nullable().optional(), visibility_score: z.number().min(0).max(1).nullable().optional(), multiple_people_detected: z.boolean().optional(), photo_url: z.string().max(2800000).regex(/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/).nullable().optional(), ai_observations: z.array(aiObservation).max(256).optional(), scan_session_id: z.string().uuid().optional(), session_started_at: z.coerce.date().optional(), session_ended_at: z.coerce.date().optional(), frame_count: z.number().int().min(1).max(1000).optional(), confidence_summary: confidenceEvidence.optional(), manual_review_required: z.boolean().optional() }).strict(),
 };

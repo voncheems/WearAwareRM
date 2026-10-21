@@ -331,7 +331,9 @@ test('inspectors read only their stations while the dedicated scanner routes wri
   assert.equal(manuallyDenied.original_authorization, 'pending_inspection'); assert.equal(manuallyDenied.authorization_status, 'denied');
   assert.equal(manuallyDenied.authorization_override_reason, 'PPE could not be visually confirmed.');
   const stats = await (await call('/api/admin/stats', token(1, 'admin'))).json();
-  assert.ok(stats.manual_reviews >= 1); assert.equal(stats.pending_manual_reviews, 0);
+  // A completed review can still be inconclusive; it must not disappear from the manual queue.
+  assert.ok(stats.manual_reviews >= 1); assert.ok(stats.pending_manual_reviews >= 1);
+  assert.equal(manuallyDenied.inspector_decision, 'unable_to_verify');
   assert.equal((await call('/api/checkpoints/2/status', token(1, 'admin'), 'PATCH', { is_active: false })).status, 200);
   assert.equal((await call('/api/detections', scannerAuth, 'POST', { worker_id: 12, checkpoint_id: 2, detected_ppe: ['gloves', 'goggles'] })).status, 403);
   assert.equal((await call('/api/checkpoints/2/status', token(1, 'admin'), 'PATCH', { is_active: true })).status, 200);
@@ -412,7 +414,11 @@ test('risk analytics prioritizes persisted severity, repeat workers, and unresol
   assert.equal(analytics.summary.risk_deferred, 0);
   assert.equal(analytics.repeat_violations.length, 1);
   assert.equal(analytics.repeat_violations[0].worker_id, 11);
-  assert.equal(analytics.profiles.find(profile => profile.profile_id === reusableProfileId).confirmed_violations, 3);
+  assert.equal(analytics.profiles.find(profile => profile.profile_id === reusableProfileId).confirmed_violations, 0);
+  assert.equal(analytics.summary.confirmed_violations, 1);
+  assert.equal(analytics.summary.original_ai_violations, 5);
+  assert.equal(analytics.summary.violations, 4);
+  assert.equal(analytics.summary.manual_reviews, 1);
   assert.equal(analytics.resolution.resolved_count, 1);
   assert.equal((await (await call(`${endpoint}&riskSeverity=High`, token(1, 'admin'))).json()).summary.total, 1);
   assert.equal((await (await call(`${endpoint}&checkpointId=2`, token(1, 'admin'))).json()).summary.total, 1);

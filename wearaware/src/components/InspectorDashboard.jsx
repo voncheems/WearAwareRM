@@ -1,3 +1,7 @@
+import { reviewStatusPresentation, entryStatusLabel, hasPpeVerdict } from '../utils/review-status';
+import FinalPpeVerdictControl from './FinalPpeVerdictControl';
+import ComplianceResult from './ComplianceResult';
+import { finalComplianceOutcome } from '../utils/compliance-outcome';
 import { showAlert, showConfirm, showPrompt } from '../utils/dialogs';
 import PrivacyRequestsLink from './PrivacyRequestsLink';
 import { AUTH_SESSION_CHANGED, signOut, storeAccessToken, expireSession } from '../utils/auth-session';
@@ -22,18 +26,14 @@ function getAuthHeaders() {
   return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 }
 
-function authorizationLabel(value) {
-  return ({ authorized: 'Authorized', denied: 'Denied', pending_inspection: 'Pending Inspection' })[value] || 'Not Recorded';
-}
+
 
 function authorizationStyle(value) {
   if (value === 'authorized') return { background: '#dcfce7', color: '#166534' };
   if (value === 'denied') return { background: '#fee2e2', color: '#b91c1c' };
   return { background: '#fff7ed', color: '#9a5706' };
 }
-function resolutionLabel(value) {
-  return ({ PENDING_REVIEW: 'Pending review', CONFIRMED_VIOLATION: 'Confirmed violation', FALSE_DETECTION: 'False detection', RESOLVED_AFTER_CORRECTION: 'Resolved after correction', AUTHORIZED_EXCEPTION: 'Authorized exception' })[value] || '—';
-}
+
 
 export default function InspectorDashboard({ setCurrentPage }) {
   const [activeTab, setActiveTab] = useState('violations');
@@ -249,6 +249,14 @@ export default function InspectorDashboard({ setCurrentPage }) {
     }
   };
 
+  const handlePpeVerdict = async (detectionId, verdict) => {
+    const res = await authFetch(`${API}/violations/${detectionId}/verdict`, { method: 'PATCH', body: JSON.stringify(verdict) });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || 'Could not save the PPE verdict.');
+    setDetections(previous => previous.map(record => record.id === detectionId ? { ...record, ...body.detection } : record));
+    await fetchDetections();
+  };
+
   const handleManualReview = async (detectionId, decision) => {
     if (!decision) return;
     const notes = await showPrompt('Optional authorization reason or inspection note:', '');
@@ -382,11 +390,11 @@ export default function InspectorDashboard({ setCurrentPage }) {
         });
 
     // Recompute stats for filtered period
-    const filteredDecided    = filtered.filter(d => d.result !== 'manual_review');
+    const filteredDecided    = filtered.filter(d => finalComplianceOutcome(d) !== 'manual_review');
     const filteredTotal      = filtered.length;
-    const filteredViolations = filtered.filter(d => d.result === 'violation').length;
-    const filteredCompliant  = filtered.filter(d => d.result === 'compliant').length;
-    const filteredManual     = filtered.filter(d => d.result === 'manual_review').length;
+    const filteredViolations = filtered.filter(d => finalComplianceOutcome(d) === 'violation').length;
+    const filteredCompliant  = filtered.filter(d => finalComplianceOutcome(d) === 'compliant').length;
+    const filteredManual     = filtered.filter(d => finalComplianceOutcome(d) === 'manual_review').length;
     const filteredRate       = filteredDecided.length === 0 ? 100
       : Math.round((filteredCompliant / filteredDecided.length) * 100);
 
@@ -417,7 +425,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
       const key = d.station || 'Unknown';
       if (!byStation[key]) byStation[key] = { total: 0, compliant: 0 };
       byStation[key].total++;
-      if (d.result === 'compliant') byStation[key].compliant++;
+      if (finalComplianceOutcome(d) === 'compliant') byStation[key].compliant++;
     });
     const filteredStations = Object.entries(byStation).map(([station, c]) => ({
       station, compliant: c.compliant, total: c.total,
@@ -431,7 +439,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
       if (!d.date) return;
       if (!byDate[d.date]) byDate[d.date] = { total: 0, compliant: 0 };
       byDate[d.date].total++;
-      if (d.result === 'compliant') byDate[d.date].compliant++;
+      if (finalComplianceOutcome(d) === 'compliant') byDate[d.date].compliant++;
     });
     const filteredTrends = Object.entries(byDate)
       .sort(([a], [b]) => a.localeCompare(b))
@@ -460,10 +468,10 @@ export default function InspectorDashboard({ setCurrentPage }) {
         <td style="font-family:monospace;font-size:11px">${escapeHtml(d.worker_employee_id || '—')}</td>
         <td>${escapeHtml(d.station || '—')}</td>
         <td>${escapeHtml(d.date)} ${escapeHtml(d.time)}</td>
-        <td style="color:${d.result === 'manual_review' ? '#b45309' : d.result === 'violation' ? '#dc2626' : '#16a34a'};font-weight:700">
-          ${d.result === 'manual_review' ? '⚠ Manual Review' : d.result === 'violation' ? '⚠ Violation' : '✓ Compliant'}
+        <td style="color:${finalComplianceOutcome(d) === 'manual_review' ? '#b45309' : finalComplianceOutcome(d) === 'violation' ? '#dc2626' : '#16a34a'};font-weight:700">
+          ${finalComplianceOutcome(d) === 'manual_review' ? '⚠ Manual Review' : finalComplianceOutcome(d) === 'violation' ? '⚠ Violation' : '✓ Compliant'}
         </td>
-        <td style="font-weight:700">${escapeHtml(authorizationLabel(d.authorization_status))}</td>
+        <td style="font-weight:700">${escapeHtml(entryStatusLabel(d))}</td>
         <td>${escapeHtml([...(d.missing_ppe || []), ...(d.uncertain_ppe || []).map(item => `? ${item}`)].join(', ') || '—')}</td>
         <td>${escapeHtml((d.detected_ppe || []).join(', ') || '—')}</td>
       </tr>`).join('');
@@ -512,8 +520,8 @@ export default function InspectorDashboard({ setCurrentPage }) {
           <div style="font-weight:700">${escapeHtml(d.worker_name || 'Unknown')} <span style="font-family:monospace;color:#94a3b8">${escapeHtml(d.worker_employee_id || '')}</span></div>
           <div style="color:#64748b">${escapeHtml(d.station || '')} &middot; ${escapeHtml(d.date)} ${escapeHtml(d.time)}</div>
           <div style="color:#dc2626;margin-top:4px">${escapeHtml((d.missing_ppe||[]).join(', ') || '—')}</div>
-          <div style="margin-top:4px;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;display:inline-block;background:${d.result==='manual_review'?'#fff7ed':d.result==='violation'?'#fee2e2':'#dcfce7'};color:${d.result==='manual_review'?'#b45309':d.result==='violation'?'#dc2626':'#16a34a'}">
-            ${d.result === 'manual_review' ? '⚠ Manual Review' : d.result === 'violation' ? '⚠ Violation' : '✓ Compliant'}
+          <div style="margin-top:4px;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;display:inline-block;background:${finalComplianceOutcome(d)==='manual_review'?'#fff7ed':finalComplianceOutcome(d)==='violation'?'#fee2e2':'#dcfce7'};color:${finalComplianceOutcome(d)==='manual_review'?'#b45309':finalComplianceOutcome(d)==='violation'?'#dc2626':'#16a34a'}">
+            ${finalComplianceOutcome(d) === 'manual_review' ? '⚠ Manual Review' : finalComplianceOutcome(d) === 'violation' ? '⚠ Violation' : '✓ Compliant'}
           </div>
         </div>
       </div>`).join('');
@@ -588,7 +596,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
 
   <h2>Full Detection Log</h2>
   <table>
-    <thead><tr><th>Worker</th><th>ID</th><th>Station</th><th>Date & Time</th><th>PPE Result</th><th>Entry Access</th><th>Missing PPE</th><th>Present PPE</th></tr></thead>
+    <thead><tr><th>Worker</th><th>ID</th><th>Station</th><th>Date & Time</th><th>Final PPE Result</th><th>Entry Access</th><th>Missing PPE</th><th>Present PPE</th></tr></thead>
     <tbody>${logRows || '<tr><td colspan="8" style="color:#aaa;text-align:center">No data</td></tr>'}</tbody>
   </table>
 
@@ -611,7 +619,8 @@ export default function InspectorDashboard({ setCurrentPage }) {
     if (filterStation   !== 'All Stations' && d.station !== filterStation) return false;
     if (filterProfile   !== 'All Profiles' && (d.profile_name || 'Custom requirements') !== filterProfile) return false;
     if (filterDate      && d.date          !== filterDate)                  return false;
-    const alertType = d.alert_type || (d.result === 'compliant' ? 'compliant' : 'non_compliant');
+    const outcome = finalComplianceOutcome(d);
+    const alertType = outcome === 'manual_review' ? 'manual_review' : outcome === 'compliant' ? 'compliant' : 'non_compliant';
     if (filterViolation === 'Violation'    && alertType !== 'non_compliant') return false;
     if (filterViolation === 'Manual Review' && alertType !== 'manual_review') return false;
     if (filterViolation === 'Compliant'    && alertType !== 'compliant') return false;
@@ -624,11 +633,11 @@ export default function InspectorDashboard({ setCurrentPage }) {
 
   const dailyTrends = (() => {
     const byDate = {};
-    detections.filter(d => d.result !== 'manual_review').forEach(d => {
+    detections.filter(d => finalComplianceOutcome(d) !== 'manual_review').forEach(d => {
       if (!d.date) return;
       if (!byDate[d.date]) byDate[d.date] = { total: 0, compliant: 0 };
       byDate[d.date].total++;
-      if (d.result === 'compliant') byDate[d.date].compliant++;
+      if (finalComplianceOutcome(d) === 'compliant') byDate[d.date].compliant++;
     });
     const sorted = Object.entries(byDate)
       .sort(([a], [b]) => a.localeCompare(b))
@@ -648,7 +657,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
     const normalise = (item) =>
       item.toLowerCase().replace(/^no-/, '').replace(/-/g, ' ').trim();
 
-    detections.filter(d => d.result !== 'manual_review').forEach(d => {
+    detections.filter(d => finalComplianceOutcome(d) !== 'manual_review').forEach(d => {
       // Items in detected_ppe are compliant (present)
       (d.detected_ppe || []).forEach(item => {
         const label = normalise(item);
@@ -678,11 +687,11 @@ export default function InspectorDashboard({ setCurrentPage }) {
 
   const stationCompliance = (() => {
     const byStation = {};
-    detections.filter(d => d.result !== 'manual_review').forEach(d => {
+    detections.filter(d => finalComplianceOutcome(d) !== 'manual_review').forEach(d => {
       const key = d.station || 'Unknown';
       if (!byStation[key]) byStation[key] = { total: 0, compliant: 0, missing: {} };
       byStation[key].total++;
-      if (d.result === 'compliant') byStation[key].compliant++;
+      if (finalComplianceOutcome(d) === 'compliant') byStation[key].compliant++;
       (d.missing_ppe || []).forEach(item => { byStation[key].missing[item] = (byStation[key].missing[item] || 0) + 1; });
     });
     return Object.entries(byStation)
@@ -841,7 +850,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
                       <th>Checkpoint</th>
                       <th>Profile</th>
                       <th>Date & Time</th>
-                      <th>PPE Result</th>
+                      <th>Final PPE Result</th>
                       <th>Risk</th>
                       <th>Entry Access</th>
                       <th>Inspector Resolution</th>
@@ -876,7 +885,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
                                 ? <button type="button" onClick={() => openInspectorPhoto(d.id)} aria-label="Open violation proof photo"
                                     style={{ width: 48, height: 48, borderRadius: 6, cursor: 'pointer', border: '2px solid #fca5a5', background: '#fff1f2', fontSize: '1.1rem' }}>📷</button>
                                 : <div className="ins-photo">
-                                    {d.result === 'manual_review' || d.result === 'violation'
+                                    {finalComplianceOutcome(d) === 'manual_review' || finalComplianceOutcome(d) === 'violation'
                                       ? <AlertTriangle size={18} color="#e53e3e" />
                                       : <CheckCircle   size={18} color="#38a169" />}
                                   </div>}
@@ -900,23 +909,21 @@ export default function InspectorDashboard({ setCurrentPage }) {
                             </td>
                             <td>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', alignItems: 'flex-start' }}>
-                                <span className={`ins-vbadge ${d.result === 'violation' ? 'yes' : 'no'}`} style={d.alert_type === 'manual_review' ? { background: '#fff7ed', color: '#b45309' } : undefined}>
-                                  {d.alert_type === 'manual_review' ? '⚠ Manual Review' : d.result === 'violation' ? '⚠ Violation' : '✓ Compliant'}
-                                </span>
-                                {d.result === 'violation' && (
+                                <ComplianceResult record={d} /><FinalPpeVerdictControl key={`${d.id}:${d.reviewed_at || "none"}:${(d.risk_reassessment_history || []).length}`} record={d} onSave={handlePpeVerdict} onOpenEvidence={openInspectorPhoto} />
+                                {finalComplianceOutcome(d) === 'violation' && (
                                   <button
                                     onClick={() => handleOverride(d.id)}
                                     style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: 4, border: '1px solid #16a34a', background: '#f0fdf4', color: '#16a34a', cursor: 'pointer', fontWeight: 600 }}>
                                     ✓ Override
                                   </button>
                                 )}
-                                {d.result === 'manual_review' && d.review_status === 'pending' && <select aria-label={`Resolve manual review ${d.id}`} defaultValue="" onChange={event => handleManualReview(d.id, event.target.value)} className="dashboard-select-review"><option value="" disabled>Resolve entry…</option><option value="compliant">Allow Entry — PPE Confirmed</option><option value="non_compliant">Deny Entry — PPE Missing</option><option value="false_detection">Allow Entry — False Detection</option><option value="unable_to_verify">Deny Entry — Unable to Verify</option></select>}
-                                {d.result === 'manual_review' && d.review_status === 'reviewed' && <small style={{ color: '#8a5107' }}>Decision: {String(d.inspector_decision || '').replaceAll('_', ' ')}</small>}
+                                {finalComplianceOutcome(d) === 'manual_review' && d.review_status === 'pending' && <select aria-label={`Resolve manual review ${d.id}`} defaultValue="" onChange={event => handleManualReview(d.id, event.target.value)} className="dashboard-select-review"><option value="" disabled>Resolve entry…</option><option value="compliant">Allow Entry — PPE Confirmed</option><option value="non_compliant">Deny Entry — PPE Missing</option><option value="false_detection">Allow Entry — False Detection (PPE unverified)</option><option value="unable_to_verify">Deny Entry — Unable to Verify</option></select>}
+                                {finalComplianceOutcome(d) === 'manual_review' && d.review_status === 'reviewed' && <small style={{ color: '#8a5107' }}>Decision: {String(d.inspector_decision || '').replaceAll('_', ' ')}</small>}
                               </div>
                             </td>
                             <td><span className={`ins-risk-badge ins-risk-${String(d.risk_severity || 'unmatched').toLowerCase()}`}>{d.risk_severity || (d.risk_status === 'deferred' ? 'Deferred' : 'Unmatched')}</span></td>
-                            <td><span className="ins-vbadge" style={authorizationStyle(d.authorization_status)}>{authorizationLabel(d.authorization_status)}</span>{d.authorization_override_at && <small style={{ display: 'block', marginTop: 5, color: '#718096' }}>Overridden by inspector</small>}</td>
-                            <td><span className="ins-vbadge" style={{ background: d.resolution_status === 'CONFIRMED_VIOLATION' ? '#fee2e2' : d.resolution_status === 'FALSE_DETECTION' ? '#e0f2fe' : d.resolution_status === 'PENDING_REVIEW' ? '#fff7ed' : '#dcfce7', color: d.resolution_status === 'CONFIRMED_VIOLATION' ? '#b91c1c' : d.resolution_status === 'FALSE_DETECTION' ? '#075985' : d.resolution_status === 'PENDING_REVIEW' ? '#9a5706' : '#166534' }}>{resolutionLabel(d.resolution_status)}</span>{(d.resolution_status === 'PENDING_REVIEW' || (!d.resolution_status && d.result === 'violation')) && <div className="ins-resolution-actions"><button className="ins-resolution-action confirm" type="button" onClick={() => handleResolution(d.id, 'CONFIRMED_VIOLATION')}>Confirm</button><button className="ins-resolution-action false-detection" type="button" onClick={() => handleResolution(d.id, 'FALSE_DETECTION')}>False detection</button></div>}</td>
+                            <td><span className="ins-vbadge" style={authorizationStyle(d.authorization_status)}>{entryStatusLabel(d)}</span>{d.authorization_override_at && <small style={{ display: 'block', marginTop: 5, color: '#718096' }}>Overridden by inspector</small>}</td>
+                            <td><span className="ins-vbadge" style={reviewStatusPresentation(d).style}>{reviewStatusPresentation(d).label}</span>{d.resolution_status === 'PENDING_REVIEW' && hasPpeVerdict(d) && <small style={{ display: 'block', marginTop: 5, color: '#718096' }}>Incident decision still required</small>}{(d.resolution_status === 'PENDING_REVIEW' || (!d.resolution_status && finalComplianceOutcome(d) === 'violation')) && <div className="ins-resolution-actions"><button className="ins-resolution-action confirm" type="button" onClick={() => handleResolution(d.id, 'CONFIRMED_VIOLATION')}>Confirm</button><button className="ins-resolution-action false-detection" type="button" onClick={() => handleResolution(d.id, 'FALSE_DETECTION')}>False detection + entry override</button></div>}</td>
                             <td>
                               {(d.missing_ppe || []).map(p => <span key={`missing-${p}`} className="ins-ppe-tag missing">{p}</span>)}
                               {(d.uncertain_ppe || []).map(p => <span key={`uncertain-${p}`} className="ins-ppe-tag" style={{ background: '#fff2c7', color: '#94600b' }}>? {p}</span>)}
@@ -1065,10 +1072,10 @@ export default function InspectorDashboard({ setCurrentPage }) {
                           <div style={{
                             position: 'absolute', top: 8, right: 8,
                             padding: '3px 10px', borderRadius: 20, fontSize: '0.72rem', fontWeight: 700,
-                            background: d.result === 'manual_review' ? '#d69e2e' : d.result === 'violation' ? '#ef4444' : '#16a34a',
+                            background: finalComplianceOutcome(d) === 'manual_review' ? '#d69e2e' : finalComplianceOutcome(d) === 'violation' ? '#ef4444' : '#16a34a',
                             color: '#fff',
                           }}>
-                            {d.result === 'manual_review' ? '⚠ Manual Review' : d.result === 'violation' ? '⚠ Violation' : '✓ Compliant'}
+                            {finalComplianceOutcome(d) === 'manual_review' ? '⚠ Manual Review' : finalComplianceOutcome(d) === 'violation' ? '⚠ Violation' : '✓ Compliant'}
                           </div>
                         </div>
 
@@ -1110,7 +1117,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
                           )}
 
                           {/* Override button */}
-                          {d.result === 'violation' && (
+                          {finalComplianceOutcome(d) === 'violation' && (
                             <button
                               onClick={() => handleOverride(d.id)}
                               style={{
@@ -1122,7 +1129,7 @@ export default function InspectorDashboard({ setCurrentPage }) {
                               ✓ Override as Compliant
                             </button>
                           )}
-                          {d.result === 'compliant' && (
+                          {finalComplianceOutcome(d) === 'compliant' && (
                             <div style={{
                               width: '100%', padding: '0.45rem', borderRadius: 6, textAlign: 'center',
                               background: '#f0fdf4', color: '#16a34a', fontSize: '0.8rem', fontWeight: 700,

@@ -1,3 +1,5 @@
+import { finalComplianceOutcome } from './compliance-outcome.js';
+
 // The backend's finalized result takes precedence over presentation aliases.
 export function scanAlertType(result, alertType) {
   if (result === 'compliant') return 'compliant';
@@ -10,7 +12,7 @@ export function scanAlertType(result, alertType) {
 export function summarizeScans(entries) {
   const summary = { totalScans: entries.length, totalPassed: 0, totalFailed: 0, totalReview: 0 };
   for (const entry of entries) {
-    const type = scanAlertType(entry.result, entry.alertType);
+    const type = scanAlertType(entry.result || entry.review_status || entry.resolution_status ? finalComplianceOutcome(entry) : undefined, entry.alertType);
     if (type === 'compliant') summary.totalPassed++;
     else if (type === 'non_compliant') summary.totalFailed++;
     else summary.totalReview++;

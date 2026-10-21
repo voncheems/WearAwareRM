@@ -76,6 +76,19 @@ router.get('/:id/photo', requireAuth, requireRole('admin', 'inspector'), validat
   } catch (err) { next(err); }
 });
 
+// PPE verification is deliberately separate from entry authorization/resolution.
+router.patch('/:id/verdict', requireAuth, requireRole('admin', 'inspector'), validateRequest, async (req, res, next) => {
+  try {
+    const result = await require('../ppe-verdict').recordPpeVerdict(getDatabase(), req.params.id, req.user, req.body);
+    if (!result.duplicate) await recordAudit({ category: 'action', action: 'Recorded verified PPE verdict', actor: req.user, target: String(req.params.id), details: `${req.body.verdict}; ${req.body.verification_method}; entry unchanged` });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    if ([400, 403, 404, 409].includes(err.status)) return res.status(err.status).json({ error: err.message });
+    if (err.code === 121) return res.status(409).json({ error: 'Existing review storage rejected the verdict. No verdict was saved.' });
+    next(err);
+  }
+});
+
 router.patch('/:id/resolve', requireAuth, requireRole('admin', 'inspector'), validateRequest, async (req, res, next) => {
   try {
     const result = await data.resolveDetection(req.params.id, req.user.id, req.user.role, req.body.status, req.body.reason || null, req.body.correctedByScanId || null);

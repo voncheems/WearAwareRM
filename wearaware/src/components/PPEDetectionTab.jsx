@@ -509,6 +509,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
   const [statusTitle, statusDetail] = sessionStatusCopy(sessionState, frameCount);
 
   return <div>
+    <p style={{ color: "#718096", fontSize: ".8rem", marginBottom: 8 }}>Current browser session · scan-time results; later inspector reviews are not included.</p>
     <div className="ppe-stat-row">{[
       { val: totalScans, label: isWorkerSelfCheck ? 'Checks completed' : 'Workers Scanned', color: '' },
       { val: totalPassed, label: 'Passed', color: 'green' }, { val: totalFailed, label: 'Failed', color: 'red' },
