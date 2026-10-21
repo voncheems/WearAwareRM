@@ -95,81 +95,67 @@ export function aggregateSessionFrames(frames, requiredPpe, config = SCAN_SESSIO
   const usableFrames = (Array.isArray(frames) ? frames : []).filter(frame => Number(frame?.person_count) === 1);
   const required = [...new Set((Array.isArray(requiredPpe) ? requiredPpe : []).map(normalizePpeName).filter(Boolean))];
   const observed = new Set(required);
-  for (const frame of usableFrames) {
-    for (const detection of frame.detections || []) {
-      const name = normalizePpeName(detection?.class_name);
-      if (name && !name.startsWith('no-') && !['human', 'person'].includes(name)) observed.add(name);
-    }
+  for (const frame of usableFrames) for (const detection of frame.detections || []) {
+    const name = normalizePpeName(detection?.class_name);
+    if (name && !name.startsWith('no-') && !['human', 'person'].includes(name)) observed.add(name);
   }
-
-  const positiveThreshold = Math.min(
-    Math.max(1, usableFrames.length),
-    Math.max(config.minimumPositiveFrames, Math.ceil(usableFrames.length * config.positiveFrameRatio)),
-  );
-  const visibleFrames = usableFrames.filter(frame => isPersonSufficientlyVisible(frame, required, config)).length;
-  const visibilityScore = usableFrames.length ? rounded(visibleFrames / usableFrames.length) : 0;
-  const confidenceSummary = [...observed].map(ppe => {
-    const observedValues = usableFrames.map(frame => maxConfidenceFor(frame, ppe, config.detectionConfidence)).filter(Number.isFinite);
-    const confirmedValues = observedValues.filter(value => value >= config.minimumConfidence);
-    const weakValues = observedValues.filter(value => value < config.minimumConfidence);
-    let status = 'MISSING';
-    if (confirmedValues.length >= positiveThreshold) status = 'DETECTED';
-    else if (weakValues.length > 0 || confirmedValues.length > 0) status = 'UNCERTAIN';
-    return {
-      ppe,
-      average_confidence: observedValues.length ? rounded(observedValues.reduce((sum, value) => sum + value, 0) / observedValues.length) : 0,
-      positive_frames: confirmedValues.length,
-      weak_frames: weakValues.length,
-      observed_frames: observedValues.length,
-      status,
-    };
+  const threshold = Math.max(config.minimumPositiveFrames, Math.ceil(usableFrames.length * config.positiveFrameRatio));
+  const visibleFrames = usableFrames.filter(frame => isPersonSufficientlyVisible(frame, required, config));
+  const visibilityScore = usableFrames.length ? rounded(visibleFrames.length / usableFrames.length) : 0;
+  const summarize = (ppe, values) => ({
+    ppe, average_confidence: values.length ? rounded(values.reduce((sum, value) => sum + value, 0) / values.length) : 0,
+    positive_frames: values.filter(value => value >= config.minimumConfidence).length,
+    weak_frames: values.filter(value => value < config.minimumConfidence).length,
+    observed_frames: values.length,
   });
-  const requiredEvidence = confidenceSummary.filter(item => required.includes(item.ppe));
-  const detected = requiredEvidence.filter(item => item.status === 'DETECTED').map(item => item.ppe);
-  const lowConfidence = requiredEvidence.filter(item => item.weak_frames > 0).map(item => item.ppe);
-  const inconsistent = requiredEvidence.filter(item => item.positive_frames > 0 && item.positive_frames < positiveThreshold).map(item => item.ppe);
-  const visibilityUncertain = visibilityScore < config.minimumVisibleFrameRatio
-    ? requiredEvidence.filter(item => item.status !== 'DETECTED').map(item => item.ppe)
-    : [];
-  const interferenceUncertain = conditions.multiplePeopleDetected
-    ? requiredEvidence.filter(item => item.status !== 'DETECTED').map(item => item.ppe) : [];
-  const uncertain = [...new Set([...lowConfidence, ...inconsistent, ...visibilityUncertain, ...interferenceUncertain])];
-  const missing = required.filter(item => !detected.includes(item) && !uncertain.includes(item));
+  const confidenceSummary = [...observed].map(ppe => summarize(ppe,
+    usableFrames.map(frame => maxConfidenceFor(frame, ppe, config.detectionConfidence)).filter(Number.isFinite)));
+  const negativeEvidence = required.map(ppe => summarize(ppe, visibleFrames.map(frame => {
+    const person = frame.person_detections[0].bbox;
+    const matches = (frame.detections || []).filter(detection => {
+      if (normalizePpeName(detection?.class_name) !== `no-${ppe}` || detection.inferred === true
+        || !Number.isFinite(detection.confidence) || detection.confidence < config.detectionConfidence) return false;
+      const box = detection.bbox;
+      if (!box || ![box.x1, box.y1, box.x2, box.y2].every(Number.isFinite) || box.x2 <= box.x1 || box.y2 <= box.y1) return false;
+      const x = (box.x1 + box.x2) / 2, y = (box.y1 + box.y2) / 2;
+      return x >= person.x1 && x <= person.x2 && y >= person.y1 && y <= person.y2;
+    });
+    return matches.length ? Math.max(...matches.map(item => item.confidence)) : null;
+  }).filter(Number.isFinite)));
+  // Explicit absence uses the existing confident-frame consensus and average.
+  // A weaker supporting observation does not veto that consensus.
+  const confirmedMissing = item => item.positive_frames >= threshold && item.average_confidence >= config.minimumConfidence;
+  const confirmed = item => confirmedMissing(item) && item.weak_frames === 0;
+  const evidence = required.map(ppe => {
+    const present = confidenceSummary.find(item => item.ppe === ppe);
+    const absent = negativeEvidence.find(item => item.ppe === ppe);
+    const conflict = present.observed_frames > 0 && absent.observed_frames > 0;
+    const status = conflict ? 'UNCERTAIN' : confirmed(present) ? 'DETECTED' : confirmedMissing(absent) ? 'MISSING' : 'UNCERTAIN';
+    present.status = status;
+    return { ppe, status, conflict };
+  });
+  for (const item of confidenceSummary) item.status ||= confirmed(item) ? 'DETECTED' : 'UNCERTAIN';
+  const detected = evidence.filter(item => item.status === 'DETECTED').map(item => item.ppe);
+  const missing = evidence.filter(item => item.status === 'MISSING').map(item => item.ppe);
+  const uncertain = evidence.filter(item => item.status === 'UNCERTAIN').map(item => item.ppe);
   const personConfidences = usableFrames.flatMap(frame => (frame.person_detections || []).map(person => Number(person.confidence)).filter(Number.isFinite));
-  const evidenceConfidences = [
-    ...personConfidences,
-    ...confidenceSummary.filter(item => item.positive_frames >= positiveThreshold).map(item => item.average_confidence),
-  ];
-  const confidenceScore = evidenceConfidences.length ? rounded(evidenceConfidences.reduce((sum, value) => sum + value, 0) / evidenceConfidences.length) : null;
-  const manualReviewReason = conditions.multiplePeopleDetected ? 'MULTIPLE_PEOPLE'
+  const values = [...personConfidences, ...[...confidenceSummary.filter(confirmed), ...negativeEvidence.filter(confirmedMissing)].map(item => item.average_confidence)];
+  const confidenceScore = values.length ? rounded(values.reduce((sum, value) => sum + value, 0) / values.length) : null;
+  const reason = conditions.multiplePeopleDetected ? 'MULTIPLE_PEOPLE'
     : usableFrames.length < config.minimumFrames ? 'INSUFFICIENT_DATA'
-    : visibilityUncertain.length > 0 ? 'PARTIAL_VISIBILITY'
-      : lowConfidence.length > 0 ? 'LOW_CONFIDENCE'
-        : inconsistent.length > 0 ? 'INCONSISTENT_DETECTION'
-          : (!Number.isFinite(confidenceScore) || confidenceScore < config.manualReviewConfidence) ? 'LOW_CONFIDENCE'
-            : null;
-  const manualReviewRequired = Boolean(manualReviewReason)
-    || !Number.isFinite(confidenceScore)
-    || confidenceScore < config.manualReviewConfidence;
-  const finalUncertain = manualReviewRequired ? [...new Set([...uncertain, ...missing])] : uncertain;
-  const finalMissing = manualReviewRequired ? [] : missing;
-
+      : visibilityScore < config.minimumVisibleFrameRatio ? 'PARTIAL_VISIBILITY'
+        : !Number.isFinite(confidenceScore) || confidenceScore < config.manualReviewConfidence ? 'LOW_CONFIDENCE'
+          : missing.length ? null
+            : uncertain.length ? evidence.some(item => item.conflict) ? 'INCONSISTENT_DETECTION' : 'LOW_CONFIDENCE' : null;
   return {
-    required_ppe: required,
-    detected_ppe: detected,
-    missing_ppe: finalMissing,
-    confidence_score: confidenceScore,
-    confidence_summary: confidenceSummary,
-    visibility_score: visibilityScore,
-    multiple_people_detected: Boolean(conditions.multiplePeopleDetected),
-    frame_count: usableFrames.length,
-    manual_review_required: manualReviewRequired,
-    inconsistent_ppe: inconsistent,
-    uncertain_ppe: finalUncertain,
-    manual_review_reason: manualReviewReason,
-    manual_review_message: manualReviewReason ? REVIEW_MESSAGES[manualReviewReason] : null,
-    result: manualReviewRequired ? 'manual_review' : finalMissing.length === 0 ? 'compliant' : 'violation',
-    alert_type: manualReviewRequired ? 'manual_review' : finalMissing.length === 0 ? 'compliant' : 'non_compliant',
+    required_ppe: required, detected_ppe: detected, missing_ppe: reason ? [] : missing,
+    confidence_score: confidenceScore, confidence_summary: confidenceSummary, negative_evidence: negativeEvidence,
+    visibility_score: visibilityScore, multiple_people_detected: Boolean(conditions.multiplePeopleDetected), frame_count: usableFrames.length,
+    manual_review_required: Boolean(reason), inconsistent_ppe: evidence.filter(item => item.conflict).map(item => item.ppe),
+    uncertain_ppe: reason ? [...new Set([...uncertain, ...missing])] : uncertain,
+    manual_review_reason: reason, manual_review_message: reason ? REVIEW_MESSAGES[reason] : null,
+    result: reason ? 'manual_review' : missing.length ? 'violation' : 'compliant',
+    alert_type: reason ? 'manual_review' : missing.length ? 'non_compliant' : 'compliant',
   };
 }
 

@@ -130,7 +130,46 @@ function classifyLocalAlert(compliance, confidenceScore, threshold = MANUAL_REVI
     manual_review_reason: null, manual_review_message: null };
 }
 
-function evaluateSessionEvidence({ requiredPpe, detectedPpe, confidenceSummary, frameCount, confidenceScore, visibilityScore, manualReviewRequired, multiplePeopleDetected }) {
+function evaluateExplicitSessionEvidence({ requiredPpe, confidenceSummary, negativeEvidence, frameCount, confidenceScore, visibilityScore, multiplePeopleDetected }) {
+  const required = normalizePpeList(requiredPpe);
+  const positive = new Map((confidenceSummary || []).map(item => [normalizePpeName(item.ppe), item]));
+  const negative = new Map(negativeEvidence.map(item => [normalizePpeName(item.ppe), item]));
+  const threshold = Math.max(confidenceConfig.minimumPositiveFrames, Math.ceil(frameCount * confidenceConfig.minimumPositiveFrameRatio));
+  const evidence = required.map(ppe => {
+    const present = positive.get(ppe) || {};
+    const absent = negative.get(ppe) || {};
+    const presentCount = Number(present.observed_frames) || Number(present.positive_frames || 0) + Number(present.weak_frames || 0);
+    const absentCount = Number(absent.observed_frames) || Number(absent.positive_frames || 0) + Number(absent.weak_frames || 0);
+    // Keep positive-PPE handling unchanged; explicit absence follows consensus.
+    const confirmedMissing = item => Number(item.positive_frames) >= threshold && Number(item.average_confidence) >= confidenceConfig.minimumDetectionConfidence;
+    const confirmed = item => confirmedMissing(item) && !Number(item.weak_frames);
+    const conflict = presentCount > 0 && absentCount > 0;
+    const status = conflict ? 'UNCERTAIN' : confirmed(present) ? 'DETECTED' : confirmedMissing(absent) ? 'MISSING' : 'UNCERTAIN';
+    return { ...present, ppe, status, conflict };
+  });
+  const detected = evidence.filter(item => item.status === 'DETECTED').map(item => item.ppe);
+  const missing = evidence.filter(item => item.status === 'MISSING').map(item => item.ppe);
+  const uncertain = evidence.filter(item => item.status === 'UNCERTAIN').map(item => item.ppe);
+  const visibility = Number(visibilityScore);
+  const confidence = Number(confidenceScore);
+  // Unusable sessions never become decided, even with a claimed missing item.
+  const reason = multiplePeopleDetected ? 'MULTIPLE_PEOPLE'
+    : !Number.isSafeInteger(frameCount) || frameCount < confidenceConfig.minimumValidFrames ? 'INSUFFICIENT_DATA'
+      : !Number.isFinite(visibility) || visibility < confidenceConfig.minimumVisibleFrameRatio ? 'PARTIAL_VISIBILITY'
+        : !Number.isFinite(confidence) || confidence < confidenceConfig.manualReviewConfidence ? 'LOW_CONFIDENCE'
+          : missing.length ? null
+            : uncertain.length ? evidence.some(item => item.conflict) ? 'INCONSISTENT_DETECTION' : 'LOW_CONFIDENCE' : null;
+  const result = reason ? 'manual_review' : missing.length ? 'violation' : 'compliant';
+  const messages = { MULTIPLE_PEOPLE: 'More than one person affected the scan. Please check manually.', INSUFFICIENT_DATA: 'Not enough scan data was collected. Please check manually.', PARTIAL_VISIBILITY: 'The required PPE was not fully visible. Please check manually.', LOW_CONFIDENCE: 'Required PPE could not be detected confidently. Please check manually.', INCONSISTENT_DETECTION: 'PPE detection changed during the scan. Please check manually.' };
+  return { required_ppe: required, detected_ppe: detected, missing_ppe: reason ? [] : missing,
+    uncertain_ppe: reason ? [...new Set([...uncertain, ...missing])] : uncertain,
+    confidence_summary: (confidenceSummary || []).map(item => ({ ...item, status: evidence.find(row => row.ppe === item.ppe)?.status || item.status })),
+    result, is_compliant: result === 'compliant', alert_type: result === 'manual_review' ? 'manual_review' : result === 'violation' ? 'non_compliant' : 'compliant',
+    manual_review_reason: reason, manual_review_message: reason ? messages[reason] : null };
+}
+
+function evaluateSessionEvidence({ requiredPpe, detectedPpe, confidenceSummary, negativeEvidence, frameCount, confidenceScore, visibilityScore, manualReviewRequired, multiplePeopleDetected }) {
+  if (Array.isArray(negativeEvidence)) return evaluateExplicitSessionEvidence({ requiredPpe, confidenceSummary, negativeEvidence, frameCount, confidenceScore, visibilityScore, multiplePeopleDetected });
   const required = normalizePpeList(requiredPpe);
   const summaries = Array.isArray(confidenceSummary) ? confidenceSummary : [];
   if (!summaries.length || !Number.isSafeInteger(frameCount)) {

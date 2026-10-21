@@ -375,12 +375,14 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
     session_ended_at = null,
     frame_count = null,
     confidence_summary = [],
+    negative_evidence,
     ai_observations = [],
     visibility_score = null,
     multiple_people_detected = false,
     manual_review_required = false,
   } = req.body;
 
+  let responseFor;
   try {
     if (session_started_at && session_ended_at && session_ended_at < session_started_at) return res.status(400).json({ error: 'Session end time must follow its start time.' });
     const worker = (await data.find('workers', { id: worker_id, status: 'active' }, 'id device_id full_name employee_id status')).rows[0];
@@ -391,7 +393,7 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
     const profile = station.profile_id && (await data.find('compliance_profiles', { id: station.profile_id }, 'id name')).rows[0];
     const assignedInspectorId = station.inspector_id;
 
-    const responseFor = async (record, duplicate = false) => ({
+    responseFor = async (record, duplicate = false) => ({
       success: true,
       duplicate,
       detection_id: record.id,
@@ -436,7 +438,7 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
     const deviceDbId = station.id;
     const compliance = evaluateSessionEvidence({
       requiredPpe: station.required_ppe || [], detectedPpe: detected_ppe,
-      confidenceSummary: confidence_summary, frameCount: frame_count,
+      confidenceSummary: confidence_summary, negativeEvidence: negative_evidence, frameCount: frame_count,
       confidenceScore: confidence_score, visibilityScore: visibility_score,
       manualReviewRequired: manual_review_required, multiplePeopleDetected: multiple_people_detected,
     });
@@ -483,7 +485,7 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
         frame_count,
         confidence_summary,
       } : {}),
-    }, 'id');
+    });
     const detectionId = det.rows[0].id;
     await recordAudit({ category: 'action', action: 'Recorded PPE check', actor: req.user, target: String(worker_id), details: `${station.label}: ${compliance.alert_type}` });
 
@@ -531,11 +533,11 @@ app.post('/api/detections', requireAuth, requireRole('scanner'), validateRequest
       if (wss) await wss.broadcastToInspector(assignedInspectorId, alertPayload);
     }
 
-    res.status(201).json(await responseFor({ id: detectionId, scan_session_id, ...compliance, ...authorization }));
+    res.status(201).json(await responseFor(det.rows[0]));
   } catch (err) {
-    if (err.code === 11000 && scan_session_id) {
-      const existing = (await data.find('detections', { scan_session_id }, 'id scan_session_id worker_id device_id result alert_type original_authorization authorization_status authorization_event authorization_decided_at authorization_override_by authorization_override_at authorization_override_reason required_ppe detected_ppe missing_ppe uncertain_ppe manual_review_reason manual_review_message review_status inspector_decision')).rows[0];
-      if (existing && Number(existing.worker_id) === Number(worker_id)) return res.status(200).json({ success: true, duplicate: true, detection_id: existing.id, scan_session_id, result: existing.result, is_compliant: existing.result === 'compliant', alert_type: existing.alert_type, original_authorization: existing.original_authorization, authorization_status: existing.authorization_status, authorization_event: existing.authorization_event, authorization_decided_at: existing.authorization_decided_at || null, authorization_override_by: existing.authorization_override_by || null, authorization_override_at: existing.authorization_override_at || null, authorization_override_reason: existing.authorization_override_reason || null, required_ppe: existing.required_ppe, detected_ppe: existing.detected_ppe, missing_ppe: existing.missing_ppe, uncertain_ppe: existing.uncertain_ppe || [], manual_review_reason: existing.manual_review_reason || null, manual_review_message: existing.manual_review_message || null, review_status: existing.review_status || 'not_required', inspector_decision: existing.inspector_decision || null, repeat_violation: await getWorkerRepeatStatus(worker_id).catch(() => null) });
+    if (err.code === 11000 && scan_session_id && responseFor) {
+      const existing = (await data.find('detections', { scan_session_id }, 'id scan_session_id worker_id device_id result alert_type original_authorization authorization_status authorization_event authorization_decided_at authorization_override_by authorization_override_at authorization_override_reason required_ppe detected_ppe missing_ppe uncertain_ppe manual_review_reason manual_review_message review_status inspector_decision risk_status risk_severity risk_rule_id risk_rule_name')).rows[0];
+      if (existing && Number(existing.worker_id) === Number(worker_id)) return res.status(200).json(await responseFor(existing, true));
     }
     if (err.code === 121 || err.status === 400 || /^(Invalid |Unknown |Missing required record fields)/.test(err.message || '')) return res.status(400).json({ error: 'Invalid request data or referenced record.' });
     console.error('Request handler failed.');

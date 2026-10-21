@@ -1,5 +1,6 @@
 const { z } = require('zod');
 const { verdictSchema } = require('./ppe-verdict');
+const confidenceConfig = require('../config/confidence.json');
 const id = z.union([z.number(), z.string().regex(/^\d+$/).transform(Number)]).pipe(z.number().int().positive().max(Number.MAX_SAFE_INTEGER));
 const optionalId = z.preprocess(v => v === '' || v === undefined ? null : v, id.nullable());
 const text = max => z.string().trim().min(1).max(max).refine(v => ![...v].some(c => c.charCodeAt(0) < 32 && ![9, 10, 13].includes(c.charCodeAt(0))));
@@ -40,6 +41,27 @@ const aiObservation = z.object({
   inferred: z.boolean().optional(),
   violation: z.boolean().optional(),
 }).strict();
+// Optional negative evidence is a bounded per-frame summary, corroborated by raw
+// non-inferred observations. It is not a new persisted collection/schema field.
+function validateNegativeEvidence(value, ctx) {
+  if (!Array.isArray(value.negative_evidence)) return;
+  const invalid = message => ctx.addIssue({ code: 'custom', path: ['negative_evidence'], message });
+  if (!Number.isSafeInteger(value.frame_count) || !value.confidence_summary?.length) return invalid('Negative evidence requires session evidence.');
+  const seen = new Set();
+  for (const item of value.negative_evidence) {
+    const observed = item.observed_frames ?? item.positive_frames + (item.weak_frames || 0);
+    if (seen.has(item.ppe) || item.ppe.startsWith('no-') || observed > value.frame_count
+      || observed !== item.positive_frames + (item.weak_frames || 0)) return invalid('Invalid negative evidence counts.');
+    seen.add(item.ppe);
+    const raw = (value.ai_observations || []).filter(row => row.class_name === `no-${item.ppe}` && row.inferred !== true
+      && Number.isFinite(row.confidence) && row.confidence >= confidenceConfig.observationConfidence && row.bbox
+      && row.bbox.x2 > row.bbox.x1 && row.bbox.y2 > row.bbox.y1);
+    if (item.positive_frames > raw.filter(row => row.confidence >= confidenceConfig.minimumDetectionConfidence).length
+      || (item.weak_frames || 0) > raw.filter(row => row.confidence < confidenceConfig.minimumDetectionConfidence).length
+      || (observed === 0 ? item.average_confidence !== 0 : item.average_confidence < confidenceConfig.observationConfidence
+        || item.average_confidence > Math.max(0, ...raw.map(row => row.confidence)) + .001)) return invalid('Negative evidence needs matching detector observations.');
+  }
+}
 const reviewDecision = z.object({ decision: z.enum(['compliant', 'non_compliant', 'false_detection', 'unable_to_verify']), notes: optionalText(1000) }).strict();
 const resolutionStatus = z.enum(['CONFIRMED_VIOLATION', 'FALSE_DETECTION', 'RESOLVED_AFTER_CORRECTION', 'AUTHORIZED_EXCEPTION']);
 const violationResolution = z.object({
@@ -80,7 +102,7 @@ const schemas = {
   'PATCH /api/violations/:id/resolve': violationResolution,
   'PATCH /api/violations/:id/verdict': verdictSchema,
   'PATCH /api/admin/password-requests/:id/reset': z.object({}).strict(),
-  'POST /api/detections': z.object({ worker_id: id, checkpoint_id: id.optional(), device_uuid: text(100).optional(), result: z.enum(['compliant', 'violation', 'manual_review']).optional(), detected_ppe: ppe.optional(), missing_ppe: ppe.optional(), confidence_score: z.number().min(0).max(1).nullable().optional(), visibility_score: z.number().min(0).max(1).nullable().optional(), multiple_people_detected: z.boolean().optional(), photo_url: z.string().max(2800000).regex(/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/).nullable().optional(), ai_observations: z.array(aiObservation).max(256).optional(), scan_session_id: z.string().uuid().optional(), session_started_at: z.coerce.date().optional(), session_ended_at: z.coerce.date().optional(), frame_count: z.number().int().min(1).max(1000).optional(), confidence_summary: confidenceEvidence.optional(), manual_review_required: z.boolean().optional() }).strict(),
+  'POST /api/detections': z.object({ worker_id: id, checkpoint_id: id.optional(), device_uuid: text(100).optional(), result: z.enum(['compliant', 'violation', 'manual_review']).optional(), detected_ppe: ppe.optional(), missing_ppe: ppe.optional(), confidence_score: z.number().min(0).max(1).nullable().optional(), visibility_score: z.number().min(0).max(1).nullable().optional(), multiple_people_detected: z.boolean().optional(), photo_url: z.string().max(2800000).regex(/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/).nullable().optional(), ai_observations: z.array(aiObservation).max(256).optional(), scan_session_id: z.string().uuid().optional(), session_started_at: z.coerce.date().optional(), session_ended_at: z.coerce.date().optional(), frame_count: z.number().int().min(1).max(1000).optional(), confidence_summary: confidenceEvidence.optional(), negative_evidence: confidenceEvidence.optional(), manual_review_required: z.boolean().optional() }).strict().superRefine(validateNegativeEvidence),
 };
 function validateRequest(req, res, next) {
   if (req.params.id && !id.safeParse(req.params.id).success) return res.status(400).json({ error: 'Invalid record ID.' });

@@ -4,7 +4,7 @@ import jsQRDecoder from 'jsqr';
 import { API } from '../config/api';
 import { aggregateSessionFrames, frameEvidenceScore, normalizePpeName, SCAN_SESSION_CONFIG, SCAN_SESSION_STATE, sessionStatusCopy } from '../config/scan-session';
 import { ALERT_TYPES, emitLocalAlert } from '../utils/local-alerts';
-import { getPersonCount, scanAlertType, summarizeScans } from '../utils/scanner-contract';
+import { getPersonCount, scanAlertType, summarizeScans, uncertainPpeDescription } from '../utils/scanner-contract';
 
 const DETECTION_TIMEOUT_MS = 35000;
 const WORKER_LOOKUP_TIMEOUT_MS = 30000;
@@ -86,8 +86,8 @@ function DetectionOverlay({ detections, personDetections, frameWidth = 640, fram
     const name = String(detection.class_name || 'PPE').toLowerCase();
     const violation = detection.violation === true || name.startsWith('no-');
     const confidence = Number(detection.confidence);
-    const confidenceLabel = detection.inferred ? 'inferred' : Number.isFinite(confidence) ? `${Math.round(confidence * 100)}%` : '';
-    return <div className={`ppe-detection-box ${violation ? 'violation' : 'present'}${detection.inferred ? ' inferred' : ''}${top < 8 ? ' near-top' : ''}`} key={`${name}-${index}`} style={{ left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` }}><span>{ppeLabel(name)}{confidenceLabel ? ` · ${confidenceLabel}` : ''}</span></div>;
+    const confidenceLabel = detection.inferred ? '(inferred)' : Number.isFinite(confidence) ? confidence.toFixed(2) : '';
+    return <div className={`ppe-detection-box ${violation ? 'violation' : 'present'}${detection.inferred ? ' inferred' : ''}${top < 8 ? ' near-top' : ''}`} key={`${name}-${index}`} style={{ left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` }}><span>{name}{confidenceLabel ? `  ${confidenceLabel}` : ''}</span></div>;
   })}</div> : null;
 }
 
@@ -302,7 +302,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
       result: aggregate.result,
     });
     setSaving(true);
-    setVerdict({ pass: aggregate.result === 'compliant', alertType: aggregate.alert_type, authorizationStatus: null, missing: aggregate.missing_ppe, uncertain: aggregate.uncertain_ppe, reason: aggregate.manual_review_message, detected: aggregate.detected_ppe, required: aggregate.required_ppe, confidence: aggregate.confidence_score, frameCount: aggregate.frame_count });
+    setVerdict({ pass: aggregate.result === 'compliant', alertType: aggregate.alert_type, authorizationStatus: null, missing: aggregate.missing_ppe, uncertain: aggregate.uncertain_ppe, reason: aggregate.manual_review_message, detected: aggregate.detected_ppe, required: aggregate.required_ppe, confidence: aggregate.confidence_score, confidenceSummary: aggregate.confidence_summary, negativeEvidence: aggregate.negative_evidence, frameCount: aggregate.frame_count });
     try {
       const controller = new AbortController();
       session.saveController = controller;
@@ -315,7 +315,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
           detected_ppe: aggregate.detected_ppe, confidence_score: aggregate.confidence_score,
           photo_url: aggregate.alert_type === ALERT_TYPES.COMPLIANT ? null : session.bestSnapshot,
           scan_session_id: session.id, session_started_at: session.startedAt.toISOString(), session_ended_at: session.endedAt.toISOString(),
-          frame_count: aggregate.frame_count, confidence_summary: aggregate.confidence_summary,
+          frame_count: aggregate.frame_count, confidence_summary: aggregate.confidence_summary, negative_evidence: aggregate.negative_evidence,
           ai_observations: session.frames.flatMap(frame => Array.isArray(frame.detections) ? frame.detections : [])
             .slice(0, 256)
             .map(({ class_name, confidence, bbox, inferred, violation }) => ({ class_name, confidence, bbox, inferred, violation })),
@@ -333,7 +333,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
       const alertType = scanAlertType(saved.result || aggregate.result, saved.alert_type || aggregate.alert_type);
       const pass = alertType === ALERT_TYPES.COMPLIANT;
       if (!AUTHORIZATION_COPY[saved.authorization_status]) throw new Error('The backend did not return a valid entry authorization decision. Please perform a manual inspection.');
-      const finalVerdict = { pass, alertType, authorizationStatus: saved.authorization_status, authorizationEvent: saved.authorization_event, missing: saved.missing_ppe || aggregate.missing_ppe, uncertain: saved.uncertain_ppe || aggregate.uncertain_ppe, reason: saved.manual_review_message || aggregate.manual_review_message, detected: saved.detected_ppe || aggregate.detected_ppe, required: saved.required_ppe || aggregate.required_ppe, confidence: aggregate.confidence_score, frameCount: aggregate.frame_count, repeatViolation: saved.repeat_violation || null };
+      const finalVerdict = { pass, alertType, authorizationStatus: saved.authorization_status, authorizationEvent: saved.authorization_event, missing: saved.missing_ppe || aggregate.missing_ppe, uncertain: saved.uncertain_ppe || aggregate.uncertain_ppe, reason: saved.manual_review_message || aggregate.manual_review_message, detected: saved.detected_ppe || aggregate.detected_ppe, required: saved.required_ppe || aggregate.required_ppe, confidence: aggregate.confidence_score, confidenceSummary: aggregate.confidence_summary, negativeEvidence: aggregate.negative_evidence, frameCount: aggregate.frame_count, repeatViolation: saved.repeat_violation || null };
       setVerdict(finalVerdict);
       setSessionLog(previous => [{ id: session.id, time: new Date().toLocaleTimeString(), workerName: workerRef.current?.full_name || 'Unknown', employeeId: workerRef.current?.employee_id || '—', pass, result: saved.result || aggregate.result, alertType, authorizationStatus: finalVerdict.authorizationStatus, missing: finalVerdict.missing }, ...previous.filter(entry => entry.id !== session.id)].slice(0, 50));
       if (!session.alertEmitted) {
@@ -535,7 +535,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
           <section className="ppe-worker-card"><div className="ppe-worker-avatar">{initials(worker.full_name)}</div><div><strong>{worker.full_name}</strong><span>{worker.employee_id}</span><small>● Employee identified</small></div></section>
           {checkpoint && <section className="ppe-checkpoint-card"><div><span>Checkpoint</span><strong>{checkpoint.label}</strong><small>{[checkpoint.code, checkpoint.location].filter(Boolean).join(' · ')}</small><small>{checkpoint.profile_name ? `${checkpoint.profile_name} profile` : 'Custom PPE requirements'}</small></div><div><span>Required PPE</span><div className="ppe-checkpoint-items">{checkpoint.required_ppe.length ? checkpoint.required_ppe.map(item => <b key={item}>{ppeLabel(item)}</b>) : <b>No PPE required</b>}</div></div></section>}
           <section className={`ppe-progress-card state-${sessionState}`}><div><strong>{statusTitle}</strong><span>{statusDetail}</span></div>{[SCAN_SESSION_STATE.PERSON_DETECTED, SCAN_SESSION_STATE.SCANNING].includes(sessionState) && <><b>{timeLeft}s</b><div className="ppe-progress-track"><i style={{ width: `${scanProgress}%` }} /></div><small>{frameCount} stable frame{frameCount === 1 ? '' : 's'} collected</small></>}</section>
-          {camResult && <section className="ppe-live-result">{camResult.compliant?.length > 0 && <div><strong>✅ PPE Visible</strong><div className="ppe-detected-list">{camResult.compliant.map(item => <span key={item} className="ins-ppe-tag">{ppeLabel(item)}</span>)}</div></div>}{camResult.uncertain?.length > 0 && <div><strong style={{ color: '#9a5a07' }}>⚠ Current frame uncertain</strong><div className="ppe-detected-list">{camResult.uncertain.map(item => <span key={item} className="ins-ppe-tag uncertain">{ppeLabel(item)}</span>)}</div></div>}{camResult.violations?.length > 0 && <div><strong className="missing">Current frame missing</strong><div className="ppe-detected-list">{camResult.violations.map(item => <span key={item} className="ins-ppe-tag missing">{ppeLabel(item)}</span>)}</div></div>}</section>}
+          {camResult && <section className="ppe-live-result">{camResult.compliant?.length > 0 && <div><strong>✅ PPE Visible</strong><div className="ppe-detected-list">{camResult.compliant.map(item => <span key={item} className="ins-ppe-tag">{ppeLabel(item)}</span>)}</div></div>}{camResult.uncertain?.length > 0 && <div><strong style={{ color: '#9a5a07' }}>⚠ Detected in this frame — low confidence</strong><div className="ppe-detected-list">{camResult.uncertain.map(item => <span key={item} className="ins-ppe-tag uncertain">{ppeLabel(item)}</span>)}</div></div>}{camResult.violations?.length > 0 && <div><strong className="missing">Current frame missing</strong><div className="ppe-detected-list">{camResult.violations.map(item => <span key={item} className="ins-ppe-tag missing">{ppeLabel(item)}</span>)}</div></div>}</section>}
           {qrError && <div className="ppe-error-box">⚠️ {qrError}</div>}<button type="button" className="ppe-manual-reset" onClick={resetScanner}>Wrong Employee / Cancel</button>
         </>}
 
@@ -545,7 +545,7 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
           {authorizationCopy && <section className={`ppe-authorization ${verdict.authorizationStatus}`} role="status"><span>{authorizationCopy.icon}</span><div><h3>{authorizationCopy.title}</h3><p>{authorizationCopy.detail}</p></div></section>}
           {verdict?.noDetection && <section className="ppe-authorization unavailable" role="alert"><span>!</span><div><h3>ENTRY NOT CLEARED</h3><p>The result was not saved. Please perform a manual inspection or retry the scan.</p></div></section>}
           {verdict?.detected?.length > 0 && <div className="ppe-result-group"><strong>✅ PPE Present</strong><div className="ppe-detected-list">{verdict.detected.map(item => <span key={item} className="ins-ppe-tag">{ppeLabel(item)}</span>)}</div></div>}
-          {verdict?.uncertain?.length > 0 && <div className="ppe-result-group uncertain"><strong>⚠ PPE Uncertain</strong><div className="ppe-detected-list">{verdict.uncertain.map(item => <span key={item} className="ins-ppe-tag uncertain">{ppeLabel(item)}</span>)}</div></div>}
+          {verdict?.uncertain?.length > 0 && <div className="ppe-result-group uncertain"><strong>⚠ PPE Needs Verification</strong><div className="ppe-detected-list">{verdict.uncertain.map(item => <span key={item} className="ins-ppe-tag uncertain">{ppeLabel(item)}: {uncertainPpeDescription(item, verdict.confidenceSummary, verdict.negativeEvidence, SCAN_SESSION_CONFIG.minimumConfidence)}</span>)}</div></div>}
           {manualReview && verdict?.reason && <div className="ppe-result-group uncertain"><p className="ppe-review-reason">{verdict.reason}</p><b className="ppe-check-manually">Please check manually</b></div>}
           {verdict?.missing?.length > 0 && <div className="ppe-result-group missing"><strong>🚨 Missing PPE</strong><div className="ppe-detected-list">{verdict.missing.map(item => <span key={item} className="ins-ppe-tag missing">{ppeLabel(item)}</span>)}</div></div>}
           {verdict?.repeatViolation?.is_repeat && <section className="ppe-repeat-warning" role="status"><span aria-hidden="true">⚠️</span><div><strong>Repeat PPE violation history</strong><p>This employee has {verdict.repeatViolation.violations_in_window} confirmed violations within the last {verdict.repeatViolation.window_days} days. This monitoring notice is separate from the current scan result.</p></div></section>}

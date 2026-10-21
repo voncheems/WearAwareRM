@@ -30,3 +30,14 @@ export function getPersonCount(data, minimumConfidence) {
     && item.inferred !== true && Number.isFinite(item.confidence)
     && item.confidence >= minimumConfidence && item.confidence <= 1).length;
 }
+
+// Presentation only: observed PPE is distinct from confirmed compliance.
+export function uncertainPpeDescription(ppe, confidenceSummary = [], negativeEvidence = [], minimumConfidence) {
+  const present = confidenceSummary.find(item => item.ppe === ppe);
+  const absent = negativeEvidence.find(item => item.ppe === ppe);
+  if (!(Number(present?.observed_frames) > 0)) return 'Not confidently detected';
+  if (Number(absent?.observed_frames) > 0) return 'Conflicting detections — inspection needed';
+  if (Number.isFinite(present.average_confidence) && Number.isFinite(minimumConfidence)
+    && present.average_confidence < minimumConfidence) return 'Detected — low confidence';
+  return 'Detected — not confirmed across the scan';
+}

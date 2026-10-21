@@ -57,7 +57,7 @@ test('frontend aggregation and backend evaluation agree on complete, missing, we
   });
   for (const [name, frames, conditions, expected, reason] of [
     ['complete', Array.from({ length: 3 }, () => frame(.9, .9)), {}, 'compliant', null],
-    ['missing vest', Array.from({ length: 3 }, () => frame(.9, null)), {}, 'violation', null],
+    ['undetected vest is not proof of absence', Array.from({ length: 3 }, () => frame(.9, null)), {}, 'manual_review', 'LOW_CONFIDENCE'],
     ['weak vest', Array.from({ length: 3 }, () => frame(.9, .4)), {}, 'manual_review', 'LOW_CONFIDENCE'],
     ['insufficient', [frame(.9, .9)], {}, 'manual_review', 'INSUFFICIENT_DATA'],
     ['PPE without person', Array.from({ length: 3 }, () => ({ ...frame(.9, .9), person_count: 0, person_detections: [] })), {}, 'manual_review', 'INSUFFICIENT_DATA'],
@@ -69,7 +69,7 @@ test('frontend aggregation and backend evaluation agree on complete, missing, we
     assert.equal(result.manual_review_reason, reason, name);
     const evaluated = evaluateSessionEvidence({
       requiredPpe: result.required_ppe, detectedPpe: result.detected_ppe,
-      confidenceSummary: result.confidence_summary, frameCount: result.frame_count,
+      confidenceSummary: result.confidence_summary, negativeEvidence: result.negative_evidence, frameCount: result.frame_count,
       confidenceScore: result.confidence_score, visibilityScore: result.visibility_score,
       manualReviewRequired: result.manual_review_required, multiplePeopleDetected: result.multiple_people_detected,
     });
