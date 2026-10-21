@@ -431,17 +431,12 @@ export default function PPEDetectionTab({ onScanComplete, fixedWorker = null, se
         session.absentSince = null;
         diagnosticLog('frame_evaluated', { frame_sequence: frameSequence, person_count: 1, classes: (data.detections || []).map(detection => ({ class_name: detection?.class_name || null, confidence: Number.isFinite(Number(detection?.confidence)) ? Number(detection.confidence) : null })), inference_time_ms: data.inference_time_ms ?? null, accepted: true, rejection_reason: null });
         addFrame(session, observation, canvas);
+        // A bounded attempt ends at the existing three accepted-frame minimum,
+        // including inconclusive evidence. finishScan keeps all confidence,
+        // visibility and consensus rules; the timeout still handles fewer frames.
         if (session.frames.length >= SCAN_SESSION_CONFIG.minimumFrames) {
-          const earlyResult = aggregateSessionFrames(
-            session.frames,
-            checkpointRef.current?.required_ppe,
-            SCAN_SESSION_CONFIG,
-            { multiplePeopleDetected: session.multiplePeopleDetected },
-          );
-          if (!earlyResult.manual_review_required && ['compliant', 'violation'].includes(earlyResult.result)) {
-            clearTimers();
-            finishScan(session);
-          }
+          clearTimers();
+          finishScan(session);
         }
         return;
       }
